@@ -1,0 +1,63 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Hush.App.ViewModels"
+             x:Class="Hush.App.App"
+             RequestedThemeVariant="Dark">
+
+    <Application.DataTemplates>
+        <DataTemplate DataType="{x:Type vm:MainViewModel}">
+            <!-- Resolved at runtime by the ViewLocator -->
+        </DataTemplate>
+    </Application.DataTemplates>
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <!--
+                Hush design tokens — impeccable.style principles:
+                  • Every element serves a purpose
+                  • Hierarchy guides the eye; whitespace breathes
+                  • Intentional, non-generic typography (platform-native variable fonts)
+                  • Color with purpose: teal accent (calm, precise), warm red for recording
+            -->
+
+            <!-- Chromatic palette -->
+            <Color x:Key="Hush.Bg">#0D0D16</Color>
+            <Color x:Key="Hush.Surface">#13131F</Color>
+            <Color x:Key="Hush.Border">#1C1C2C</Color>
+            <Color x:Key="Hush.Accent">#64C5B3</Color>
+            <Color x:Key="Hush.Accent.Dim">#2D6B63</Color>
+            <Color x:Key="Hush.Recording">#E05757</Color>
+            <Color x:Key="Hush.Error">#C94040</Color>
+
+            <!-- Text hierarchy -->
+            <Color x:Key="Hush.Text.Primary">#EEEEF8</Color>
+            <Color x:Key="Hush.Text.Secondary">#7A7A98</Color>
+            <Color x:Key="Hush.Text.Muted">#35354E</Color>
+
+            <!-- Brushes derived from above -->
+            <SolidColorBrush x:Key="Hush.Bg.Brush"        Color="{StaticResource Hush.Bg}" />
+            <SolidColorBrush x:Key="Hush.Surface.Brush"   Color="{StaticResource Hush.Surface}" />
+            <SolidColorBrush x:Key="Hush.Border.Brush"    Color="{StaticResource Hush.Border}" />
+            <SolidColorBrush x:Key="Hush.Accent.Brush"    Color="{StaticResource Hush.Accent}" />
+            <SolidColorBrush x:Key="Hush.Recording.Brush" Color="{StaticResource Hush.Recording}" />
+            <SolidColorBrush x:Key="Hush.Error.Brush"     Color="{StaticResource Hush.Error}" />
+            <SolidColorBrush x:Key="Hush.Text.Primary.Brush"   Color="{StaticResource Hush.Text.Primary}" />
+            <SolidColorBrush x:Key="Hush.Text.Secondary.Brush" Color="{StaticResource Hush.Text.Secondary}" />
+            <SolidColorBrush x:Key="Hush.Text.Muted.Brush"     Color="{StaticResource Hush.Text.Muted}" />
+
+            <!--
+                Platform-aware variable font stack (impeccable: intentional, non-generic).
+                Segoe UI Variable is the Windows 11 native variable-weight font —
+                far superior to Inter or Segoe UI. SF Pro is automatic on macOS.
+                Cantarell is GNOME's default; Ubuntu falls back cleanly.
+            -->
+            <FontFamily x:Key="Hush.Font">Segoe UI Variable Text,Segoe UI,Helvetica Neue,Cantarell,Ubuntu,sans-serif</FontFamily>
+        </ResourceDictionary>
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+    </Application.Styles>
+
+</Application>
+

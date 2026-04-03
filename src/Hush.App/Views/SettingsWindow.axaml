@@ -1,0 +1,180 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Hush.App.ViewModels"
+        x:Class="Hush.App.Views.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
+        Title="Hush — Settings"
+        Width="460" Height="560"
+        WindowStartupLocation="CenterScreen"
+        CanResize="False"
+        FontFamily="{StaticResource Hush.Font}">
+
+    <!--
+        Settings layout (impeccable.style principles):
+          • Grouped by concern — surface hierarchy through section labels, not visual weight alone
+          • Two-column rows (label + control) so relatedness is spatial, not only textual
+          • Generous whitespace between sections; tight rhythm within them
+          • Section labels in ALL-CAPS at 9px signal structure without competing with content
+          • Action at the bottom-right — familiar desktop convention
+    -->
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ── Header ────────────────────────────────────────────────────── -->
+        <Border Grid.Row="0"
+                Padding="28 22 28 16"
+                BorderBrush="{StaticResource Hush.Border.Brush}"
+                BorderThickness="0 0 0 1">
+            <StackPanel Spacing="2">
+                <TextBlock Text="Settings"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                <TextBlock Text="Changes are saved when you close this window."
+                           FontSize="11"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+            </StackPanel>
+        </Border>
+
+        <!-- ── Scrollable content ────────────────────────────────────────── -->
+        <ScrollViewer Grid.Row="1" Margin="0">
+            <StackPanel Margin="28 20 28 4" Spacing="0">
+
+                <!-- ─ Section: Input ─────────────────────────────────────── -->
+                <TextBlock Text="INPUT"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           LetterSpacing="2"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 10" />
+
+                <!-- Hotkey -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Global hotkey"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Hold to dictate"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding Hotkey}"
+                             Watermark="Ctrl+Shift+H"
+                             ToolTip.Tip="Hotkey combination to hold for push-to-talk dictation" />
+                </Grid>
+
+                <!-- Language -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 24">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Language"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="BCP-47 tag"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding Language}"
+                             Watermark="en" />
+                </Grid>
+
+                <!-- ─ Section: Model ─────────────────────────────────────── -->
+                <TextBlock Text="MODEL"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           LetterSpacing="2"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 10" />
+
+                <!-- Model alias -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 6">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Model alias"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Foundry Local name"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding TranscriptionModel}"
+                             Watermark="whisper-tiny"
+                             ToolTip.Tip="Foundry Local model alias. Changing this takes effect on next launch." />
+                </Grid>
+                <TextBlock Text="Changing the model takes effect on next launch."
+                           FontSize="10"
+                           Foreground="{StaticResource Hush.Text.Muted.Brush}"
+                           Margin="0 0 0 24" />
+
+                <!-- ─ Section: Behavior ──────────────────────────────────── -->
+                <TextBlock Text="BEHAVIOR"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           LetterSpacing="2"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 10" />
+
+                <CheckBox Content="Show interim text in overlay"
+                          IsChecked="{Binding PartialsInOverlay}"
+                          FontSize="13"
+                          Foreground="{StaticResource Hush.Text.Primary.Brush}"
+                          Margin="0 0 0 6" />
+                <CheckBox Content="Sound effects on start / stop"
+                          IsChecked="{Binding SoundEffects}"
+                          FontSize="13"
+                          Foreground="{StaticResource Hush.Text.Primary.Brush}"
+                          Margin="0 0 0 6" />
+                <CheckBox Content="Launch at login"
+                          IsChecked="{Binding AutoStart}"
+                          FontSize="13"
+                          Foreground="{StaticResource Hush.Text.Primary.Brush}"
+                          Margin="0 0 0 24" />
+
+                <!-- ─ Section: Appearance ────────────────────────────────── -->
+                <TextBlock Text="APPEARANCE"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           LetterSpacing="2"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 10" />
+
+                <Grid ColumnDefinitions="160,*,40" Margin="0 0 0 4">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Overlay opacity"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="0.1 – 1.0"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <Slider Grid.Column="1"
+                            Minimum="0.1" Maximum="1.0"
+                            Value="{Binding OverlayOpacity}"
+                            TickFrequency="0.05"
+                            IsSnapToTickEnabled="True"
+                            VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2"
+                               Text="{Binding OverlayOpacity, StringFormat={}{0:P0}}"
+                               FontSize="10"
+                               Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Right" />
+                </Grid>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ── Footer / action ───────────────────────────────────────────── -->
+        <Border Grid.Row="2"
+                Padding="28 14"
+                BorderBrush="{StaticResource Hush.Border.Brush}"
+                BorderThickness="0 1 0 0">
+            <Button Content="Save &amp; Close"
+                    HorizontalAlignment="Right"
+                    Padding="18 8"
+                    Click="OnSaveClicked" />
+        </Border>
+
+    </Grid>
+</Window>
+

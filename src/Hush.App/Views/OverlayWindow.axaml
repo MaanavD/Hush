@@ -1,0 +1,139 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Hush.App.ViewModels"
+        x:Class="Hush.App.Views.OverlayWindow"
+        x:DataType="vm:OverlayViewModel"
+        Title="Hush Overlay"
+    Width="196" Height="56"
+        SystemDecorations="None"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        CanResize="False"
+        FontFamily="{StaticResource Hush.Font}">
+
+    <!--
+        Window stays permanently open (non-activating).
+        IsVisible lives on each child Border so toggling never reactivates the window.
+        Panel stacks all three states; at most one is visible at a time.
+
+                Design: reduced pill footprint with one clear recording signal.
+                    • Recording state is a dot plus a centered waveform meter
+                    • Loading and error states use the same restrained geometry
+                    • No label copy in the active recording state
+    -->
+    <Panel>
+
+        <!-- ── 1. Loading / progress ──────────────────────────────────────── -->
+        <Border CornerRadius="14"
+                Background="#F4171823"
+                BorderBrush="{StaticResource Hush.Border.Brush}"
+                BorderThickness="1"
+                Padding="14 11"
+                IsVisible="{Binding !IsModelReady}">
+            <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="Auto,*,Auto"
+                      ColumnSpacing="8"
+                      VerticalAlignment="Center">
+                    <Ellipse Width="6" Height="6"
+                             Fill="{StaticResource Hush.Accent.Brush}"
+                             VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1"
+                               Text="Preparing"
+                               Foreground="{StaticResource Hush.Text.Primary.Brush}"
+                               FontSize="10"
+                               VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2"
+                               Text="{Binding ModelDownloadProgress, StringFormat={}{0:P0}}"
+                               Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                               FontSize="9"
+                               FontWeight="Medium"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Right" />
+                </Grid>
+                <ProgressBar Minimum="0" Maximum="1"
+                             Value="{Binding ModelDownloadProgress}"
+                             Height="3"
+                             CornerRadius="1.5"
+                             Foreground="{StaticResource Hush.Accent.Brush}"
+                             Background="#26283A" />
+            </StackPanel>
+        </Border>
+
+        <!-- ── 2. Listening / recording ──────────────────────────────────── -->
+        <Border CornerRadius="14"
+                Background="#F4171823"
+                BorderBrush="{StaticResource Hush.Border.Brush}"
+                BorderThickness="1"
+                Padding="14 10"
+                IsVisible="{Binding IsListening}">
+            <Grid ColumnDefinitions="Auto,*"
+                  ColumnSpacing="10"
+                  VerticalAlignment="Center">
+                <Border Width="10" Height="10"
+                        CornerRadius="5"
+                        Background="{StaticResource Hush.Recording.Brush}"
+                        VerticalAlignment="Center" />
+
+                <Grid Grid.Column="1"
+                      Width="78"
+                      Height="28"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="4"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Rectangle x:Name="Bar0" Width="5" Height="2"
+                                   Fill="{StaticResource Hush.Accent.Brush}"
+                                   RadiusX="2.5" RadiusY="2.5"
+                                   VerticalAlignment="Center" />
+                        <Rectangle x:Name="Bar1" Width="5" Height="2"
+                                   Fill="{StaticResource Hush.Accent.Brush}"
+                                   RadiusX="2.5" RadiusY="2.5"
+                                   VerticalAlignment="Center" />
+                        <Rectangle x:Name="Bar2" Width="5" Height="2"
+                                   Fill="{StaticResource Hush.Accent.Brush}"
+                                   RadiusX="2.5" RadiusY="2.5"
+                                   VerticalAlignment="Center" />
+                        <Rectangle x:Name="Bar3" Width="5" Height="2"
+                                   Fill="{StaticResource Hush.Accent.Brush}"
+                                   RadiusX="2.5" RadiusY="2.5"
+                                   VerticalAlignment="Center" />
+                        <Rectangle x:Name="Bar4" Width="5" Height="2"
+                                   Fill="{StaticResource Hush.Accent.Brush}"
+                                   RadiusX="2.5" RadiusY="2.5"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- ── 3. Error ───────────────────────────────────────────────────── -->
+        <Border CornerRadius="14"
+                Background="#F21A0A0A"
+                BorderBrush="#3C1818"
+                BorderThickness="1"
+                Padding="14 10"
+                IsVisible="{Binding HasError}">
+            <Grid ColumnDefinitions="Auto,*"
+                  ColumnSpacing="8"
+                  VerticalAlignment="Center">
+                <Ellipse Width="6" Height="6"
+                                                 Fill="{StaticResource Hush.Error.Brush}"
+                                                 VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding ErrorMessage}"
+                           Foreground="#DDAAAACC"
+                           FontSize="10"
+                           TextWrapping="Wrap"
+                           MaxLines="2"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+    </Panel>
+
+</Window>
+
+

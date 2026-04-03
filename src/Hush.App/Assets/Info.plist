@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.hush.app</string>
+
+  <key>CFBundleName</key>
+  <string>Hush</string>
+
+  <key>CFBundleDisplayName</key>
+  <string>Hush</string>
+
+  <key>CFBundleExecutable</key>
+  <string>Hush.App</string>
+
+  <key>CFBundleIconFile</key>
+  <string>hush-icon</string>
+
+  <key>CFBundleShortVersionString</key>
+  <string>1.0.0</string>
+
+  <key>CFBundleVersion</key>
+  <string>1</string>
+
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+
+  <!-- Tray-only app — no Dock icon, no menu bar entry -->
+  <key>LSUIElement</key>
+  <true/>
+
+  <!-- Requires mic for offline speech recognition -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Hush uses the microphone to transcribe your speech locally. No audio ever leaves your device.</string>
+
+  <!-- Accessibility API is needed by CGEventTap to read modifier keys -->
+  <key>NSAccessibilityUsageDescription</key>
+  <string>Hush needs accessibility permission to detect the global dictation hotkey.</string>
+
+  <key>NSHighResolutionCapable</key>
+  <true/>
+
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+</dict>
+</plist>
