@@ -51,7 +51,7 @@
                 IsVisible="{Binding IsListening}"
                 BoxShadow="0 2 12 0 #1A000000"
                 ClipToBounds="True">
-            <Grid RowDefinitions="Auto,34" RowSpacing="10">
+            <Grid RowDefinitions="Auto,34,Auto" RowSpacing="10">
                 <Grid>
                     <TextBlock Text="{Binding TranscriptText}"
                                IsVisible="{Binding HasTranscript}"
@@ -68,6 +68,20 @@
                                Foreground="#475569" />
                 </Grid>
                 <Canvas Grid.Row="1" x:Name="WaveCanvas" />
+
+                <!-- ── Debug info panel ── -->
+                <Border Grid.Row="2"
+                        CornerRadius="6"
+                        Background="#0D000000"
+                        Padding="8 4"
+                        IsVisible="{Binding HasDebugInfo}">
+                    <TextBlock Text="{Binding DebugInfo}"
+                               FontSize="10"
+                               FontFamily="Consolas,Courier New,monospace"
+                               Foreground="#64748B"
+                               TextWrapping="Wrap"
+                               MaxLines="3" />
+                </Border>
             </Grid>
         </Border>
 

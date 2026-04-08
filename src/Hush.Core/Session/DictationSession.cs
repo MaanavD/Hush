@@ -58,6 +58,9 @@ public sealed class DictationSession : IDictationSession
     public event Action<float>? OnAudioLevel;
 
     /// <inheritdoc/>
+    public event Action<string>? OnDebugInfo;
+
+    /// <inheritdoc/>
     public event Action? OnSessionStopped;
 
     /// <inheritdoc/>
@@ -99,23 +102,36 @@ public sealed class DictationSession : IDictationSession
             cts.Token);
     }
 
-    // ── Streaming path: type committed deltas as they arrive ─────────────
+    // ── Streaming path: type CommittedDelta directly ────────────────────
+    //
+    // TranscriptionEngine accumulates chunks into cumulative DisplayText
+    // and computes CommittedDelta (the exact new text to append). We type
+    // CommittedDelta directly — no local diffing needed.
 
     private async Task StreamingTranscriptionLoopAsync(CancellationToken cancellationToken)
     {
+        string typedSoFar = string.Empty;
+
         try
         {
             await foreach (var result in _engine.GetResultStreamAsync(cancellationToken))
             {
-                if (!string.IsNullOrEmpty(result.DisplayText))
-                    OnInterimText?.Invoke(result.DisplayText);
+                var targetText = result.DisplayText ?? string.Empty;
 
-                if (result.BackspaceCount > 0)
-                    await _output.SendBackspacesAsync(result.BackspaceCount, cancellationToken);
+                // Forward to overlay regardless.
+                if (!string.IsNullOrEmpty(targetText))
+                    OnInterimText?.Invoke(targetText);
 
+                // Type the committed delta directly — the engine has already
+                // computed the exact incremental text for each chunk.
                 if (!string.IsNullOrEmpty(result.CommittedDelta))
                 {
+                    OnDebugInfo?.Invoke(
+                        $"delta=\"{Truncate(result.CommittedDelta, 40)}\" bs={result.BackspaceCount} display=\"{Truncate(targetText, 50)}\" typed=\"{Truncate(typedSoFar, 30)}\"");
+
                     await _output.TypeTextAsync(result.CommittedDelta, cancellationToken);
+                    typedSoFar += result.CommittedDelta;
+
                     OnCommittedChunk?.Invoke(result.CommittedDelta);
                 }
             }
@@ -128,6 +144,23 @@ public sealed class DictationSession : IDictationSession
         {
             _logger.LogError(ex, "Transcription loop encountered an unhandled error.");
         }
+    }
+
+    /// <summary>
+    /// Returns the length of the common prefix between two strings
+    /// using case-insensitive comparison. The ASR model may inconsistently
+    /// capitalise text between chunks, so ordinal comparison would cause
+    /// a full erase+retype on every update.
+    /// </summary>
+    private static int CommonPrefixLength(string a, string b)
+    {
+        int len = Math.Min(a.Length, b.Length);
+        for (int i = 0; i < len; i++)
+        {
+            if (char.ToLowerInvariant(a[i]) != char.ToLowerInvariant(b[i]))
+                return i;
+        }
+        return len;
     }
 
     // ── Spinner path: animate indicator, buffer text, type on stop ───────
@@ -295,4 +328,7 @@ public sealed class DictationSession : IDictationSession
         _capture.Dispose();
         await _engine.DisposeAsync();
     }
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..max] + "…";
 }

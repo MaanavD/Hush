@@ -21,6 +21,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _soundEffects;
     [ObservableProperty] private bool _streamingCommit;
     [ObservableProperty] private bool _autoStart;
+    [ObservableProperty] private bool _showDebugOverlay;
 
     public SettingsViewModel(HushSettings settings)
     {
@@ -34,6 +35,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _soundEffects = settings.SoundEffects;
         _streamingCommit = settings.StreamingCommit;
         _autoStart = settings.AutoStart;
+        _showDebugOverlay = settings.ShowDebugOverlay;
     }
 
     /// <summary>Copies VM state back into the backing <see cref="HushSettings"/> object.</summary>
@@ -48,5 +50,6 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.SoundEffects = SoundEffects;
         _settings.StreamingCommit = StreamingCommit;
         _settings.AutoStart = AutoStart;
+        _settings.ShowDebugOverlay = ShowDebugOverlay;
     }
 }

@@ -61,11 +61,14 @@ public sealed class DictationPipelineIntegrationTests
         var typedTexts = new List<string>();
 
         var results = Enumerable.Range(1, 20).Select(i =>
-            new TranscriptionResult(
-                $"word{i}",
+        {
+            // DisplayText must be cumulative (append-only streaming).
+            var display = string.Join(" ", Enumerable.Range(1, i).Select(n => $"word{n}"));
+            return new TranscriptionResult(
+                display,
                 $" word{i}",
-                IsFinal: i == 20)
-        ).ToArray();
+                IsFinal: i == 20);
+        }).ToArray();
 
         SetupEngine(engineMock, results);
 
@@ -81,6 +84,7 @@ public sealed class DictationPipelineIntegrationTests
         await session.StartAsync();
         await session.StopAsync();
 
+        // Each chunk appends one " wordN" suffix (first chunk types the full "word1").
         Assert.Equal(20, typedTexts.Count);
 
         await session.DisposeAsync();

@@ -89,6 +89,12 @@ public sealed partial class MainViewModel : ObservableObject
                 _overlayVm.AppendCommittedTranscript(chunk);
             });
 
+        _dictationSession.OnDebugInfo += info =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.DebugInfo = info;
+            });
+
         _dictationSession.OnSessionStopped += () =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
@@ -208,6 +214,7 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 IsListening = true;
                 _overlayVm.BeginSession(_settings.PartialsInOverlay);
+                _overlayVm.ShowDebugPanel = _settings.ShowDebugOverlay;
                 _overlayVm.IsListening = true;
                 _overlayVm.ErrorMessage = null;   // Clear previous error on new attempt.
             });

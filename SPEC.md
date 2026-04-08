@@ -5,20 +5,20 @@
 
 ---
 
-## 1  Vision & Principles
+## 1 Vision & Principles
 
-| Principle | Detail |
-|-----------|--------|
-| **Private** | All inference runs on-device. No audio or text ever leaves the machine. |
-| **Offline** | Works without an internet connection (after initial model download). |
-| **Free & OSS** | MIT-licensed. No per-token costs, no subscriptions. |
+| Principle          | Detail                                                                                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Private**        | All inference runs on-device. No audio or text ever leaves the machine.                                                                                                                                       |
+| **Offline**        | Works without an internet connection (after initial model download).                                                                                                                                          |
+| **Free & OSS**     | MIT-licensed. No per-token costs, no subscriptions.                                                                                                                                                           |
 | **Cross-platform** | Day-one release target: Windows, macOS (Apple Silicon), and Linux desktop on X11 — single codebase via Avalonia UI + .NET 9. Wayland is best-effort until user demand and test coverage justify full support. |
-| **Simple** | System-tray app with a single hotkey. Zero configuration required on supported hardware after model download and OS permissions are granted. |
-| **Low-latency** | Text appears live in the overlay and committed text is typed into the focused app with near-live latency. |
+| **Simple**         | System-tray app with a single hotkey. Zero configuration required on supported hardware after model download and OS permissions are granted.                                                                  |
+| **Low-latency**    | Text appears live in the overlay and committed text is typed into the focused app with near-live latency.                                                                                                     |
 
 ---
 
-## 2  Core User Flow
+## 2 Core User Flow
 
 ```
 1. User launches Hush → system tray icon appears. If the model is not cached yet, Hush downloads it with visible progress and prepares it in the background.
@@ -29,11 +29,12 @@
 ```
 
 **Why simulated keystrokes instead of clipboard paste?**
+
 - Preserves the user's clipboard contents — no surprise overwrites.
 - Text appears as you speak, not all at once after release — lower perceived latency.
 - Works identically to physical typing from the target app's perspective.
 
-### 2.1  MVP Support Matrix
+### 2.1 MVP Support Matrix
 
 - **Windows**: supported on day one.
 - **macOS (Apple Silicon)**: supported on day one.
@@ -42,7 +43,7 @@
 - **Hardware baseline**: target machines with at least 8 GB RAM and hardware roughly from the last 5 years that can run the chosen Nemotron transcription model at acceptable latency.
 - **Packaging policy**: end users should install a self-contained executable or simple installer. External command-line tools such as `xdotool` or `wtype` are acceptable for development spikes, but not as required end-user prerequisites for MVP.
 
-### 2.2  Focus, Streaming, and Output Rules
+### 2.2 Focus, Streaming, and Output Rules
 
 - The overlay must be non-activating and must never steal keyboard focus.
 - Hush types into whichever app and field currently owns OS keyboard focus. In the normal flow this is the field the user selected before pressing the hotkey.
@@ -51,7 +52,7 @@
 - For MVP, interim text is shown in the overlay only. Only committed deltas are typed into the target app. This avoids destructive backspacing or text rewrites in the user's active field while still feeling live.
 - Any future "type unstable partials into the app" mode should be opt-in and must include correction logic, undo safety, and a clear user-facing warning.
 
-### 2.3  Privacy and Diagnostics Rules
+### 2.3 Privacy and Diagnostics Rules
 
 - No transcript history is stored by default.
 - No raw audio is stored by default.
@@ -61,7 +62,7 @@
 
 ---
 
-## 3  Architecture Overview
+## 3 Architecture Overview
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -93,7 +94,7 @@
 
 ---
 
-## 4  Solution Structure
+## 4 Solution Structure
 
 ```
 Hush/
@@ -163,28 +164,28 @@ Hush/
 
 ---
 
-## 5  Technology Stack
+## 5 Technology Stack
 
-| Layer | Technology | Notes |
-|-------|-----------|-------|
-| **Runtime** | .NET 9 | LTS, cross-platform, AOT-capable |
-| **UI** | Avalonia UI 11 | Cross-platform XAML. System tray, overlays, transparency support. |
-| **AI Inference** | Foundry Local C# SDK | `Microsoft.AI.Foundry.Local` (unified managed SDK, cross-platform) |
-| **Speech Model** | Nemotron | Live streaming transcription via `LiveAudioTranscriptionSession`; treat stream results as potentially unstable until committed. |
-| **Audio Capture** | Backend abstraction | Windows can use NAudio; macOS/Linux may use a different backend if NAudio is not reliable enough. The app architecture should hide this behind a common interface. |
-| **Keystroke Simulation** | Per-platform native implementation | `SendInput` (Win), `CGEventPost` (macOS), bundled native helper/P/Invoke on Linux. Avoid requiring separate end-user utilities when packaging MVP. |
-| **Hotkey** | Per-platform P/Invoke | `RegisterHotKey` (Win), `CGEventTap` (macOS), `XGrabKey` (Linux) |
-| **Settings** | `System.Text.Json` | JSON file in `~/.hush/settings.json` |
-| **Logging** | `Microsoft.Extensions.Logging` | Console + file sinks with strict no-transcript logging rules |
-| **Testing** | xUnit + Moq | Unit tests for Core; integration tests for engine |
-| **CI** | GitHub Actions | Matrix: `windows-latest`, `macos-latest`, `ubuntu-latest` |
-| **Packaging** | `dotnet publish` self-contained | Self-contained executables/installers with bundled native dependencies where licensing permits |
+| Layer                    | Technology                         | Notes                                                                                                                                                              |
+| ------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Runtime**              | .NET 9                             | LTS, cross-platform, AOT-capable                                                                                                                                   |
+| **UI**                   | Avalonia UI 11                     | Cross-platform XAML. System tray, overlays, transparency support.                                                                                                  |
+| **AI Inference**         | Foundry Local C# SDK               | `Microsoft.AI.Foundry.Local` (unified managed SDK, cross-platform)                                                                                                 |
+| **Speech Model**         | Nemotron                           | Live streaming transcription via `LiveAudioTranscriptionSession`; treat stream results as potentially unstable until committed.                                    |
+| **Audio Capture**        | Backend abstraction                | Windows can use NAudio; macOS/Linux may use a different backend if NAudio is not reliable enough. The app architecture should hide this behind a common interface. |
+| **Keystroke Simulation** | Per-platform native implementation | `SendInput` (Win), `CGEventPost` (macOS), bundled native helper/P/Invoke on Linux. Avoid requiring separate end-user utilities when packaging MVP.                 |
+| **Hotkey**               | Per-platform P/Invoke              | `RegisterHotKey` (Win), `CGEventTap` (macOS), `XGrabKey` (Linux)                                                                                                   |
+| **Settings**             | `System.Text.Json`                 | JSON file in `~/.hush/settings.json`                                                                                                                               |
+| **Logging**              | `Microsoft.Extensions.Logging`     | Console + file sinks with strict no-transcript logging rules                                                                                                       |
+| **Testing**              | xUnit + Moq                        | Unit tests for Core; integration tests for engine                                                                                                                  |
+| **CI**                   | GitHub Actions                     | Matrix: `windows-latest`, `macos-latest`, `ubuntu-latest`                                                                                                          |
+| **Packaging**            | `dotnet publish` self-contained    | Self-contained executables/installers with bundled native dependencies where licensing permits                                                                     |
 
 ---
 
-## 6  Key Components — Detailed Design
+## 6 Key Components — Detailed Design
 
-### 6.1  `TranscriptionEngine`
+### 6.1 `TranscriptionEngine`
 
 The core of Hush. Wraps Foundry Local's `LiveAudioTranscriptionSession`.
 
@@ -202,15 +203,15 @@ public class TranscriptionEngine : ITranscriptionEngine, IAsyncDisposable
             new Configuration { AppName = "Hush" },
             NullLogger.Instance);
         _manager = FoundryLocalManager.Instance;
-        
+
         // On Windows, download hardware acceleration EPs
         if (OperatingSystem.IsWindows())
             await _manager.DownloadAndRegisterEpsAsync();
-        
+
         var catalog = await _manager.GetCatalogAsync();
         _model = await catalog.GetModelAsync(modelAlias)
             ?? throw new InvalidOperationException($"Model '{modelAlias}' not found");
-        
+
         await _model.DownloadAsync();   // No-op if already cached
         await _model.LoadAsync();
         _audioClient = await _model.GetAudioClientAsync();
@@ -242,7 +243,7 @@ Design constraints for the engine:
 - Normalize SDK output into two streams: `DisplayText` for the overlay and `CommittedDelta` for keystroke output.
 - Keep the SDK-specific event shape behind the engine boundary so the rest of the app does not depend on whether Foundry Local emits partials, finals, or both.
 
-### 6.2  `AudioCaptureService`
+### 6.2 `AudioCaptureService`
 
 Captures microphone audio and feeds it to the transcription session. The service contract is cross-platform; the concrete backend can differ per OS.
 
@@ -280,7 +281,7 @@ public class AudioCaptureService : IAudioCaptureService, IDisposable
 }
 ```
 
-### 6.3  `DictationSession` (Orchestrator)
+### 6.3 `DictationSession` (Orchestrator)
 
 Coordinates the full dictation lifecycle. Key design: the overlay updates from interim results immediately, while only committed text is typed into the focused app.
 
@@ -330,7 +331,7 @@ public class DictationSession : IDictationSession
 }
 ```
 
-### 6.4  `KeystrokeTypingService`
+### 6.4 `KeystrokeTypingService`
 
 Simulates keystrokes to type text into whatever app is currently focused. Never touches the clipboard.
 
@@ -382,17 +383,19 @@ internal static class WindowsKeystrokeTyper
 ```
 
 **Why `KEYEVENTF_UNICODE` / `SendInput`?**
+
 - Types arbitrary Unicode without virtual key code mapping.
 - Works in any app — text editors, browsers, terminals, IDEs.
 - Each committed delta is a small burst of keystrokes, so latency is low without rewriting previously typed text.
 - The user's clipboard is never touched.
 
 MVP policy for text output:
+
 - Type only committed deltas into the target app.
 - Do not issue corrective backspaces into the user's app for interim ASR rewrites in MVP.
 - Do not require elevated privileges to support normal text fields; if a target blocks injection because of OS or app security boundaries, fail gracefully and surface a clear warning.
 
-### 6.5  `OverlayWindow`
+### 6.5 `OverlayWindow`
 
 A small, floating, semi-transparent window that appears during dictation.
 
@@ -415,9 +418,10 @@ A small, floating, semi-transparent window that appears during dictation.
 
 ---
 
-## 7  Implementation Milestones
+## 7 Implementation Milestones
 
 ### Milestone 0: Project Skeleton (Day 1)
+
 - [ ] Create solution with `Hush.Core` and `Hush.App` projects
 - [ ] Add NuGet references: Foundry Local SDK, NAudio, Avalonia
 - [ ] Set up conditional PackageReference for WinML vs cross-platform SDK
@@ -426,6 +430,7 @@ A small, floating, semi-transparent window that appears during dictation.
 - [ ] Basic CI pipeline (build on 3 platforms)
 
 ### Milestone 1: Proof of Life — Console Transcription (Day 1-2)
+
 - [ ] Implement `TranscriptionEngine` — initialize Foundry Local, load Nemotron
 - [ ] Implement `AudioCaptureService` — prove one working capture backend per target OS
 - [ ] Wire them together in a simple console `Program.cs`
@@ -434,6 +439,7 @@ A small, floating, semi-transparent window that appears during dictation.
 - [ ] **Exit criteria:** Real-time text appears in console from mic input
 
 ### Milestone 2: Global Hotkey + Live Typing (Day 2-3)
+
 - [ ] Implement `GlobalHotkeyService` for Windows (Win32 `RegisterHotKey`)
 - [ ] Implement `KeystrokeTypingService` (Windows `SendInput` with `KEYEVENTF_UNICODE`)
 - [ ] Implement `DictationSession` orchestrator — show interim text live and type committed deltas
@@ -441,6 +447,7 @@ A small, floating, semi-transparent window that appears during dictation.
 - [ ] **Exit criteria:** Push-to-talk → live-typed text in focused app on Windows
 
 ### Milestone 3: System Tray + Overlay UI (Day 3-5)
+
 - [ ] Create Avalonia app with system tray icon
 - [ ] Build `OverlayWindow` — floating, transparent, always-on-top
 - [ ] Bind overlay to `DictationSession` events for live text preview
@@ -449,6 +456,7 @@ A small, floating, semi-transparent window that appears during dictation.
 - [ ] **Exit criteria:** Polished tray app with visual dictation feedback
 
 ### Milestone 4: Settings & Polish (Day 4-5)
+
 - [ ] Settings window: hotkey, language, model, auto-start
 - [ ] Persist settings to `~/.hush/settings.json`
 - [ ] Auto-start on login (optional)
@@ -457,6 +465,7 @@ A small, floating, semi-transparent window that appears during dictation.
 - [ ] **Exit criteria:** App is configurable and handles errors gracefully
 
 ### Milestone 5: Cross-Platform (Day 5-8)
+
 - [ ] macOS hotkey provider (`CGEventTap` via P/Invoke / ObjCRuntime)
 - [ ] macOS keystroke typing (`CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString`)
 - [ ] Linux hotkey provider (`XGrabKey` for X11; Wayland remains best-effort/non-blocking for v1)
@@ -465,6 +474,7 @@ A small, floating, semi-transparent window that appears during dictation.
 - [ ] **Exit criteria:** App works on Windows, macOS Apple Silicon, and Linux desktop on X11. Wayland is not a release blocker for v1.
 
 ### Milestone 6: Packaging & Distribution (Day 8-10)
+
 - [ ] `dotnet publish` self-contained single-file for each platform
 - [ ] Windows: optional MSIX installer
 - [ ] macOS: `.app` bundle + DMG
@@ -493,10 +503,10 @@ This milestone is the next implementation target after Milestone 6.
 - Replace the current batch WAV workaround in `TranscriptionEngine` with the Foundry Local `LiveAudioTranscriptionSession` lifecycle (`StartAsync` → `AppendAsync` → `GetTranscriptionStream` → `StopAsync`)
 - Keep the MVP safety rule: only committed text is typed into the focused app by default
 - Wire persisted settings that materially affect the core dictation loop:
-    - language
-    - activation mode where supported
-    - overlay visibility / placement settings that are actually implemented
-    - microphone selection if added during this milestone
+  - language
+  - activation mode where supported
+  - overlay visibility / placement settings that are actually implemented
+  - microphone selection if added during this milestone
 - Make the overlay display real transcript content, not just recording state
 - Improve first-run defaults so Hush works well without requiring users to understand model/runtime internals
 - Improve session reliability around start, stop, flush, cancellation, and backpressure
@@ -513,7 +523,7 @@ This milestone is the next implementation target after Milestone 6.
 
 Prefer good defaults over knobs. If a feature does not clearly improve the first five minutes of use, it should not expand the settings surface in Milestone 7.
 
-#### Phase 7.1  Streaming Foundation
+#### Phase 7.1 Streaming Foundation
 
 - [ ] Replace the polling/batch transcription loop with Foundry Local live streaming
 - [ ] Use 16 kHz / 16-bit / mono PCM throughout the live path unless the SDK or backend requires otherwise
@@ -531,7 +541,7 @@ Prefer good defaults over knobs. If a feature does not clearly improve the first
 - The engine no longer depends on temporary WAV files for the normal dictation path
 - Existing dictation tests still pass, and new engine tests cover the live session lifecycle
 
-#### Phase 7.2  Great Defaults and Core Reliability
+#### Phase 7.2 Great Defaults and Core Reliability
 
 - [ ] Use the saved language setting instead of hard-coding English in the engine
 - [ ] Validate hotkey registration when settings are applied and surface actionable errors immediately
@@ -541,9 +551,9 @@ Prefer good defaults over knobs. If a feature does not clearly improve the first
 - [ ] If multiple devices exist, prefer the current system default device unless the user explicitly overrides it
 - [ ] Improve startup and error messaging for missing microphone, denied permissions, or unavailable devices
 - [ ] Finish the minimum platform work required for core dictation quality:
-    - macOS microphone capture backend
-    - Linux microphone capture backend for the supported desktop target
-    - any paste/hotkey guardrails needed so the default path works reliably on supported platforms
+  - macOS microphone capture backend
+  - Linux microphone capture backend for the supported desktop target
+  - any paste/hotkey guardrails needed so the default path works reliably on supported platforms
 - [ ] Remove or defer settings that are persisted but not actually honored by runtime behavior
 
 **Acceptance criteria**
@@ -553,16 +563,16 @@ Prefer good defaults over knobs. If a feature does not clearly improve the first
 - The app fails clearly when microphone capture or permissions are unavailable
 - Supported platforms no longer ship with a "feature exists in settings but does nothing" experience for the core dictation flow
 
-#### Phase 7.3  Overlay Refresh
+#### Phase 7.3 Overlay Refresh
 
 - [ ] Redesign the overlay so it shows live transcript text and recording state together
 - [ ] Keep it non-activating, click-through where appropriate, and never focus-stealing
 - [ ] Preserve the audio meter, but make transcript readability the primary job of the overlay
 - [ ] Show clear visual distinction between these states:
-    - preparing / model warming
-    - actively listening
-    - transient error
-    - idle / hidden
+  - preparing / model warming
+  - actively listening
+  - transient error
+  - idle / hidden
 - [ ] Implement a more polished visual treatment while keeping the surface compact and desktop-native
 - [ ] Make overlay position and opacity settings real, or remove them from Milestone 7 scope if they cannot be honored cleanly
 - [ ] Do not add transcript history or editor-like interactions to the overlay
@@ -604,7 +614,7 @@ The following items remain valid future work, but they are intentionally deferre
 
 ---
 
-## 8  NuGet Dependencies
+## 8 NuGet Dependencies
 
 ```xml
 <!-- Hush.Core.csproj -->
@@ -636,7 +646,7 @@ The following items remain valid future work, but they are intentionally deferre
 
 ---
 
-## 9  Settings Schema
+## 9 Settings Schema
 
 ```json
 {
@@ -644,12 +654,12 @@ The following items remain valid future work, but they are intentionally deferre
   "hotkey": "Ctrl+Shift+H",
   "language": "en",
   "transcriptionModel": "nemotron",
-    "partialsInOverlay": true,
-    "typeCommittedTextOnly": true,
+  "partialsInOverlay": true,
+  "typeCommittedTextOnly": true,
   "overlayPosition": "bottom-center",
   "overlayOpacity": 0.85,
   "soundEffects": true,
-    "clipboardFallback": false,
+  "clipboardFallback": false,
   "autoStart": false,
   "theme": "system"
 }
@@ -657,9 +667,10 @@ The following items remain valid future work, but they are intentionally deferre
 
 ---
 
-## 10  Platform-Specific Considerations
+## 10 Platform-Specific Considerations
 
 ### Windows
+
 - Use `Microsoft.AI.Foundry.Local.WinML` for GPU/NPU acceleration
 - `RegisterHotKey` / `UnregisterHotKey` via user32.dll for global hotkey
 - `SendInput` with `KEYEVENTF_UNICODE` for keystroke typing (arbitrary Unicode, no VK mapping)
@@ -667,6 +678,7 @@ The following items remain valid future work, but they are intentionally deferre
 - Optional: MSIX packaging for Store distribution
 
 ### macOS (Apple Silicon)
+
 - Use `Microsoft.AI.Foundry.Local` (cross-platform variant)
 - `CGEventTapCreate` for global hotkey capture (requires Accessibility permission)
 - `CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` for keystroke typing
@@ -674,6 +686,7 @@ The following items remain valid future work, but they are intentionally deferre
 - `.app` bundle with `Info.plist` for proper macOS integration
 
 ### Linux
+
 - Use `Microsoft.AI.Foundry.Local` (cross-platform variant)
 - X11 is the supported Linux target for v1; `XGrabKey` / `XUngrabKey` are acceptable there
 - Prefer bundled native typing support or `libxdo` P/Invoke rather than requiring `xdotool` as an end-user dependency
@@ -683,7 +696,7 @@ The following items remain valid future work, but they are intentionally deferre
 
 ---
 
-## 11  Data Flow Diagram
+## 11 Data Flow Diagram
 
 ```
            HOTKEY PRESSED                     HOTKEY RELEASED
@@ -722,25 +735,25 @@ The following items remain valid future work, but they are intentionally deferre
 
 ---
 
-## 12  Risks & Mitigations
+## 12 Risks & Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Nemotron model large download (~1-2 GB) | Bad first-run experience | Show progress bar; allow background download; cache model |
-| Global hotkey conflicts | Hotkey already in use | Allow user to customize; show clear error if registration fails |
-| Accessibility permissions (macOS) | Hotkey won't work without it | Prompt with explanation on first launch; guide user to settings |
-| Cross-platform audio backend gaps | Audio capture fails on macOS/Linux | Validate backend early, keep capture behind an abstraction, and choose separate backends per OS if needed |
-| Foundry Local SDK API changes | Pre-release SDK breaks | Pin NuGet version; wrap SDK calls in abstraction layer |
-| Keystroke injection blocked by app | Some apps (e.g. games, secure fields) ignore `SendInput` | Detect and warn user; offer optional clipboard-paste fallback |
-| Typing speed vs. transcription speed | Chunks arrive faster than typing can finish | Queue chunks; use batch `SendInput` (all chars in one call) for near-instant delivery |
-| Multiple mic devices | Wrong mic selected | Let user choose device in settings; default to system default |
-| Unstable partial transcripts | Rewrites or backspaces could damage active user text | Show unstable partials in overlay only; type committed deltas into the app |
-| Wayland incompatibilities | Linux feature gaps at launch | Support X11 for v1, keep Wayland best-effort until demand and test coverage increase |
-| External helper dependencies | Packaging becomes fragile | Bundle native helpers when possible and avoid required external CLI tools for end users |
+| Risk                                    | Impact                                                   | Mitigation                                                                                                |
+| --------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Nemotron model large download (~1-2 GB) | Bad first-run experience                                 | Show progress bar; allow background download; cache model                                                 |
+| Global hotkey conflicts                 | Hotkey already in use                                    | Allow user to customize; show clear error if registration fails                                           |
+| Accessibility permissions (macOS)       | Hotkey won't work without it                             | Prompt with explanation on first launch; guide user to settings                                           |
+| Cross-platform audio backend gaps       | Audio capture fails on macOS/Linux                       | Validate backend early, keep capture behind an abstraction, and choose separate backends per OS if needed |
+| Foundry Local SDK API changes           | Pre-release SDK breaks                                   | Pin NuGet version; wrap SDK calls in abstraction layer                                                    |
+| Keystroke injection blocked by app      | Some apps (e.g. games, secure fields) ignore `SendInput` | Detect and warn user; offer optional clipboard-paste fallback                                             |
+| Typing speed vs. transcription speed    | Chunks arrive faster than typing can finish              | Queue chunks; use batch `SendInput` (all chars in one call) for near-instant delivery                     |
+| Multiple mic devices                    | Wrong mic selected                                       | Let user choose device in settings; default to system default                                             |
+| Unstable partial transcripts            | Rewrites or backspaces could damage active user text     | Show unstable partials in overlay only; type committed deltas into the app                                |
+| Wayland incompatibilities               | Linux feature gaps at launch                             | Support X11 for v1, keep Wayland best-effort until demand and test coverage increase                      |
+| External helper dependencies            | Packaging becomes fragile                                | Bundle native helpers when possible and avoid required external CLI tools for end users                   |
 
 ---
 
-## 13  Future Enhancements (Post-MVP)
+## 13 Future Enhancements (Post-MVP)
 
 These are NOT in the MVP scope but inform architectural decisions:
 
@@ -754,7 +767,7 @@ These are NOT in the MVP scope but inform architectural decisions:
 
 ---
 
-## 14  Current State & Known Workarounds
+## 14 Current State & Known Workarounds
 
 - Hush pins pre-release `Microsoft.AI.Foundry.Local` NuGet packages (see `NuGet.config` for the local package source).
 - The managed Foundry Local SDK handles native-asset resolution and DLL path wiring. Hush supplies an `AppName` via `FoundryRuntimeConfiguration`.
@@ -767,7 +780,7 @@ These are NOT in the MVP scope but inform architectural decisions:
 
 ---
 
-## 15  Open Questions
+## 15 Open Questions
 
 1. **Foundry Local stream semantics** — Need to confirm the exact C# event contract for live transcription: interim-only, final-only, or both, and whether the model alias is exactly `"nemotron"` in the catalog.
 2. **Cross-platform capture backend** — Need to confirm the most reliable macOS/Linux audio backend and whether NAudio is sufficient anywhere beyond Windows.
@@ -776,7 +789,7 @@ These are NOT in the MVP scope but inform architectural decisions:
 
 ---
 
-## 16  Getting Started (Quick Start for Contributors)
+## 16 Getting Started (Quick Start for Contributors)
 
 ```bash
 # Clone
@@ -795,15 +808,15 @@ dotnet test
 
 ---
 
-*Last updated: April 7, 2026*
+_Last updated: April 7, 2026_
 
 ---
 
-## 17  Beta Testing Notes
+## 17 Beta Testing Notes
 
 > **Note for contributors:** This section describes a temporary model-swap workaround. It may become unnecessary as the Foundry Local SDK evolves.
 
-### 17.1  Nemotron CPU Model (No GPU Required)
+### 17.1 Nemotron CPU Model (No GPU Required)
 
 The default Foundry Local catalog only includes **Whisper** (all variants require CUDA GPU).
 For testers without a GPU, a CPU-quantized int4 Nemotron model is available as a workaround.
@@ -828,4 +841,3 @@ For testers without a GPU, a CPU-quantized int4 Nemotron model is available as a
    Hush will load the Nemotron weights under the `whisper-tiny` alias via the SDK.
 
 > **Warning:** This is an unsupported workaround. The model format must be compatible with the Foundry Local ONNX runtime. Accuracy and latency will differ from Whisper. Not recommended for standard setups. GPU users should use `whisper-base` or larger.
-

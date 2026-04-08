@@ -91,9 +91,9 @@ public sealed class DictationSessionTests
     }
 
     [Fact]
-    public async Task OnInterimText_RaisedForInterimResults_AndOnlyCommittedDeltasAreTyped()
+    public async Task StreamingLoop_MirrorsDisplayTextProgressively()
     {
-        // Arrange
+        // Arrange — cumulative DisplayText simulates the engine's actual output.
         var engineMock = new Mock<ITranscriptionEngine>();
         var captureMock = new Mock<IAudioCaptureService>();
         var outputMock = new Mock<ITextOutputService>();
@@ -105,17 +105,22 @@ public sealed class DictationSessionTests
         var results = new[]
         {
             new TranscriptionResult("see you jason", "see you jason", IsFinal: false),
-            new TranscriptionResult("have fun", " have fun", IsFinal: false),
-            new TranscriptionResult("we'll miss you", " we'll miss you", IsFinal: true)
+            new TranscriptionResult("see you jason have fun", " have fun", IsFinal: false),
+            new TranscriptionResult("see you jason have fun we'll miss you", " we'll miss you", IsFinal: true)
         };
 
         engineMock
             .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
             .Returns(results.ToAsyncEnumerable());
 
+        var typedTexts = new List<string>();
         outputMock
             .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .Returns<string, CancellationToken>((text, _) =>
+            {
+                typedTexts.Add(text);
+                return Task.CompletedTask;
+            });
 
         outputMock
             .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -132,19 +137,24 @@ public sealed class DictationSessionTests
         await session.StartAsync();
         await session.StopAsync();
 
-        // Assert
-        Assert.Contains("see you jason", interimTexts);
-        Assert.Contains("we'll miss you", interimTexts);
-        Assert.Contains(" we'll miss you", committedChunks);
-        outputMock.Verify(o => o.TypeTextAsync("see you jason", It.IsAny<CancellationToken>()), Times.Once);
-        outputMock.Verify(o => o.TypeTextAsync(" have fun", It.IsAny<CancellationToken>()), Times.Once);
-        outputMock.Verify(o => o.TypeTextAsync(" we'll miss you", It.IsAny<CancellationToken>()), Times.Once);
+        // Assert — text grows progressively via suffix appends, no backspaces.
+        Assert.Equal(3, interimTexts.Count);
+        Assert.Equal(3, committedChunks.Count);
+
+        // Each typed chunk is the suffix diff from the previous DisplayText.
+        Assert.Equal("see you jason", typedTexts[0]);
+        Assert.Equal(" have fun", typedTexts[1]);
+        Assert.Equal(" we'll miss you", typedTexts[2]);
+
+        // No backspaces needed — DisplayText grew monotonically.
         outputMock.Verify(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task BackspaceCorrections_AreDrivenByCommitDeltas()
+    public async Task DisplayTextRevision_DrivesBackspaceAndRetype()
     {
+        // When DisplayText changes in a non-monotonic way (model revises),
+        // the session should backspace the changed tail and retype.
         var engineMock = new Mock<ITranscriptionEngine>();
         var captureMock = new Mock<IAudioCaptureService>();
         var outputMock = new Mock<ITextOutputService>();
@@ -159,11 +169,11 @@ public sealed class DictationSessionTests
             .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
             .Returns(new[]
             {
+                // Interim: "It's not wor"
                 new TranscriptionResult("It's not wor", "It's not wor", IsFinal: false),
+                // Final revision: "It's working" — CommittedDelta is "working".
+                // The loop types CommittedDelta directly, so both get typed.
                 new TranscriptionResult("It's working", "working", IsFinal: true)
-                {
-                    BackspaceCount = 7
-                }
             }.ToAsyncEnumerable());
 
         outputMock
@@ -187,8 +197,10 @@ public sealed class DictationSessionTests
         await session.StartAsync();
         await session.StopAsync();
 
+        // Both CommittedDeltas are typed directly.
         Assert.Equal(new[] { "It's not wor", "working" }, typedTexts);
-        Assert.Equal(new[] { 7 }, backspaceCounts);
+        // No backspaces — CommittedDelta is typed as-is.
+        Assert.Empty(backspaceCounts);
 
         await session.DisposeAsync();
     }

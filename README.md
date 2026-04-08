@@ -108,16 +108,16 @@ The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifyi
 
 ## Milestones
 
-| #   | Milestone                           | Status                                             |
-| --- | ----------------------------------- | -------------------------------------------------- |
-| 0   | Project skeleton                    | ✅ Done                                            |
-| 1   | Console transcription proof-of-life | ✅ Done                                            |
-| 2   | Global hotkey + live typing         | ✅ Done                                            |
-| 3   | System tray + overlay UI            | ✅ Done                                            |
-| 4   | Settings & polish                   | ✅ Done                                            |
-| 5   | Cross-platform (macOS + Linux)      | ✅ Done (hotkeys + text output; audio capture TBD) |
-| 6   | Packaging & distribution            | ✅ Done (publish profiles, single-exe)             |
-| 7   | Streaming defaults + overlay refresh| ✅ Done (managed live audio via SDK 1.0.0-dev) |
+| #   | Milestone                            | Status                                             |
+| --- | ------------------------------------ | -------------------------------------------------- |
+| 0   | Project skeleton                     | ✅ Done                                            |
+| 1   | Console transcription proof-of-life  | ✅ Done                                            |
+| 2   | Global hotkey + live typing          | ✅ Done                                            |
+| 3   | System tray + overlay UI             | ✅ Done                                            |
+| 4   | Settings & polish                    | ✅ Done                                            |
+| 5   | Cross-platform (macOS + Linux)       | ✅ Done (hotkeys + text output; audio capture TBD) |
+| 6   | Packaging & distribution             | ✅ Done (publish profiles, single-exe)             |
+| 7   | Streaming defaults + overlay refresh | ✅ Done (managed live audio via SDK 1.0.0-dev)     |
 
 ## Privacy
 

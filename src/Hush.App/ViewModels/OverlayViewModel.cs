@@ -54,11 +54,27 @@ public sealed partial class OverlayViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsPreparing))]
     private string? _errorMessage;
 
+    /// <summary>
+    /// Latest streaming-diff debug line from the dictation session.
+    /// Shows prefix length, erase count, typed/target text.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasDebugInfo))]
+    private string? _debugInfo;
+
+    /// <summary>Whether to show the debug panel in the overlay.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasDebugInfo))]
+    private bool _showDebugPanel;
+
     private string _committedTranscript = string.Empty;
     private bool _showPartialTranscript = true;
 
     /// <summary>True when <see cref="ErrorMessage"/> is non-empty.</summary>
     public bool HasError => !string.IsNullOrEmpty(ErrorMessage);
+
+    /// <summary>True when the debug panel should be visible.</summary>
+    public bool HasDebugInfo => ShowDebugPanel && !string.IsNullOrEmpty(DebugInfo);
 
     /// <summary>True when <see cref="TranscriptText"/> contains visible text.</summary>
     public bool HasTranscript => !string.IsNullOrWhiteSpace(TranscriptText);

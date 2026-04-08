@@ -45,4 +45,7 @@ public sealed class HushSettings
 
     /// <summary>Whether Hush should launch at OS login.</summary>
     public bool AutoStart { get; set; } = false;
+
+    /// <summary>Whether to show the streaming-diff debug panel in the overlay.</summary>
+    public bool ShowDebugOverlay { get; set; } = false;
 }

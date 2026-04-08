@@ -29,6 +29,12 @@ public interface IDictationSession : IAsyncDisposable
     /// </summary>
     event Action<float>? OnAudioLevel;
 
+    /// <summary>
+    /// Raised with diagnostic information about the streaming diff applied to the
+    /// target application. Useful for debugging prefix-length and erase behaviour.
+    /// </summary>
+    event Action<string>? OnDebugInfo;
+
     /// <summary>Raised when the session has fully stopped and all output has been flushed.</summary>
     event Action? OnSessionStopped;
 

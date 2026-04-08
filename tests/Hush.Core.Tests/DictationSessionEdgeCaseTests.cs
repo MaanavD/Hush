@@ -127,14 +127,15 @@ public sealed class DictationSessionEdgeCaseTests
         await session.DisposeAsync();
     }
 
-    // ── Interim-only results (no committed text yet) ─────────────────────
+    // ── Interim-only results (still typed via DisplayText mirroring) ────
 
     [Fact]
-    public async Task InterimOnlyResults_NothingTyped()
+    public async Task InterimOnlyResults_StillTypedViaDisplayTextMirroring()
     {
         var engineMock = new Mock<ITranscriptionEngine>();
         var captureMock = new Mock<IAudioCaptureService>();
         var outputMock = new Mock<ITextOutputService>();
+        var typedTexts = new List<string>();
 
         engineMock
             .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
@@ -150,6 +151,18 @@ public sealed class DictationSessionEdgeCaseTests
             .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
             .Returns(results.ToAsyncEnumerable());
 
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>((text, _) =>
+            {
+                typedTexts.Add(text);
+                return Task.CompletedTask;
+            });
+
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         var interimTexts = new List<string>();
         var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
         session.OnInterimText += t => interimTexts.Add(t);
@@ -157,12 +170,13 @@ public sealed class DictationSessionEdgeCaseTests
         await session.StartAsync();
         await session.StopAsync();
 
-        // Interim text should have been raised...
-        Assert.NotEmpty(interimTexts);
-        // ...but nothing typed
-        outputMock.Verify(
-            o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        // Interim text should have been raised to the overlay.
+        Assert.Equal(2, interimTexts.Count);
+
+        // With CommittedDelta-based typing, interim-only results (empty
+        // CommittedDelta) are NOT typed into the target app — they only
+        // appear in the overlay. Typing happens via CommittedDelta.
+        Assert.Empty(typedTexts);
 
         await session.DisposeAsync();
     }

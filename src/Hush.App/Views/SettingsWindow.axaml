@@ -136,7 +136,22 @@
                           IsChecked="{Binding AutoStart}"
                           FontSize="13"
                           Foreground="{StaticResource Hush.Text.Primary.Brush}"
-                          Margin="0 0 0 24" />
+                          Margin="0 0 0 6" />
+                <CheckBox IsChecked="{Binding ShowDebugOverlay}"
+                          FontSize="13"
+                          Foreground="{StaticResource Hush.Text.Primary.Brush}"
+                          Margin="0 0 0 2">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Show debug overlay"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Streaming diff diagnostics in overlay"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                </CheckBox>
+                <TextBlock Text="" Margin="0 0 0 24" />
+
 
                 <!-- ─ Section: Appearance ────────────────────────────────── -->
                 <TextBlock Text="APPEARANCE"

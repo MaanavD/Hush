@@ -465,8 +465,11 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (string.IsNullOrEmpty(_segmentBase))
             return segmentText;
 
+        // Preserve the casing from _segmentBase for the overlapping prefix so
+        // that DisplayText remains stable across chunks even when the ASR model
+        // returns inconsistent capitalisation.
         if (segmentText.StartsWith(_segmentBase, StringComparison.OrdinalIgnoreCase))
-            return segmentText;
+            return _segmentBase + segmentText[_segmentBase.Length..];
 
         return _segmentBase + " " + segmentText;
     }
@@ -606,8 +609,10 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (string.IsNullOrEmpty(previousText))
             return currentText;
 
+        // Preserve casing from previousText for the overlapping prefix so
+        // DisplayText stays ordinal-stable across chunks.
         if (currentText.StartsWith(previousText, StringComparison.OrdinalIgnoreCase))
-            return currentText;
+            return previousText + currentText[previousText.Length..];
 
         if (previousText.StartsWith(currentText, StringComparison.OrdinalIgnoreCase))
             return previousText;
