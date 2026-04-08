@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using CommunityToolkit.Mvvm.ComponentModel;
 using Hush.Core.Configuration;
 using Hush.Core.Input;
@@ -61,16 +63,13 @@ public sealed partial class MainViewModel : ObservableObject
         _overlayVm = overlayVm;
         _logger = logger ?? NullLogger<MainViewModel>.Instance;
 
+        _overlayVm.OverlayPosition = settings.OverlayPosition;
+        _overlayVm.OverlayOpacity = settings.OverlayOpacity;
+
         SettingsViewModel = new SettingsViewModel(settings);
 
         _hotkeyService.HotkeyPressed += OnHotkeyPressed;
         _hotkeyService.HotkeyReleased += OnHotkeyReleased;
-
-        _dictationSession.OnInterimText += text =>
-            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-            {
-                _overlayVm.InterimText = text;
-            });
 
         _dictationSession.OnAudioLevel += level =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -78,11 +77,24 @@ public sealed partial class MainViewModel : ObservableObject
                 _overlayVm.AudioLevel = level;
             });
 
+        _dictationSession.OnInterimText += text =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.UpdateInterimTranscript(text);
+            });
+
+        _dictationSession.OnCommittedChunk += chunk =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.AppendCommittedTranscript(chunk);
+            });
+
         _dictationSession.OnSessionStopped += () =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
                 _overlayVm.IsListening = false;
                 _overlayVm.AudioLevel = 0f;
+                _overlayVm.ClearSessionTranscript();
                 IsListening = false;
             });
     }
@@ -110,8 +122,31 @@ public sealed partial class MainViewModel : ObservableObject
 
             IsModelReady = true;
             _overlayVm.IsModelReady = true;
-            StatusMessage = "Ready — hold Ctrl+Shift+H to dictate";
+            StatusMessage = BuildReadyStatusMessage();
             _logger.LogInformation("Hush is ready.");
+
+            // Warm up first-press code paths so the JIT doesn't stall the
+            // initial hotkey press. A quick start/stop also validates that the
+            // default microphone path is actually usable before the first dictation.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _dictationSession.StartAsync(_settings.Language, _settings.StreamingCommit);
+                    await _dictationSession.StopAsync();
+                    _logger.LogDebug("JIT warmup complete.");
+                }
+                catch (Exception ex)
+                {
+                    var message = Hush.App.RuntimeUserMessageBuilder.BuildSessionErrorMessage(ex);
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    {
+                        _overlayVm.ErrorMessage = message;
+                        StatusMessage = $"Error: {message}";
+                    });
+                    _logger.LogWarning(ex, "Startup dictation warmup failed.");
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -132,27 +167,32 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var previousHotkey = _settings.Hotkey;
         SettingsViewModel.Apply();
+
+        string? hotkeyError = null;
+        if (!string.Equals(previousHotkey, _settings.Hotkey, StringComparison.Ordinal))
+        {
+            hotkeyError = TryApplyHotkeyChange(previousHotkey, _settings.Hotkey);
+            if (hotkeyError is not null)
+            {
+                _settings.Hotkey = previousHotkey;
+                SettingsViewModel.Hotkey = previousHotkey;
+            }
+        }
+
         await _settingsService.SaveAsync(_settings, cancellationToken);
         await _autoStart.SetEnabledAsync(_settings.AutoStart, cancellationToken);
 
-        // Re-register the hotkey if it changed.
-        if (!string.Equals(previousHotkey, _settings.Hotkey, StringComparison.Ordinal))
+        _overlayVm.OverlayPosition = _settings.OverlayPosition;
+        _overlayVm.OverlayOpacity = _settings.OverlayOpacity;
+
+        if (hotkeyError is not null)
         {
-            try
-            {
-                _hotkeyService.Unregister();
-                _hotkeyService.Register(_settings.Hotkey);
-                _logger.LogInformation("Hotkey changed to '{Hotkey}'.", _settings.Hotkey);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to re-register hotkey '{Hotkey}'.", _settings.Hotkey);
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    _overlayVm.ErrorMessage = $"Could not register hotkey '{_settings.Hotkey}'. It may be in use by another application.";
-                    StatusMessage = $"Error: {_overlayVm.ErrorMessage}";
-                });
-            }
+            _overlayVm.ErrorMessage = hotkeyError;
+            StatusMessage = $"Error: {hotkeyError}";
+        }
+        else if (IsModelReady)
+        {
+            StatusMessage = BuildReadyStatusMessage();
         }
     }
 
@@ -167,15 +207,15 @@ public sealed partial class MainViewModel : ObservableObject
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
             {
                 IsListening = true;
+                _overlayVm.BeginSession(_settings.PartialsInOverlay);
                 _overlayVm.IsListening = true;
-                _overlayVm.InterimText = string.Empty;
                 _overlayVm.ErrorMessage = null;   // Clear previous error on new attempt.
             });
 
             if (_settings.SoundEffects)
                 _ = _soundEffects.PlayStartAsync();
 
-            await _dictationSession.StartAsync();
+            await _dictationSession.StartAsync(_settings.Language, _settings.StreamingCommit);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -187,7 +227,7 @@ public sealed partial class MainViewModel : ObservableObject
                 {
                     _overlayVm.IsListening = false;
                     IsListening = false;
-                    _overlayVm.ErrorMessage = BuildSessionErrorMessage(ex);
+                    _overlayVm.ErrorMessage = Hush.App.RuntimeUserMessageBuilder.BuildSessionErrorMessage(ex);
                     StatusMessage = $"Error: {_overlayVm.ErrorMessage}";
                 });
             }
@@ -219,18 +259,35 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    private static string BuildSessionErrorMessage(Exception ex) => ex switch
+    private string? TryApplyHotkeyChange(string previousHotkey, string requestedHotkey)
     {
-        // Distinguish common, user-actionable failures from generic ones.
-        InvalidOperationException { Message: var m } when m.Contains("microphone", StringComparison.OrdinalIgnoreCase)
-            || m.Contains("audio", StringComparison.OrdinalIgnoreCase)
-            || m.Contains("device", StringComparison.OrdinalIgnoreCase)
-            => "Microphone unavailable. Check your audio device and permissions.",
-        InvalidOperationException { Message: var m } when m.Contains("elevated", StringComparison.OrdinalIgnoreCase)
-            || m.Contains("administrator", StringComparison.OrdinalIgnoreCase)
-            => m, // UIPI message is already user-readable.
-        PlatformNotSupportedException { Message: var m } => m,
-        OperationCanceledException => "Session was cancelled.",
-        _ => "Could not start dictation. Check ~/.hush/hush.log for details."
-    };
+        try
+        {
+            _hotkeyService.Unregister();
+            _hotkeyService.Register(requestedHotkey);
+            _logger.LogInformation("Hotkey changed to '{Hotkey}'.", requestedHotkey);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to re-register hotkey '{Hotkey}'.", requestedHotkey);
+            TryRestoreHotkey(previousHotkey);
+            return Hush.App.RuntimeUserMessageBuilder.BuildHotkeyRegistrationMessage(ex, requestedHotkey);
+        }
+    }
+
+    private void TryRestoreHotkey(string hotkey)
+    {
+        try
+        {
+            _hotkeyService.Unregister();
+            _hotkeyService.Register(hotkey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to restore previous hotkey '{Hotkey}'.", hotkey);
+        }
+    }
+
+    private string BuildReadyStatusMessage() => $"Ready — hold {_settings.Hotkey} to dictate";
 }

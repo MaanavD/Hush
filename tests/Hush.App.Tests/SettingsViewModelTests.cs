@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Hush.App.ViewModels;
 using Hush.Core.Configuration;
 
@@ -21,8 +23,7 @@ public sealed class SettingsViewModelTests
             OverlayPosition = "top-right",
             OverlayOpacity = 0.42,
             SoundEffects = false,
-            AutoStart = true,
-            Theme = "light"
+            AutoStart = true
         };
 
         var vm = new SettingsViewModel(settings);
@@ -35,7 +36,6 @@ public sealed class SettingsViewModelTests
         Assert.Equal(0.42, vm.OverlayOpacity);
         Assert.False(vm.SoundEffects);
         Assert.True(vm.AutoStart);
-        Assert.Equal("light", vm.Theme);
     }
 
     [Fact]
@@ -53,7 +53,6 @@ public sealed class SettingsViewModelTests
         vm.OverlayOpacity = 0.7;
         vm.SoundEffects = false;
         vm.AutoStart = true;
-        vm.Theme = "dark";
 
         // Apply back to settings
         vm.Apply();
@@ -66,7 +65,6 @@ public sealed class SettingsViewModelTests
         Assert.Equal(0.7, settings.OverlayOpacity);
         Assert.False(settings.SoundEffects);
         Assert.True(settings.AutoStart);
-        Assert.Equal("dark", settings.Theme);
     }
 
     [Fact]
@@ -110,7 +108,6 @@ public sealed class SettingsViewModelTests
         vm.OverlayOpacity = 0.1;
         vm.SoundEffects = false;
         vm.AutoStart = true;
-        vm.Theme = "light";
 
         Assert.Contains("Hotkey", raised);
         Assert.Contains("Language", raised);
@@ -120,7 +117,6 @@ public sealed class SettingsViewModelTests
         Assert.Contains("OverlayOpacity", raised);
         Assert.Contains("SoundEffects", raised);
         Assert.Contains("AutoStart", raised);
-        Assert.Contains("Theme", raised);
     }
 
     // ── Edge cases ───────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 

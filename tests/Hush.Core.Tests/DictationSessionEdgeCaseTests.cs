@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Hush.Core.Audio;
 using Hush.Core.Output;
 using Hush.Core.Session;
@@ -62,7 +64,7 @@ public sealed class DictationSessionEdgeCaseTests
         var outputMock = new Mock<ITextOutputService>();
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         engineMock
@@ -91,7 +93,7 @@ public sealed class DictationSessionEdgeCaseTests
         var typedTexts = new List<string>();
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var results = new[]
@@ -135,7 +137,7 @@ public sealed class DictationSessionEdgeCaseTests
         var outputMock = new Mock<ITextOutputService>();
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var results = new[]
@@ -179,7 +181,7 @@ public sealed class DictationSessionEdgeCaseTests
             .Callback<Action<float>>(h => capturedHandler = h);
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         engineMock
             .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
@@ -234,7 +236,7 @@ public sealed class DictationSessionEdgeCaseTests
         cts.Cancel();
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         engineMock
             .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
@@ -246,7 +248,7 @@ public sealed class DictationSessionEdgeCaseTests
         // It may throw OperationCanceledException or return successfully.
         try
         {
-            await session.StartAsync(cts.Token);
+            await session.StartAsync(cancellationToken: cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -266,7 +268,7 @@ public sealed class DictationSessionEdgeCaseTests
         var outputMock = new Mock<ITextOutputService>();
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var results = new[]
@@ -311,7 +313,7 @@ public sealed class DictationSessionEdgeCaseTests
         var output = new Mock<ITextOutputService>();
 
         engine
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         engine
             .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))

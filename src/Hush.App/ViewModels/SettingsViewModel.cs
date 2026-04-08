@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using CommunityToolkit.Mvvm.ComponentModel;
 using Hush.Core.Configuration;
 
@@ -17,8 +19,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _overlayPosition;
     [ObservableProperty] private double _overlayOpacity;
     [ObservableProperty] private bool _soundEffects;
+    [ObservableProperty] private bool _streamingCommit;
     [ObservableProperty] private bool _autoStart;
-    [ObservableProperty] private string _theme;
 
     public SettingsViewModel(HushSettings settings)
     {
@@ -30,8 +32,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _overlayPosition = settings.OverlayPosition;
         _overlayOpacity = settings.OverlayOpacity;
         _soundEffects = settings.SoundEffects;
+        _streamingCommit = settings.StreamingCommit;
         _autoStart = settings.AutoStart;
-        _theme = settings.Theme;
     }
 
     /// <summary>Copies VM state back into the backing <see cref="HushSettings"/> object.</summary>
@@ -44,7 +46,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.OverlayPosition = OverlayPosition;
         _settings.OverlayOpacity = OverlayOpacity;
         _settings.SoundEffects = SoundEffects;
+        _settings.StreamingCommit = StreamingCommit;
         _settings.AutoStart = AutoStart;
-        _settings.Theme = Theme;
     }
 }

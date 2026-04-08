@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 namespace Hush.Core.Transcription;
 
 /// <summary>
@@ -22,4 +24,12 @@ public sealed record TranscriptionResult(
     string CommittedDelta,
     bool IsFinal,
     TimeSpan? StartTime = null,
-    TimeSpan? EndTime = null);
+    TimeSpan? EndTime = null)
+{
+    /// <summary>
+    /// Number of characters to erase (via backspace) before typing
+    /// <see cref="CommittedDelta"/>. Used for speculative commit corrections
+    /// when the model revises previously committed text.
+    /// </summary>
+    public int BackspaceCount { get; init; }
+}

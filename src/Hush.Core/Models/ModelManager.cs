@@ -1,6 +1,9 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Hush.Core.Transcription;
 
 namespace Hush.Core.Models;
 
@@ -24,7 +27,7 @@ public sealed class ModelManager : IModelManager, IAsyncDisposable
         if (!_managerCreated && !FoundryLocalManager.IsInitialized)
         {
             await FoundryLocalManager.CreateAsync(
-                new Microsoft.AI.Foundry.Local.Configuration { AppName = "Hush" },
+                FoundryRuntimeConfiguration.Create("Hush", _logger),
                 NullLogger.Instance);
         }
         _managerCreated = true;
@@ -52,7 +55,7 @@ public sealed class ModelManager : IModelManager, IAsyncDisposable
         var manager = FoundryLocalManager.Instance;
 
         if (OperatingSystem.IsWindows() && downloadProgress is not null)
-            await manager.EnsureEpsDownloadedAsync();
+            await manager.DownloadAndRegisterEpsAsync();
 
         var catalog = await manager.GetCatalogAsync(cancellationToken);
         var model = await catalog.GetModelAsync(modelAlias, cancellationToken)

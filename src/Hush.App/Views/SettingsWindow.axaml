@@ -114,16 +114,24 @@
                            Foreground="{StaticResource Hush.Text.Secondary.Brush}"
                            Margin="0 0 0 10" />
 
-                <CheckBox Content="Show interim text in overlay"
-                          IsChecked="{Binding PartialsInOverlay}"
-                          FontSize="13"
-                          Foreground="{StaticResource Hush.Text.Primary.Brush}"
-                          Margin="0 0 0 6" />
                 <CheckBox Content="Sound effects on start / stop"
                           IsChecked="{Binding SoundEffects}"
                           FontSize="13"
                           Foreground="{StaticResource Hush.Text.Primary.Brush}"
                           Margin="0 0 0 6" />
+                <CheckBox IsChecked="{Binding StreamingCommit}"
+                          FontSize="13"
+                          Foreground="{StaticResource Hush.Text.Primary.Brush}"
+                          Margin="0 0 0 2">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Stream text while speaking"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Off = all text appears on key release"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                </CheckBox>
                 <CheckBox Content="Launch at login"
                           IsChecked="{Binding AutoStart}"
                           FontSize="13"

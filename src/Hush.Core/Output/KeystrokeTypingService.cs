@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,6 +29,9 @@ public sealed class KeystrokeTypingService : ITextOutputService
         if (string.IsNullOrEmpty(text))
             return Task.CompletedTask;
 
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled(cancellationToken);
+
         if (OperatingSystem.IsWindows())
         {
             return _useClipboardFallback
@@ -43,6 +48,29 @@ public sealed class KeystrokeTypingService : ITextOutputService
         throw new PlatformNotSupportedException(
             $"Text output is not supported on this platform ({RuntimeInformation.OSDescription}).");
     }
+
+    /// <inheritdoc/>
+    public Task SendBackspacesAsync(int count, CancellationToken cancellationToken = default)
+    {
+        if (count <= 0)
+            return Task.CompletedTask;
+
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled(cancellationToken);
+
+        if (OperatingSystem.IsWindows())
+            return WindowsKeystrokeTyper.SendBackspacesAsync(count, cancellationToken);
+
+        if (OperatingSystem.IsMacOS())
+            return MacKeystrokeTyper.SendBackspacesAsync(count, cancellationToken);
+
+        if (OperatingSystem.IsLinux())
+            return LinuxKeystrokeTyper.SendBackspacesAsync(count, cancellationToken);
+
+        throw new PlatformNotSupportedException(
+            $"Text output is not supported on this platform ({RuntimeInformation.OSDescription}).");
+    }
+
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -102,16 +130,20 @@ internal static class WindowsKeystrokeTyper
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(ushort vKey);
 
+    private const ushort VK_BACK = 0x08;
+
     internal static Task TypeAsync(string text, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var _ = WindowsInputCoordinator.SuppressHotkeyReleaseDetection();
 
             var pressedModifiers = GetPressedModifierVks();
             if (pressedModifiers.Count > 0)
+            {
                 SendModifierKeys(pressedModifiers, KEYEVENTF_KEYUP);
+                Thread.Sleep(5);
+            }
 
             try
             {
@@ -119,10 +151,64 @@ internal static class WindowsKeystrokeTyper
             }
             finally
             {
-                if (pressedModifiers.Count > 0)
-                    SendModifierKeys(pressedModifiers, 0);
+                var modifiersToRestore = GetModifiersToRestore(pressedModifiers);
+                if (modifiersToRestore.Count > 0)
+                    SendModifierKeys(modifiersToRestore, 0);
             }
         }, cancellationToken);
+    }
+
+    internal static Task SendBackspacesAsync(int count, CancellationToken cancellationToken)
+    {
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var pressedModifiers = GetPressedModifierVks();
+            if (pressedModifiers.Count > 0)
+            {
+                SendModifierKeys(pressedModifiers, KEYEVENTF_KEYUP);
+                Thread.Sleep(5);
+            }
+
+            try
+            {
+                var inputs = new INPUT[count * 2];
+                for (int i = 0; i < count; i++)
+                {
+                    inputs[i * 2]     = MakeVkInput(VK_BACK, 0);
+                    inputs[i * 2 + 1] = MakeVkInput(VK_BACK, KEYEVENTF_KEYUP);
+                }
+
+                SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+            }
+            finally
+            {
+                var modifiersToRestore = GetModifiersToRestore(pressedModifiers);
+                if (modifiersToRestore.Count > 0)
+                    SendModifierKeys(modifiersToRestore, 0);
+            }
+        }, cancellationToken);
+    }
+
+    internal static IReadOnlyList<ushort> GetModifiersToRestore(
+        IReadOnlyList<ushort> releasedModifiers,
+        IReadOnlyCollection<ushort>? physicallyPressedModifiers = null)
+    {
+        if (releasedModifiers.Count == 0)
+            return Array.Empty<ushort>();
+
+        physicallyPressedModifiers ??= GetPressedModifierVks();
+        var physicallyPressedSet = new HashSet<ushort>(physicallyPressedModifiers);
+
+        var modifiersToRestore = new List<ushort>(releasedModifiers.Count);
+        foreach (ushort modifier in releasedModifiers)
+        {
+            if (physicallyPressedSet.Contains(modifier))
+                modifiersToRestore.Add(modifier);
+        }
+
+        return modifiersToRestore;
     }
 
     private static void SendUnicodeString(string text)
@@ -287,7 +373,6 @@ internal static class WindowsClipboardTyper
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                using var _ = WindowsInputCoordinator.SuppressHotkeyReleaseDetection();
 
                 pressedModifiers = GetPressedModifierVks();
                 if (pressedModifiers.Count > 0)
@@ -301,7 +386,11 @@ internal static class WindowsClipboardTyper
                 TrySetClipboardText(savedText ?? string.Empty);
 
                 if (pressedModifiers.Count > 0)
-                    SendKeys(pressedModifiers, 0);
+                {
+                    var modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(pressedModifiers);
+                    if (modifiersToRestore.Count > 0)
+                        SendKeys(modifiersToRestore, 0);
+                }
 
                 tcs.TrySetResult();
             }
@@ -310,7 +399,11 @@ internal static class WindowsClipboardTyper
                 try
                 {
                     if (pressedModifiers is { Count: > 0 })
-                        SendKeys(pressedModifiers, 0);
+                    {
+                        var modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(pressedModifiers);
+                        if (modifiersToRestore.Count > 0)
+                            SendKeys(modifiersToRestore, 0);
+                    }
                 }
                 catch
                 {
@@ -472,6 +565,9 @@ internal static class MacKeystrokeTyper
     [DllImport(CG)] private static extern void CGEventPost(uint tap, nint @event);
     [DllImport(CF)] private static extern void CFRelease(nint cf);
 
+    // macOS virtual key code for Delete (Backspace).
+    private const ushort kVK_Delete = 0x33;
+
     internal static Task TypeAsync(string text, CancellationToken cancellationToken)
     {
         // Each Unicode code unit is sent as a key-down + key-up event with no
@@ -490,6 +586,24 @@ internal static class MacKeystrokeTyper
 
             nint up = CGEventCreateKeyboardEvent(0, 0, false);
             CGEventKeyboardSetUnicodeString(up, 1, arr);
+            CGEventPost(kCGHIDEventTap, up);
+            CFRelease(up);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    internal static Task SendBackspacesAsync(int count, CancellationToken cancellationToken)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            nint down = CGEventCreateKeyboardEvent(0, kVK_Delete, true);
+            CGEventPost(kCGHIDEventTap, down);
+            CFRelease(down);
+
+            nint up = CGEventCreateKeyboardEvent(0, kVK_Delete, false);
             CGEventPost(kCGHIDEventTap, up);
             CFRelease(up);
         }
@@ -518,6 +632,9 @@ internal static class LinuxKeystrokeTyper
 
     [DllImport(Xtst)] private static extern int XTestFakeKeyEvent(
         nint display, uint keycode, bool isPress, ulong delay);
+
+    // X11 keysym for BackSpace.
+    private const ulong XK_BackSpace = 0xFF08;
 
     internal static Task TypeAsync(string text, CancellationToken cancellationToken)
     {
@@ -559,6 +676,47 @@ internal static class LinuxKeystrokeTyper
             // Give the X server a moment to process the final event, then restore the scratch
             // keycode to a neutral state (no keysym).
             XSync(display, false);
+            ulong[] clear = [0UL, 0UL];
+            XChangeKeyboardMapping(display, scratch, 2, clear, 1);
+            XSync(display, false);
+        }
+        finally
+        {
+            XCloseDisplay(display);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    internal static Task SendBackspacesAsync(int count, CancellationToken cancellationToken)
+    {
+        if (count <= 0) return Task.CompletedTask;
+
+        nint display = XOpenDisplay(null);
+        if (display == 0)
+            throw new InvalidOperationException(
+                "Cannot connect to X11 display. Ensure the DISPLAY environment variable is set.");
+
+        try
+        {
+            XDisplayKeycodes(display, out _, out int maxKeycode);
+            int scratch = maxKeycode;
+
+            // Map scratch keycode to BackSpace keysym.
+            ulong[] mapping = [XK_BackSpace, XK_BackSpace];
+            XChangeKeyboardMapping(display, scratch, 2, mapping, 1);
+            XSync(display, false);
+
+            for (int i = 0; i < count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                XTestFakeKeyEvent(display, (uint)scratch, true, 0);
+                XTestFakeKeyEvent(display, (uint)scratch, false, 0);
+            }
+
+            XFlush(display);
+            XSync(display, false);
+
             ulong[] clear = [0UL, 0UL];
             XChangeKeyboardMapping(display, scratch, 2, clear, 1);
             XSync(display, false);

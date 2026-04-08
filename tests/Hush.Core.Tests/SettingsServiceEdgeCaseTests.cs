@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Hush.Core.Configuration;
 using System.Text.Json;
 
@@ -131,6 +133,7 @@ public sealed class SettingsServiceEdgeCaseTests
                 await File.WriteAllTextAsync(tmpPath, json);
                 try { File.Move(tmpPath, settingsPath, overwrite: true); }
                 catch (IOException) { /* Expected race condition */ }
+                catch (UnauthorizedAccessException) { /* Windows overwrite race can surface as access denied */ }
             });
 
             await Task.WhenAll(tasks);

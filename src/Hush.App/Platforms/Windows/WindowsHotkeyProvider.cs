@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using System.Runtime.InteropServices;
 using Hush.Core.Input;
 using Hush.Core.Output;
@@ -8,9 +10,10 @@ namespace Hush.App.Platforms.Windows;
 /// Registers a global hotkey on Windows using <c>RegisterHotKey</c> / <c>UnregisterHotKey</c>
 /// from user32.dll and a message-pump thread to receive <c>WM_HOTKEY</c> messages.
 /// <para>
-/// Key-release detection uses <c>GetAsyncKeyState</c> polling because
-/// <c>RegisterHotKey</c> only delivers a press event; there is no corresponding
-/// key-up message through this API.
+/// Key-release detection tracks <b>physical</b> key-up events through the
+/// low-level keyboard hook. This makes the poller immune to synthetic
+/// modifier key-up/key-down events injected by the text output path,
+/// enabling session-scoped modifier management without false releases.
 /// </para>
 /// </summary>
 public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
@@ -105,6 +108,14 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
     // Physical VKs that belong to the active chord. Release only fires once all are up.
     private ushort[] _trackedReleaseVks = Array.Empty<ushort>();
 
+    // ── Hook-based physical release tracking ─────────────────────────────────
+    // Tracks which chord keys are still physically held by watching for
+    // non-injected WM_KEYUP events in the hook. Synthetic modifier releases
+    // (from the text output path) are injected and therefore ignored, making
+    // the poller immune to the session-scoped modifier management.
+    private readonly HashSet<ushort> _physicallyHeldChordKeys = new();
+    private int _physicallyHeldCount;
+
     /// <inheritdoc/>
     public event EventHandler? HotkeyPressed;
 
@@ -148,6 +159,18 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
                 if (!_keyDown)
                 {
                     _keyDown = true;
+
+                    // Snapshot which chord keys are physically held right now.
+                    // This must happen before the hook is installed and before
+                    // any synthetic key events are injected.
+                    _physicallyHeldChordKeys.Clear();
+                    foreach (var vk2 in _trackedReleaseVks)
+                    {
+                        if ((GetAsyncKeyState(vk2) & 0x8000) != 0)
+                            _physicallyHeldChordKeys.Add(vk2);
+                    }
+                    Volatile.Write(ref _physicallyHeldCount, _physicallyHeldChordKeys.Count);
+
                     // Suppress all keyboard input while dictating.
                     // The hook is installed on this thread which runs GetMessage,
                     // so the pump is present and hook callbacks will fire.
@@ -168,28 +191,17 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
 
     private async Task PollForReleaseAsync()
     {
-        int releaseCount = 0;   // consecutive polls where no chord key remains held
+        int releaseCount = 0;   // consecutive polls where all chord keys are physically released
         while (_keyDown && _registered)
         {
             await Task.Delay(16).ConfigureAwait(false);
 
-            if (WindowsInputCoordinator.IsHotkeyReleaseDetectionSuppressed)
-            {
-                releaseCount = 0;
-                continue;
-            }
+            // Check hook-based physical tracking instead of GetAsyncKeyState.
+            // This is immune to synthetic modifier release/restore events
+            // injected by the text output path during streaming sessions.
+            bool anyPhysicallyHeld = Volatile.Read(ref _physicallyHeldCount) > 0;
 
-            bool anyHeld = false;
-            foreach (var key in _trackedReleaseVks)
-            {
-                if ((GetAsyncKeyState(key) & 0x8000) != 0)
-                {
-                    anyHeld = true;
-                    break;
-                }
-            }
-
-            if (!anyHeld)
+            if (!anyPhysicallyHeld)
             {
                 // Require 2 consecutive polls with every chord key released before firing.
                 // This avoids flushing output while Ctrl/Shift are still physically down.
@@ -210,7 +222,7 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
             }
             else
             {
-                releaseCount = 0;   // reset while any chord key remains down
+                releaseCount = 0;   // reset while any chord key remains physically down
             }
         }
     }
@@ -286,11 +298,14 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
             || keyboard.DwExtraInfo == WindowsInputCoordinator.InjectedExtraInfo)
             return CallNextHookEx(_hook, nCode, wParam, lParam);
 
-        // Let key-UP events for chord keys pass through so the OS key-state
-        // table (read by GetAsyncKeyState) reflects their released state.
-        // Without this, PollForReleaseAsync never sees the keys as released.
+        // Physical chord key release: update our tracking set and let the
+        // event through so the OS key-state table stays consistent.
         if (wParam == WM_KEYUP && Array.IndexOf(_trackedReleaseVks, vkCode) >= 0)
+        {
+            if (_physicallyHeldChordKeys.Remove(vkCode))
+                Interlocked.Decrement(ref _physicallyHeldCount);
             return CallNextHookEx(_hook, nCode, wParam, lParam);
+        }
 
         // Escape cancels the active dictation session and unblocks the keyboard.
         if (vkCode == 0x1B /* VK_ESCAPE */)

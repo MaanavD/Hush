@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Hush.App.ViewModels;
 
 namespace Hush.App.Tests;
@@ -15,12 +17,17 @@ public sealed class OverlayViewModelTests
     {
         var vm = new OverlayViewModel();
         Assert.False(vm.IsListening);
-        Assert.Equal(string.Empty, vm.InterimText);
         Assert.False(vm.IsModelReady);
         Assert.Equal(0.0, vm.ModelDownloadProgress);
         Assert.Equal(0f, vm.AudioLevel);
+        Assert.Equal("bottom-center", vm.OverlayPosition);
+        Assert.Equal(0.85, vm.OverlayOpacity);
         Assert.Null(vm.ErrorMessage);
         Assert.False(vm.HasError);
+        Assert.False(vm.HasTranscript);
+        Assert.False(vm.ShowListeningHint);
+        Assert.Equal(string.Empty, vm.TranscriptText);
+        Assert.True(vm.IsPreparing);
     }
 
     // ── Error state ──────────────────────────────────────────────────────
@@ -50,6 +57,64 @@ public sealed class OverlayViewModelTests
         var vm = new OverlayViewModel();
         vm.ErrorMessage = string.Empty;
         Assert.False(vm.HasError);
+    }
+
+    [Fact]
+    public void BeginSession_WithPartialsEnabled_ClearsTranscript()
+    {
+        var vm = new OverlayViewModel();
+        vm.TranscriptText = "stale text";
+
+        vm.BeginSession(showPartialTranscript: true);
+        vm.IsListening = true;
+
+        Assert.Equal(string.Empty, vm.TranscriptText);
+        Assert.False(vm.HasTranscript);
+        Assert.True(vm.ShowListeningHint);
+    }
+
+    [Fact]
+    public void UpdateInterimTranscript_WithPartialsEnabled_ShowsLiveText()
+    {
+        var vm = new OverlayViewModel();
+        vm.BeginSession(showPartialTranscript: true);
+        vm.IsListening = true;
+
+        vm.UpdateInterimTranscript("hello world");
+
+        Assert.Equal("hello world", vm.TranscriptText);
+        Assert.True(vm.HasTranscript);
+        Assert.False(vm.ShowListeningHint);
+    }
+
+    [Fact]
+    public void AppendCommittedTranscript_WithPartialsDisabled_ShowsCommittedOnly()
+    {
+        var vm = new OverlayViewModel();
+        vm.BeginSession(showPartialTranscript: false);
+        vm.IsListening = true;
+
+        vm.UpdateInterimTranscript("hello unstable");
+        Assert.Equal(string.Empty, vm.TranscriptText);
+
+        vm.AppendCommittedTranscript("hello");
+        vm.AppendCommittedTranscript(" world");
+
+        Assert.Equal("hello world", vm.TranscriptText);
+        Assert.True(vm.HasTranscript);
+    }
+
+    [Fact]
+    public void ClearSessionTranscript_RemovesVisibleText()
+    {
+        var vm = new OverlayViewModel();
+        vm.BeginSession(showPartialTranscript: true);
+        vm.UpdateInterimTranscript("hello world");
+
+        vm.ClearSessionTranscript();
+
+        Assert.Equal(string.Empty, vm.TranscriptText);
+        Assert.False(vm.HasTranscript);
     }
 
     // ── Property change notifications ────────────────────────────────────
@@ -82,17 +147,17 @@ public sealed class OverlayViewModelTests
     }
 
     [Fact]
-    public void InterimText_RaisesPropertyChanged()
+    public void TranscriptText_RaisesDependentProperties()
     {
         var vm = new OverlayViewModel();
-        bool raised = false;
-        vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == "InterimText") raised = true;
-        };
+        var raised = new List<string>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName!);
 
-        vm.InterimText = "hello world";
-        Assert.True(raised);
+        vm.TranscriptText = "hello";
+
+        Assert.Contains("TranscriptText", raised);
+        Assert.Contains("HasTranscript", raised);
+        Assert.Contains("ShowListeningHint", raised);
     }
 
     // ── Audio level ──────────────────────────────────────────────────────
@@ -142,19 +207,31 @@ public sealed class OverlayViewModelTests
         // Phase 2: Model ready
         vm.IsModelReady = true;
         Assert.True(vm.IsModelReady);
+        Assert.False(vm.IsPreparing);
 
         // Phase 3: Listening
         vm.IsListening = true;
-        vm.InterimText = "the quick brown fox";
         vm.AudioLevel = 0.7f;
         Assert.True(vm.IsListening);
-        Assert.Equal("the quick brown fox", vm.InterimText);
 
         // Phase 4: Stopped
         vm.IsListening = false;
         vm.AudioLevel = 0f;
         Assert.False(vm.IsListening);
         Assert.Equal(0f, vm.AudioLevel);
+    }
+
+    [Fact]
+    public void OverlayAppearanceSettings_AreStored()
+    {
+        var vm = new OverlayViewModel
+        {
+            OverlayOpacity = 0.64,
+            OverlayPosition = "top-right"
+        };
+
+        Assert.Equal(0.64, vm.OverlayOpacity);
+        Assert.Equal("top-right", vm.OverlayPosition);
     }
 
     // ── Error during listening ───────────────────────────────────────────
@@ -187,7 +264,6 @@ public sealed class OverlayViewModelTests
         // New session starts
         vm.ErrorMessage = null;
         vm.IsListening = true;
-        vm.InterimText = string.Empty;
 
         Assert.False(vm.HasError);
         Assert.True(vm.IsListening);

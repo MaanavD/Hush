@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 namespace Hush.Core.Configuration;
 
 /// <summary>

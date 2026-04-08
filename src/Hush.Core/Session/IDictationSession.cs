@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 namespace Hush.Core.Session;
 
 /// <summary>
@@ -31,7 +33,19 @@ public interface IDictationSession : IAsyncDisposable
     event Action? OnSessionStopped;
 
     /// <summary>Starts microphone capture and the transcription loop.</summary>
-    Task StartAsync(CancellationToken cancellationToken = default);
+    /// <param name="language">BCP-47 language tag for the transcription model.</param>
+    /// <param name="streamingCommit">
+    /// When <see langword="true"/>, words are committed progressively as they
+    /// stabilise. When <see langword="false"/>, all text is held until the
+    /// session stops (batch mode).
+    /// </param>
+    /// <param name="showSpinner">
+    /// When <see langword="true"/>, a rotating indicator character is animated
+    /// in the focused application while dictation is active. All committed text
+    /// is buffered and typed in one shot after the session ends.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task StartAsync(string language = "en", bool streamingCommit = true, bool showSpinner = false, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Stops microphone capture, signals the transcription session to finalise,

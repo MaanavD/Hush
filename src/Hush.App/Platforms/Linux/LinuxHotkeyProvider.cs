@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Hush.Core.Input;

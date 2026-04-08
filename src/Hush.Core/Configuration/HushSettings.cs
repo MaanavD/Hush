@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 namespace Hush.Core.Configuration;
 
 /// <summary>
@@ -18,9 +20,6 @@ public sealed class HushSettings
     /// <summary>Whether to show unstable interim transcription text in the overlay.</summary>
     public bool PartialsInOverlay { get; set; } = true;
 
-    /// <summary>Whether to type only committed (stable) text into the target app (MVP default).</summary>
-    public bool TypeCommittedTextOnly { get; set; } = true;
-
     /// <summary>Overlay screen position hint.</summary>
     public string OverlayPosition { get; set; } = "bottom-center";
 
@@ -36,9 +35,14 @@ public sealed class HushSettings
     /// </summary>
     public bool ClipboardFallback { get; set; } = false;
 
+    /// <summary>
+    /// When <see langword="true"/>, text is committed to the target application
+    /// as words stabilise during dictation (progressive streaming). When
+    /// <see langword="false"/>, all text is committed only after the hotkey is
+    /// released (batch mode). Default is <see langword="true"/>.
+    /// </summary>
+    public bool StreamingCommit { get; set; } = true;
+
     /// <summary>Whether Hush should launch at OS login.</summary>
     public bool AutoStart { get; set; } = false;
-
-    /// <summary>UI colour theme: <c>"system"</c>, <c>"light"</c>, or <c>"dark"</c>.</summary>
-    public string Theme { get; set; } = "system";
 }

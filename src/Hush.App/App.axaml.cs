@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
@@ -13,6 +15,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Hush.App;
 
+/// <summary>Application entry point. Bootstraps logging, services, hotkey registration, and the overlay/tray UI.</summary>
 public sealed class App : Application
 {
     private MainViewModel? _mainVm;
@@ -25,6 +28,7 @@ public sealed class App : Application
     private IDictationSession? _dictationSession;
     private ITranscriptionEngine? _transcriptionEngine;
     private IAudioCaptureService? _audioCapture;
+    private ILogger<App>? _logger;
 
     public override void Initialize()
     {
@@ -46,6 +50,7 @@ public sealed class App : Application
         _loggerFactory = LoggerFactory.Create(b => b
             .AddConsole()
             .AddProvider(new FileLoggerProvider(logPath)));
+        _logger = _loggerFactory.CreateLogger<App>();
 
         var settingsService = new SettingsService(_loggerFactory.CreateLogger<SettingsService>());
         var settings = await settingsService.LoadAsync();
@@ -75,7 +80,17 @@ public sealed class App : Application
 
         _trayIcon = new TrayIcon(_mainVm, desktop);
 
-        _hotkeyService.Register(settings.Hotkey);
+        try
+        {
+            _hotkeyService.Register(settings.Hotkey);
+        }
+        catch (Exception ex)
+        {
+            var message = RuntimeUserMessageBuilder.BuildHotkeyRegistrationMessage(ex, settings.Hotkey);
+            overlayVm.ErrorMessage = message;
+            _mainVm.StatusMessage = $"Error: {message}";
+            _logger.LogError(ex, "Failed to register startup hotkey '{Hotkey}'.", settings.Hotkey);
+        }
 
         // Wire cleanup on shutdown.
         desktop.ShutdownRequested += OnShutdownRequested;

@@ -1,4 +1,6 @@
-﻿using Hush.Core.Audio;
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
+using Hush.Core.Audio;
 using Hush.Core.Transcription;
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
@@ -26,7 +28,7 @@ Console.WriteLine("Hush — Proof of Life");
 Console.WriteLine("Initializing Foundry Local...");
 
 await FoundryLocalManager.CreateAsync(
-    new Microsoft.AI.Foundry.Local.Configuration { AppName = "Hush" },
+    FoundryRuntimeConfiguration.Create("Hush", logger),
     NullLogger.Instance);
 
 var manager = FoundryLocalManager.Instance;

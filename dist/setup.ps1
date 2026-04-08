@@ -1,3 +1,9 @@
+# Hush Setup Script
+# https://github.com/maanavdalal/hush
+#
+# Downloads the Nemotron CPU speech model and prepares Hush for first use.
+# Run from the same directory as Hush.App.exe.
+
 #Requires -Version 5.1
 <#
 .SYNOPSIS
@@ -93,9 +99,12 @@ $modelParent = Join-Path $aitkRoot 'Microsoft'
 $modelDirName = 'openai-whisper-tiny-generic-cpu-2'
 $variantDir   = 'cpu-fp32'
 
-# Search for existing whisper-tiny directories (may vary by SDK version)
+# Search for existing whisper-tiny directories (may vary by SDK version).
+# The SDK may cache models in different locations depending on the version.
+# We search multiple known paths to find existing cached models.
 $cpuModelDir = $null
-$searchRoots = @($modelParent, (Join-Path $aitkRoot 'models'))
+$hushCacheRoot = Join-Path $env:USERPROFILE '.Hush' 'cache' 'models' 'Microsoft'
+$searchRoots = @($hushCacheRoot, $modelParent, (Join-Path $aitkRoot 'models'))
 foreach ($root in $searchRoots) {
     if (!(Test-Path $root)) { continue }
     $match = Get-ChildItem $root -Directory -Filter 'openai-whisper-tiny-generic-cpu*' -EA SilentlyContinue | Select-Object -First 1
@@ -160,13 +169,36 @@ if ($alreadyInstalled) {
     Write-OK "Nemotron CPU int4 is already installed. Use -Force to re-download."
 } else {
     # Back up original whisper files (if they exist)
-    $existingFiles = Get-ChildItem $cpuModelDir -File -EA SilentlyContinue
+    $existingFiles = @(Get-ChildItem $cpuModelDir -File -EA SilentlyContinue)
     if ($existingFiles.Count -gt 0) {
         $backupDir = "${cpuModelDir}-whisper-backup"
         if (!(Test-Path $backupDir)) {
             Write-Host "    Backing up original files..."
             Copy-Item $cpuModelDir $backupDir -Recurse -Force
         }
+    }
+
+    # Remove old whisper-specific files that conflict with Nemotron.
+    # The SDK reads config.json (model_type: whisper) and picks the wrong
+    # streaming processor, causing "NemotronStreamingProcessor requires a
+    # nemotron_speech model type. Got: whisper".
+    $whisperLeftovers = @(
+        'config.json',
+        'preprocessor_config.json',
+        'added_tokens.json',
+        'merges.txt',
+        'normalizer.json',
+        'special_tokens_map.json',
+        'vocab.json',
+        'whisper-tiny_decoder_fp32.onnx',
+        'whisper-tiny_decoder_fp32.onnx.data',
+        'whisper-tiny_encoder_fp32.onnx',
+        'whisper-tiny_encoder_fp32.onnx.data',
+        'whisper-tiny_jump_times_fp32.onnx'
+    )
+    foreach ($wf in $whisperLeftovers) {
+        $wp = Join-Path $cpuModelDir $wf
+        if (Test-Path $wp) { Remove-Item $wp -Force }
     }
 
     # Download each file

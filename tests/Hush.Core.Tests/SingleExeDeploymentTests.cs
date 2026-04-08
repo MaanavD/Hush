@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using System.Reflection;
 
 namespace Hush.Core.Tests;

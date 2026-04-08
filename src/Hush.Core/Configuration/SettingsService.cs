@@ -1,4 +1,5 @@
-using System.Text.Json;
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -14,12 +15,6 @@ public sealed class SettingsService
 
     private static readonly string SettingsPath =
         Path.Combine(SettingsDirectory, "settings.json");
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
 
     private readonly ILogger<SettingsService> _logger;
 
@@ -42,8 +37,10 @@ public sealed class SettingsService
         try
         {
             await using var stream = File.OpenRead(SettingsPath);
-            var settings = await JsonSerializer.DeserializeAsync<HushSettings>(
-                stream, JsonOptions, cancellationToken);
+            var settings = await System.Text.Json.JsonSerializer.DeserializeAsync(
+                stream,
+                SettingsJsonContext.Default.HushSettings,
+                cancellationToken);
             return settings ?? new HushSettings();
         }
         catch (Exception ex)
@@ -64,7 +61,11 @@ public sealed class SettingsService
         var tmp = SettingsPath + ".tmp";
         await using (var stream = File.Create(tmp))
         {
-            await JsonSerializer.SerializeAsync(stream, settings, JsonOptions, cancellationToken);
+            await System.Text.Json.JsonSerializer.SerializeAsync(
+                stream,
+                settings,
+                SettingsJsonContext.Default.HushSettings,
+                cancellationToken);
         }
 
         File.Move(tmp, SettingsPath, overwrite: true);

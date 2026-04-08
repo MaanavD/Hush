@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Hush.Core.Output;
 using Moq;
 
@@ -25,6 +27,26 @@ public sealed class KeystrokeTypingServiceTests
     {
         var svc = new KeystrokeTypingService();
         await svc.TypeTextAsync(null!);
+    }
+
+    [Fact]
+    public void GetModifiersToRestore_RestoresOnlyStillPressedModifiers()
+    {
+        IReadOnlyList<ushort> modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(
+            releasedModifiers: new ushort[] { 0xA2, 0xA0 },
+            physicallyPressedModifiers: new ushort[] { 0xA0 });
+
+        Assert.Equal(new ushort[] { 0xA0 }, modifiersToRestore);
+    }
+
+    [Fact]
+    public void GetModifiersToRestore_WhenNothingStillPressed_ReturnsEmpty()
+    {
+        IReadOnlyList<ushort> modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(
+            releasedModifiers: new ushort[] { 0xA2, 0xA0 },
+            physicallyPressedModifiers: Array.Empty<ushort>());
+
+        Assert.Empty(modifiersToRestore);
     }
 
     // ── Platform dispatch (only testable on current platform) ────────────

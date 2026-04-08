@@ -153,9 +153,7 @@ Hush/
 │   └── Hush.App.Tests/
 │       └── Hush.App.Tests.csproj
 │
-├── .github/
-│   └── workflows/
-│       └── ci.yml                    # Build + test on Windows/macOS/Linux
+├── .github/                          # (CI workflows — planned)
 │
 ├── README.md
 ├── LICENSE                           # MIT
@@ -171,7 +169,7 @@ Hush/
 |-------|-----------|-------|
 | **Runtime** | .NET 9 | LTS, cross-platform, AOT-capable |
 | **UI** | Avalonia UI 11 | Cross-platform XAML. System tray, overlays, transparency support. |
-| **AI Inference** | Foundry Local C# SDK | `Microsoft.AI.Foundry.Local` (Mac/Linux), `.WinML` variant (Windows) |
+| **AI Inference** | Foundry Local C# SDK | `Microsoft.AI.Foundry.Local` (unified managed SDK, cross-platform) |
 | **Speech Model** | Nemotron | Live streaming transcription via `LiveAudioTranscriptionSession`; treat stream results as potentially unstable until committed. |
 | **Audio Capture** | Backend abstraction | Windows can use NAudio; macOS/Linux may use a different backend if NAudio is not reliable enough. The app architecture should hide this behind a common interface. |
 | **Keystroke Simulation** | Per-platform native implementation | `SendInput` (Win), `CGEventPost` (macOS), bundled native helper/P/Invoke on Linux. Avoid requiring separate end-user utilities when packaging MVP. |
@@ -475,6 +473,135 @@ A small, floating, semi-transparent window that appears during dictation.
 - [ ] GitHub Releases with automated builds
 - [ ] **Exit criteria:** Users can download and run on any platform
 
+### Milestone 7: Real-Time Streaming, Defaults, and Overlay Refresh (Planned)
+
+**Goal**
+
+Ship the first version of Hush that feels excellent out of the box:
+
+- real microphone-to-text streaming through the Foundry Local live audio session API
+- sensible defaults that require little or no setup on supported machines
+- a genuinely useful overlay that shows live transcript text without stealing focus
+- stronger platform reliability for hotkeys, audio capture, and text output
+
+This milestone is the next implementation target after Milestone 6.
+
+**Milestone number:** `7`
+
+**In scope**
+
+- Replace the current batch WAV workaround in `TranscriptionEngine` with the Foundry Local `LiveAudioTranscriptionSession` lifecycle (`StartAsync` → `AppendAsync` → `GetTranscriptionStream` → `StopAsync`)
+- Keep the MVP safety rule: only committed text is typed into the focused app by default
+- Wire persisted settings that materially affect the core dictation loop:
+    - language
+    - activation mode where supported
+    - overlay visibility / placement settings that are actually implemented
+    - microphone selection if added during this milestone
+- Make the overlay display real transcript content, not just recording state
+- Improve first-run defaults so Hush works well without requiring users to understand model/runtime internals
+- Improve session reliability around start, stop, flush, cancellation, and backpressure
+- Finish the next most important platform work needed for the core dictation path to feel production-ready
+
+**Explicitly out of scope for Milestone 7**
+
+- model picker, model catalog UI, model cleanup UI, or broader model management workflows
+- custom dictionary, correction learning, or vocabulary boosting UI
+- local transcript history, retention, retry browser, or note-taking features
+- cloud transcription, AI agents, meeting transcription, or any productivity-suite expansion
+
+**Design principle for this milestone**
+
+Prefer good defaults over knobs. If a feature does not clearly improve the first five minutes of use, it should not expand the settings surface in Milestone 7.
+
+#### Phase 7.1  Streaming Foundation
+
+- [ ] Replace the polling/batch transcription loop with Foundry Local live streaming
+- [ ] Use 16 kHz / 16-bit / mono PCM throughout the live path unless the SDK or backend requires otherwise
+- [ ] Feed audio to the SDK in small real-time chunks (target: `100 ms` buffers unless testing shows a better default)
+- [ ] Read live results from the SDK on a background task and normalize them into `TranscriptionResult`
+- [ ] Preserve the app boundary that separates overlay display text from committed typed output
+- [ ] Ensure final buffered audio is flushed on stop without waiting for a timer tick
+- [ ] Ensure cancellation and disposal do not leak native sessions or background loops
+- [ ] Remove no-longer-needed workaround code and comments tied to the file-based batch path
+
+**Acceptance criteria**
+
+- Holding the hotkey starts a real live streaming session rather than an 800 ms batch loop
+- Releasing the hotkey flushes the final transcript without an extra delay window
+- The engine no longer depends on temporary WAV files for the normal dictation path
+- Existing dictation tests still pass, and new engine tests cover the live session lifecycle
+
+#### Phase 7.2  Great Defaults and Core Reliability
+
+- [ ] Use the saved language setting instead of hard-coding English in the engine
+- [ ] Validate hotkey registration when settings are applied and surface actionable errors immediately
+- [ ] Keep push-to-talk as the default where reliable key-up detection exists
+- [ ] Fall back to tap-to-talk only on platforms or environments where release detection cannot be made robust
+- [ ] Auto-select a sensible default microphone on startup
+- [ ] If multiple devices exist, prefer the current system default device unless the user explicitly overrides it
+- [ ] Improve startup and error messaging for missing microphone, denied permissions, or unavailable devices
+- [ ] Finish the minimum platform work required for core dictation quality:
+    - macOS microphone capture backend
+    - Linux microphone capture backend for the supported desktop target
+    - any paste/hotkey guardrails needed so the default path works reliably on supported platforms
+- [ ] Remove or defer settings that are persisted but not actually honored by runtime behavior
+
+**Acceptance criteria**
+
+- A new user on a supported machine can launch Hush and dictate successfully without touching advanced settings
+- The chosen language setting affects actual transcription sessions
+- The app fails clearly when microphone capture or permissions are unavailable
+- Supported platforms no longer ship with a "feature exists in settings but does nothing" experience for the core dictation flow
+
+#### Phase 7.3  Overlay Refresh
+
+- [ ] Redesign the overlay so it shows live transcript text and recording state together
+- [ ] Keep it non-activating, click-through where appropriate, and never focus-stealing
+- [ ] Preserve the audio meter, but make transcript readability the primary job of the overlay
+- [ ] Show clear visual distinction between these states:
+    - preparing / model warming
+    - actively listening
+    - transient error
+    - idle / hidden
+- [ ] Implement a more polished visual treatment while keeping the surface compact and desktop-native
+- [ ] Make overlay position and opacity settings real, or remove them from Milestone 7 scope if they cannot be honored cleanly
+- [ ] Do not add transcript history or editor-like interactions to the overlay
+
+**Acceptance criteria**
+
+- The overlay visibly renders live transcription text during an active dictation session
+- The overlay remains readable on desktop backgrounds and multiple monitor setups
+- It never steals focus from the target application
+- Errors and readiness states are understandable without opening logs
+
+#### Milestone 7 Default Choices
+
+These defaults should be treated as the product defaults unless implementation evidence shows they are harmful:
+
+- Audio format: `16 kHz`, `16-bit`, `mono`
+- Real-time chunk size: `100 ms`
+- Output policy: type committed text only
+- Overlay behavior: visible during dictation, hidden when idle, bottom-center by default
+- Microphone selection: current system default device
+- Advanced features excluded from the first-run path: model selection, transcript storage, dictionary tuning
+
+#### Milestone 7 Exit Criteria
+
+- [ ] Hush uses the Foundry Local live audio transcription API for the main dictation path
+- [ ] The overlay shows real live transcript text and looks materially more polished than the Milestone 6 version
+- [ ] Core runtime settings used in the UI are wired into actual behavior, or removed from the UI
+- [ ] Windows, macOS, and Linux each have a credible default dictation path for supported environments
+- [ ] The app feels fast and understandable on first launch without extra configuration
+
+#### Deferred Until Milestone 8+
+
+The following items remain valid future work, but they are intentionally deferred until after Milestone 7 lands:
+
+- model management UX
+- custom dictionary / correction learning
+- local transcript history
+- richer note or meeting workflows
+
 ---
 
 ## 8  NuGet Dependencies
@@ -482,20 +609,15 @@ A small, floating, semi-transparent window that appears during dictation.
 ```xml
 <!-- Hush.Core.csproj -->
 <ItemGroup>
-  <!-- Foundry Local SDK — conditional per platform -->
-  <PackageReference Include="Microsoft.AI.Foundry.Local.WinML"
-                    Version="*"
-                    Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
-  <PackageReference Include="Microsoft.AI.Foundry.Local"
-                    Version="*"
-                    Condition="!$([MSBuild]::IsOSPlatform('Windows'))" />
-  
-    <!-- Audio capture backends -->
-    <PackageReference Include="NAudio"
-                                        Version="2.*"
-                                        Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
-    <!-- macOS/Linux capture backend package(s) selected after validation spike -->
-  
+  <!-- Foundry Local managed SDK (unified, replaces WinML + old cross-platform variants) -->
+  <PackageReference Include="Microsoft.AI.Foundry.Local" Version="1.0.0-dev.202604061825" />
+  <!-- Explicit Core pin: avoids transitive dep version mismatch with local .nupkg -->
+  <PackageReference Include="Microsoft.AI.Foundry.Local.Core" Version="1.0.0-dev-202604061808-7ad2ef0c" />
+
+  <!-- Audio capture backends -->
+  <PackageReference Include="NAudio" Version="2.*" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+  <!-- macOS/Linux capture backend package(s) selected after validation spike -->
+
   <!-- Logging -->
   <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
   <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.*" />
@@ -629,15 +751,23 @@ These are NOT in the MVP scope but inform architectural decisions:
 - **Meeting recording** — long-form transcription with speaker diarization
 - **Multiple languages** — language auto-detection or per-session language setting
 - **LLM post-processing** — optional local LLM cleanup/rewriting via Foundry Local chat models
-- **Whisper fallback** — option to use whisper-tiny for lower resource usage on constrained hardware
-- **Clipboard-paste fallback** — optional mode for apps that block simulated keystrokes
-- **Notification integration** — toast notifications instead of overlay
-- **Plugin system** — extensible output targets (e.g., save to file, send to API)
-- **Android support** — Foundry Local supports Android; future mobile companion
 
 ---
 
-## 14  Open Questions
+## 14  Current State & Known Workarounds
+
+- Hush pins pre-release `Microsoft.AI.Foundry.Local` NuGet packages (see `NuGet.config` for the local package source).
+- The managed Foundry Local SDK handles native-asset resolution and DLL path wiring. Hush supplies an `AppName` via `FoundryRuntimeConfiguration`.
+- macOS and Linux do not yet have validated microphone capture backends. Hotkey and text-output paths work, but audio capture on those platforms is pending.
+- The Nemotron CPU int4 model is used in place of Whisper Tiny for better streaming quality. See `dist/setup.ps1` for the model swap workflow.
+- **Whisper fallback** — option to use `whisper-tiny` for lower resource usage on constrained hardware.
+- **Clipboard-paste fallback** — optional mode for apps that block simulated keystrokes.
+- **Notification integration** — toast notifications instead of overlay (future).
+- **Plugin system** — extensible output targets (future).
+
+---
+
+## 15  Open Questions
 
 1. **Foundry Local stream semantics** — Need to confirm the exact C# event contract for live transcription: interim-only, final-only, or both, and whether the model alias is exactly `"nemotron"` in the catalog.
 2. **Cross-platform capture backend** — Need to confirm the most reliable macOS/Linux audio backend and whether NAudio is sufficient anywhere beyond Windows.
@@ -646,7 +776,7 @@ These are NOT in the MVP scope but inform architectural decisions:
 
 ---
 
-## 15  Getting Started (Quick Start for Contributors)
+## 16  Getting Started (Quick Start for Contributors)
 
 ```bash
 # Clone
@@ -665,13 +795,15 @@ dotnet test
 
 ---
 
-*Last updated: April 1, 2026*
+*Last updated: April 7, 2026*
 
 ---
 
-## 16  Beta Testing Notes
+## 17  Beta Testing Notes
 
-### 16.1  Nemotron CPU Model (No GPU Required)
+> **Note for contributors:** This section describes a temporary model-swap workaround. It may become unnecessary as the Foundry Local SDK evolves.
+
+### 17.1  Nemotron CPU Model (No GPU Required)
 
 The default Foundry Local catalog only includes **Whisper** (all variants require CUDA GPU).
 For testers without a GPU, a CPU-quantized int4 Nemotron model is available as a workaround.

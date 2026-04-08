@@ -1,4 +1,5 @@
-using System.Text.RegularExpressions;
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using System.Threading.Channels;
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
@@ -7,44 +8,50 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Hush.Core.Transcription;
 
 /// <summary>
-/// Wraps the Foundry Local <see cref="OpenAIAudioClient"/> to provide
-/// live-transcription streaming.
-/// <para>
-/// <b>SDK note (Milestone 0):</b> The <c>LiveAudioTranscriptionSession</c> API
-/// was added to the Foundry Local C# SDK after the 0.9.0 NuGet release. Until
-/// an updated package is available, this engine buffers raw PCM audio in memory
-/// and runs periodic batch transcription via <c>TranscribeAudioAsync</c> as an
-/// interim strategy. See Milestone 1 — Proof of Life for the upgrade path.
-/// </para>
+/// Wraps Foundry Local live transcription while preserving the app-level
+/// <see cref="TranscriptionResult"/> abstraction.
 /// </summary>
 public sealed class TranscriptionEngine : ITranscriptionEngine
 {
     private readonly ILogger<TranscriptionEngine> _logger;
-    private OpenAIAudioClient? _audioClient;
+    private readonly ILiveAudioSessionFactory _liveSessionFactory;
 
-    // Channel-based session state
+    private OpenAIAudioClient? _audioClient;
+    private string? _modelId;
     private Channel<TranscriptionResult>? _resultChannel;
-    private readonly List<byte> _audioBuffer = new();
-    private bool _sessionActive;
+    private ILiveAudioSession? _liveSession;
+    private Task? _resultPumpTask;
+    // Exact text that has been irrevocably committed (typed into the target app).
+    private string _committedText = string.Empty;
+    // When true, words are committed progressively as they stabilise.
+    // When false, all non-final text is held until TryFlushRemaining.
+    private bool _streamingCommit = true;
+    // Committed text from all previously completed segments. When a final chunk
+    // arrives, it marks a segment boundary; non-final chunk text in the NEXT
+    // segment is composed as _segmentBase + " " + chunkText so that the
+    // stability comparison works across segment boundaries.
+    private string _segmentBase = string.Empty;
+    // Full accumulated text for the active segment. Non-final SDK chunks are not
+    // always cumulative; some behave like rolling windows. We merge them into a
+    // monotonic segment hypothesis so live typing can grow forward without
+    // repeatedly erasing earlier words.
+    private string _lastFullText = string.Empty;
+    // Word list for the previous accumulated non-final segment hypothesis. Used to
+    // determine which words have stabilised between updates.
+    private string[] _prevChunkWords = Array.Empty<string>();
+    // Approximate audio end time for the text currently stored in _committedText.
+    // Used to detect when the SDK emits a later rolling window that should be
+    // appended instead of treated as a rewrite of earlier words.
+    private TimeSpan? _lastCommittedEndTime;
     private bool _disposed;
 
-    // ── Batch-loop tuning ────────────────────────────────────────────────────
-    // How often the loop wakes to transcribe accumulated audio.
-    // 800 ms = ~2-3 words per burst; lower = more responsive but higher CPU.
-    private const int TranscriptionIntervalMs = 800;
-
-    // Minimum audio data before we bother calling the model (0.25 s at 16 kHz
-    // 16-bit mono = 8000 bytes). Avoids wasting inference on near-silence.
-    private const int MinBytesToTranscribe = 8000;
-
-    // Maximum audio buffer size before dropping new audio (≈60 s at 16 kHz 16-bit mono).
-    // Prevents unbounded memory growth if inference stalls or is slow.
-    private const int MaxAudioBufferBytes = 16000 * 2 * 60; // ~1.9 MB
-
-    // RMS silence gate: skip inference when the chunk is below this energy level.
-    // 16-bit PCM normalised to [-1, 1]; 0.01 ≈ quiet room background noise.
-    // Raise to ~0.02 if you still see hallucinations in a noisier environment.
-    private const double SilenceRmsThreshold = 0.01;
+    // In streaming mode, commit the full monotonic interim hypothesis. Non-final
+    // rewrites are already blocked below, so this favors responsive live typing
+    // while still deferring corrections to final chunks.
+    private const int StreamingTrailingWordHoldback = 0;
+    // Allow a small timestamp overlap when the SDK rolls windows forward so a
+    // later chunk can still be treated as additive speech instead of a rewrite.
+    private static readonly TimeSpan DetachedChunkOverlapTolerance = TimeSpan.FromMilliseconds(150);
 
     // Whisper hallucination tokens that should never be typed or shown.
     private static readonly HashSet<string> NoiseTokens =
@@ -54,15 +61,61 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             "[inaudible]", "[ Silence ]", "(music)"
         };
 
-    // Signals the batch loop to wake up immediately (used by StopSessionAsync).
-    private TaskCompletionSource? _stopSignal;
+    // Check for blatant repetition artifacts from live ASR (e.g. "kkkking", "aaaa").
+    // Fires when a single character makes up ≥60% of a word-only token,
+    // or when 3+ consecutive identical characters appear.
+    private static bool IsRepetitionArtifact(string text)
+    {
+        if (text.Length < 3) return false;
+        // Only applies when the token contains no whitespace (single word).
+        if (text.AsSpan().ContainsAny(' ', '\t', '\n')) return false;
 
-    // Running transcript for this session — overlay always shows growing text.
-    private string _sessionTranscript = string.Empty;
+        // Fast check: 3+ consecutive identical characters (e.g. "issss", "helllo").
+        for (int i = 2; i < text.Length; i++)
+        {
+            if (text[i] == text[i - 1] && text[i] == text[i - 2])
+                return true;
+        }
+
+        // Dominant-character check for subtler patterns (e.g. "ababab").
+        if (text.Length >= 4)
+        {
+            var dominant = text.GroupBy(c => char.ToLowerInvariant(c)).MaxBy(g => g.Count())!;
+            if (dominant.Count() / (double)text.Length >= 0.60)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Strips trailing repetition-artifact words from a word array.
+    /// Nemotron RNN-T can produce degenerate repeated characters at the end of
+    /// a streaming chunk (e.g. "This issssssss"). Truncating at the first
+    /// trailing artifact prevents garbled text from being committed or displayed.
+    /// </summary>
+    private static string[] StripTrailingArtifacts(string[] words)
+    {
+        int validCount = words.Length;
+        for (int i = words.Length - 1; i >= 0; i--)
+        {
+            if (IsRepetitionArtifact(words[i]))
+                validCount = i;
+            else
+                break;
+        }
+        return validCount == words.Length ? words : words[..validCount];
+    }
 
     public TranscriptionEngine(ILogger<TranscriptionEngine>? logger = null)
+        : this(logger, new LiveAudioSessionFactory())
+    {
+    }
+
+    internal TranscriptionEngine(ILogger<TranscriptionEngine>? logger, ILiveAudioSessionFactory liveSessionFactory)
     {
         _logger = logger ?? NullLogger<TranscriptionEngine>.Instance;
+        _liveSessionFactory = liveSessionFactory;
     }
 
     /// <inheritdoc/>
@@ -74,15 +127,12 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     {
         _logger.LogInformation("Initializing Foundry Local for model '{ModelAlias}'.", modelAlias);
 
-        // Clean up any orphaned WAV temp files from previous crashes.
-        CleanOrphanedTempFiles();
-
         try
         {
             await (FoundryLocalManager.IsInitialized
                 ? Task.CompletedTask
                 : FoundryLocalManager.CreateAsync(
-                    new Microsoft.AI.Foundry.Local.Configuration { AppName = "Hush" },
+                    FoundryRuntimeConfiguration.Create("Hush", _logger),
                     NullLogger.Instance));
         }
         catch (Exception ex) when (ex is DllNotFoundException or TypeLoadException or FileNotFoundException)
@@ -98,7 +148,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (OperatingSystem.IsWindows() && downloadHardwareEPs)
         {
             _logger.LogInformation("Downloading hardware acceleration EPs (Windows).");
-            await manager.EnsureEpsDownloadedAsync();
+            await manager.DownloadAndRegisterEpsAsync();
         }
 
         var catalog = await manager.GetCatalogAsync(cancellationToken);
@@ -115,11 +165,24 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             : p => downloadProgress.Report(p / 100.0);
 
         await model.DownloadAsync(sdkProgress);
+
+        // Hush ships Nemotron CPU int4 instead of whisper-tiny for better quality.
+        // The setup script (dist/setup.ps1) downloads Nemotron files from HuggingFace
+        // into the SDK's model cache slot. After DownloadAsync ensures the cache dir
+        // exists, we check whether Nemotron files have been installed. If so, the
+        // remaining whisper-specific files need to be cleaned out so the GenAI runtime
+        // loads cleanly as nemotron_speech.
+        var modelPath = await model.GetPathAsync(cancellationToken);
+        if (modelPath is not null)
+        {
+            await EnsureNemotronSwapAsync(modelPath, cancellationToken);
+        }
+
         _logger.LogInformation("Loading model '{ModelAlias}' into runtime.", modelAlias);
         await model.LoadAsync();
 
         _audioClient = await model.GetAudioClientAsync();
-        _audioClient.Settings.Language = "en";
+        _modelId = model.Id;
         _logger.LogInformation("TranscriptionEngine ready.");
     }
 
@@ -128,163 +191,98 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         int sampleRate = 16000,
         int channels = 1,
         string language = "en",
+        bool streamingCommit = true,
         CancellationToken cancellationToken = default)
     {
-        if (_audioClient is null)
+        if (string.IsNullOrWhiteSpace(_modelId))
             throw new InvalidOperationException(
                 "Call InitializeAsync before starting a session.");
 
-        _audioClient.Settings.Language = language;
+        _liveSession = _liveSessionFactory.Create(_modelId!, _logger, _audioClient);
         _resultChannel = Channel.CreateUnbounded<TranscriptionResult>(
-            new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
-        _audioBuffer.Clear();
-        _sessionTranscript = string.Empty;
-        _stopSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _sessionActive = true;
+            new UnboundedChannelOptions { SingleWriter = true, SingleReader = true, AllowSynchronousContinuations = true });
+        _committedText = string.Empty;
+        _streamingCommit = streamingCommit;
+        _segmentBase = string.Empty;
+        _lastFullText = string.Empty;
+        _prevChunkWords = Array.Empty<string>();
+        _lastCommittedEndTime = null;
 
         _logger.LogInformation(
             "Transcription session started (sampleRate={SampleRate}, channels={Channels}, language={Language}).",
             sampleRate, channels, language);
 
-        // TODO (Milestone 1): Replace this polling loop with
-        // LiveAudioTranscriptionSession once SDK >0.9.0 is published to NuGet.
-        _ = Task.Run(() => BatchTranscriptionLoopAsync(sampleRate, channels, cancellationToken), cancellationToken);
+        return StartLiveSessionAsync(sampleRate, channels, language, cancellationToken);
+    }
 
-        return Task.CompletedTask;
+    private async Task StartLiveSessionAsync(int sampleRate, int channels, string language, CancellationToken cancellationToken)
+    {
+        await _liveSession!.StartAsync(sampleRate, channels, language, cancellationToken).ConfigureAwait(false);
+        _resultPumpTask = Task.Run(() => PumpResultsAsync(_liveSession, _resultChannel!), CancellationToken.None);
     }
 
     /// <inheritdoc/>
     public ValueTask AppendAudioAsync(ReadOnlyMemory<byte> pcmData, CancellationToken cancellationToken = default)
     {
-        if (!_sessionActive)
+        if (_liveSession is null)
             return ValueTask.CompletedTask;
 
-        lock (_audioBuffer)
-        {
-            // Drop new audio if the buffer exceeds ~60 s. This prevents unbounded
-            // memory growth when inference is slower than real-time.
-            if (_audioBuffer.Count + pcmData.Length > MaxAudioBufferBytes)
-            {
-                _logger.LogWarning(
-                    "Audio buffer full ({Size} bytes); dropping {Dropped} bytes of audio.",
-                    _audioBuffer.Count, pcmData.Length);
-                return ValueTask.CompletedTask;
-            }
-
-            _audioBuffer.AddRange(pcmData.Span);
-        }
-
-        return ValueTask.CompletedTask;
+        return _liveSession.AppendAsync(pcmData, cancellationToken);
     }
 
-    // Periodically transcribes accumulated audio as WAV and pushes results.
-    private async Task BatchTranscriptionLoopAsync(int sampleRate, int channels, CancellationToken ct)
+    private async Task PumpResultsAsync(ILiveAudioSession liveSession, Channel<TranscriptionResult> resultChannel)
     {
-        if (_audioClient is null || _resultChannel is null)
-            return;
-
         try
         {
-            while (!ct.IsCancellationRequested)
+            await foreach (var chunk in liveSession.GetTranscriptionStreamAsync().ConfigureAwait(false))
             {
-                // Wake on the normal interval OR an immediate stop signal.
-                var stopTask = _stopSignal?.Task ?? Task.CompletedTask;
-                await Task.WhenAny(Task.Delay(TranscriptionIntervalMs, ct), stopTask)
-                          .ConfigureAwait(false);
-
-                bool isFinalFlush = !_sessionActive;
-
-                byte[] chunk;
-                lock (_audioBuffer)
-                {
-                    // Skip tiny chunks during normal operation (likely silence);
-                    // but always flush whatever remains on the final pass.
-                    if (_audioBuffer.Count < MinBytesToTranscribe && !isFinalFlush)
-                        goto nextIteration;
-
-                    if (_audioBuffer.Count == 0)
-                    {
-                        if (isFinalFlush) break;
-                        goto nextIteration;
-                    }
-
-                    chunk = _audioBuffer.ToArray();
-                    _audioBuffer.Clear();
-                }
-
-                await TranscribeChunkAsync(chunk, sampleRate, channels).ConfigureAwait(false);
-
-                if (isFinalFlush) break;
-
-                nextIteration:
-                if (isFinalFlush) break;
+                if (TryNormalizeChunk(chunk, out var result))
+                    resultChannel.Writer.TryWrite(result);
             }
+
+            // Flush any remaining tail-buffer words before completing the channel.
+            // This runs after the SDK stream has ended but before TryComplete,
+            // so the writer is still open and TryWrite succeeds.
+            if (TryFlushRemaining(out var finalResult))
+                resultChannel.Writer.TryWrite(finalResult);
         }
-        catch (OperationCanceledException) { }
-        finally
+        catch (OperationCanceledException)
         {
-            _resultChannel?.Writer.TryComplete();
-        }
-    }
-
-    private async Task TranscribeChunkAsync(byte[] chunk, int sampleRate, int channels)
-    {
-        if (_audioClient is null || _resultChannel is null)
-            return;
-
-        // Skip inference on silent chunks to prevent Whisper hallucinations.
-        if (ComputeRms(chunk) < SilenceRmsThreshold)
-        {
-            _logger.LogDebug("Skipping silent chunk (RMS below threshold).");
-            return;
-        }
-
-        var wavFile = Path.GetTempFileName() + ".wav";
-        try
-        {
-            WritePcmAsWav(chunk, wavFile, sampleRate, channels);
-            var result = await _audioClient.TranscribeAudioAsync(wavFile).ConfigureAwait(false);
-            var rawText = result?.Text?.Trim();
-
-            if (string.IsNullOrWhiteSpace(rawText) || IsNoiseToken(rawText))
-                return;
-
-            // Collapse runs of internal whitespace to a single space.
-            rawText = Regex.Replace(rawText, @"\s+", " ");
-
-            // Append to running session transcript (overlay always grows).
-            var separator = _sessionTranscript.Length > 0 ? " " : string.Empty;
-            _sessionTranscript += separator + rawText;
-
-            _resultChannel.Writer.TryWrite(new TranscriptionResult(
-                DisplayText: _sessionTranscript,              // whole session so far (overlay)
-                CommittedDelta: separator + rawText,          // include leading space so consecutive pastes separate cleanly
-                IsFinal: false));                             // true only when session ends
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Batch transcription segment failed.");
+            resultChannel.Writer.TryComplete(ex);
+            return;
         }
         finally
         {
-            File.Delete(wavFile);
+            resultChannel.Writer.TryComplete();
         }
     }
 
     private static bool IsNoiseToken(string text) =>
         NoiseTokens.Contains(text) ||
         (text.StartsWith('[') && text.EndsWith(']')) ||
-        (text.StartsWith('(') && text.EndsWith(')'));
+        (text.StartsWith('(') && text.EndsWith(')')) ||
+        IsRepetitionArtifact(text);
 
     /// <inheritdoc/>
-    public Task StopSessionAsync(CancellationToken cancellationToken = default)
+    public async Task StopSessionAsync(CancellationToken cancellationToken = default)
     {
-        _sessionActive = false;
-        // Wake the batch loop immediately so the last audio chunk is flushed
-        // without waiting for the next timer tick.
-        _stopSignal?.TrySetResult();
+        if (_liveSession is null)
+            return;
+
+        await _liveSession.StopAsync(cancellationToken).ConfigureAwait(false);
+
+        if (_resultPumpTask is not null)
+        {
+            await _resultPumpTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+            _resultPumpTask = null;
+        }
+
+        await _liveSession.DisposeAsync().ConfigureAwait(false);
+        _liveSession = null;
         _logger.LogInformation("Transcription session stopped.");
-        return Task.CompletedTask;
     }
 
     /// <inheritdoc/>
@@ -312,82 +310,472 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             FoundryLocalManager.Instance.Dispose();
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Computes the RMS energy of a 16-bit signed PCM byte array, normalised to [0, 1].
-    /// </summary>
-    private static double ComputeRms(byte[] pcm)
+    private bool TryNormalizeChunk(LiveAudioSessionChunk chunk, out TranscriptionResult result)
     {
-        int samples = pcm.Length / 2;
-        if (samples == 0) return 0.0;
-        double sumSq = 0.0;
-        for (int i = 0; i < pcm.Length - 1; i += 2)
+        var normalizedText = NormalizeText(chunk.Text);
+        if (string.IsNullOrWhiteSpace(normalizedText) || IsNoiseToken(normalizedText))
         {
-            short s = (short)(pcm[i] | (pcm[i + 1] << 8));
-            double norm = s / 32768.0;
-            sumSq += norm * norm;
+            result = default!;
+            return false;
         }
-        return Math.Sqrt(sumSq / samples);
-    }
 
-    /// <summary>
-    /// Writes raw 16-bit signed PCM to a minimal WAV file for batch transcription.
-    /// </summary>
-    private static void WritePcmAsWav(byte[] pcm, string path, int sampleRate, int channels)
-    {
-        const short bitsPerSample = 16;
-        int byteRate = sampleRate * channels * bitsPerSample / 8;
-        short blockAlign = (short)(channels * bitsPerSample / 8);
+        int backspaceCount = 0;
+        string committedDelta = string.Empty;
+        string displayText;
 
-        using var fs = File.Create(path);
-        using var bw = new BinaryWriter(fs);
-
-        // RIFF header
-        bw.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
-        bw.Write(36 + pcm.Length);              // ChunkSize
-        bw.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
-
-        // fmt sub-chunk
-        bw.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
-        bw.Write(16);                            // SubChunk1Size (PCM)
-        bw.Write((short)1);                      // AudioFormat (PCM)
-        bw.Write((short)channels);
-        bw.Write(sampleRate);
-        bw.Write(byteRate);
-        bw.Write(blockAlign);
-        bw.Write(bitsPerSample);
-
-        // data sub-chunk
-        bw.Write(System.Text.Encoding.ASCII.GetBytes("data"));
-        bw.Write(pcm.Length);
-        bw.Write(pcm);
-    }
-
-    /// <summary>
-    /// Removes orphaned <c>.tmp*.wav</c> files left behind if the process crashed
-    /// mid-transcription. Only deletes files older than 5 minutes to avoid racing
-    /// with a concurrent transcription.
-    /// </summary>
-    private void CleanOrphanedTempFiles()
-    {
-        try
+        if (chunk.IsFinal)
         {
-            var tempDir = Path.GetTempPath();
-            var cutoff = DateTime.UtcNow.AddMinutes(-5);
-            foreach (var file in Directory.EnumerateFiles(tempDir, "tmp*.wav"))
+            // Final chunk — commit the full segment and prepare for the next one.
+            // Strip any trailing repetition artifacts before committing.
+            var finalWords = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            finalWords = StripTrailingArtifacts(finalWords);
+            if (finalWords.Length == 0)
             {
-                try
+                result = default!;
+                return false;
+            }
+            var cleanedText = string.Join(' ', finalWords);
+
+            if (ShouldTreatChunkAsDetachedAdditiveWindow(chunk, cleanedText))
+            {
+                _logger.LogDebug(
+                    "Rebasing final chunk onto committed text: committed='{Committed}' chunk='{Chunk}'",
+                    _committedText, cleanedText);
+                RebaseSegmentToCommittedText();
+            }
+
+            // Compose the complete text by prepending any prior segment base.
+            displayText = BuildFullText(cleanedText);
+            (backspaceCount, committedDelta) = ComputeCommitDelta(displayText);
+            _committedText = displayText;
+            _lastCommittedEndTime = chunk.EndTime ?? _lastCommittedEndTime;
+            _lastFullText = string.Empty;
+            _prevChunkWords = Array.Empty<string>();
+
+            // Mark segment boundary so the next chunk is treated as additive.
+            _segmentBase = _committedText;
+
+            _logger.LogDebug(
+                "Final chunk committed: display='{Display}' delta='{Delta}' bs={BS}",
+                displayText, committedDelta, backspaceCount);
+        }
+        else
+        {
+            // Split into words and strip trailing repetition artifacts.
+            var rawSegmentWords = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            rawSegmentWords = StripTrailingArtifacts(rawSegmentWords);
+            if (rawSegmentWords.Length == 0)
+            {
+                result = default!;
+                return false;
+            }
+
+            var rawSegmentText = string.Join(' ', rawSegmentWords);
+            if (ShouldTreatChunkAsDetachedAdditiveWindow(chunk, rawSegmentText))
+            {
+                _logger.LogDebug(
+                    "Rebasing interim chunk onto committed text: committed='{Committed}' chunk='{Chunk}' start={Start} lastCommittedEnd={End}",
+                    _committedText, rawSegmentText, chunk.StartTime, _lastCommittedEndTime);
+                RebaseSegmentToCommittedText();
+            }
+
+            // Foundry interim chunks are not always cumulative; some arrive as a
+            // rolling suffix window. Merge each chunk into the previous segment
+            // hypothesis so the live transcript grows monotonically unless a final
+            // chunk later corrects it.
+            var segmentWords = MergeStreamingSegmentWords(_prevChunkWords, rawSegmentWords);
+
+            // Store the accumulated segment text so we can flush it on stop.
+            var cleanedSegment = string.Join(' ', segmentWords);
+            _lastFullText = cleanedSegment;
+            displayText = BuildFullText(cleanedSegment);
+
+            // ── Stability-based commit ──────────────────────────────────────
+            // Compare the previous accumulated hypothesis with the new one.
+            // Words that remain at the same position are considered stable.
+            //
+            // Streaming mode (_streamingCommit == true):
+            //   Commit the full monotonic interim hypothesis. Non-final rewrites
+            //   are blocked below, so live typing can continue growing even when
+            //   the newest word is still being refined.
+            //
+            // Batch mode (_streamingCommit == false):
+            //   Require a stable prefix and hold back one more word.
+            int safeCount;
+            int stableCount = StablePrefixLength(_prevChunkWords, segmentWords);
+
+            if (_streamingCommit)
+            {
+                int speculativeCount = Math.Max(0, segmentWords.Length - StreamingTrailingWordHoldback);
+                safeCount = Math.Max(stableCount, speculativeCount);
+            }
+            else
+            {
+                safeCount = Math.Max(0, stableCount - 1);
+            }
+
+            _logger.LogDebug(
+                "Non-final chunk: rawWords={RawWords} mergedWords={MergedWords} prevWords={Prev} safeCount={Safe} streaming={Streaming}",
+                rawSegmentWords.Length, segmentWords.Length, _prevChunkWords.Length, safeCount, _streamingCommit);
+
+            _prevChunkWords = segmentWords;
+
+            if (safeCount > 0)
+            {
+                var safeSegmentText = string.Join(' ', segmentWords[..safeCount]);
+                var fullSafeText = BuildFullText(safeSegmentText);
+
+                // Live typing should be monotonic during non-final updates. If the
+                // latest interim hypothesis would revise already typed text, defer
+                // that correction until a final chunk instead of erasing words in
+                // the target app mid-sentence.
+                if (fullSafeText.StartsWith(_committedText, StringComparison.Ordinal))
                 {
-                    if (File.GetLastWriteTimeUtc(file) < cutoff)
-                        File.Delete(file);
+                    (backspaceCount, committedDelta) = ComputeCommitDelta(fullSafeText);
+                    _committedText = fullSafeText;
+                    _lastCommittedEndTime = chunk.EndTime ?? _lastCommittedEndTime;
+
+                    _logger.LogDebug(
+                        "Stability commit: safe='{Safe}' delta='{Delta}' bs={BS}",
+                        fullSafeText, committedDelta, backspaceCount);
                 }
-                catch { /* best-effort */ }
+                else
+                {
+                    _logger.LogDebug(
+                        "Skipping non-final rewrite that would revise committed text: committed='{Committed}' candidate='{Candidate}'",
+                        _committedText, fullSafeText);
+                }
             }
         }
-        catch (Exception ex)
+
+        result = new TranscriptionResult(
+            displayText, committedDelta, chunk.IsFinal, chunk.StartTime, chunk.EndTime)
         {
-            _logger.LogDebug(ex, "Failed to clean orphaned temp WAV files.");
+            BackspaceCount = backspaceCount
+        };
+        return true;
+    }
+
+    /// <summary>
+    /// Composes the full transcript text from the segment base and the current
+    /// accumulated segment hypothesis.
+    /// </summary>
+    private string BuildFullText(string segmentText)
+    {
+        if (string.IsNullOrEmpty(_segmentBase))
+            return segmentText;
+
+        if (segmentText.StartsWith(_segmentBase, StringComparison.OrdinalIgnoreCase))
+            return segmentText;
+
+        return _segmentBase + " " + segmentText;
+    }
+
+    private void RebaseSegmentToCommittedText()
+    {
+        _segmentBase = _committedText;
+        _lastFullText = string.Empty;
+        _prevChunkWords = Array.Empty<string>();
+    }
+
+    private bool ShouldTreatChunkAsDetachedAdditiveWindow(LiveAudioSessionChunk chunk, string currentText)
+    {
+        if (!_streamingCommit ||
+            string.IsNullOrEmpty(_committedText) ||
+            string.IsNullOrEmpty(_lastFullText) ||
+            string.IsNullOrEmpty(currentText) ||
+            !chunk.StartTime.HasValue ||
+            !_lastCommittedEndTime.HasValue)
+        {
+            return false;
+        }
+
+        if (chunk.StartTime.Value + DetachedChunkOverlapTolerance < _lastCommittedEndTime.Value)
+            return false;
+
+        if (currentText.StartsWith(_lastFullText, StringComparison.OrdinalIgnoreCase) ||
+            _lastFullText.StartsWith(currentText, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (LargestTextSuffixPrefixOverlap(_lastFullText, currentText) > 0)
+            return false;
+
+        return LargestTextSuffixPrefixOverlap(currentText, _lastFullText) == 0;
+    }
+
+    /// <summary>
+    /// Flushes any text remaining in the stability buffer as a final committed result.
+    /// Called after the SDK stream has ended but before the channel writer is completed.
+    /// </summary>
+    private bool TryFlushRemaining(out TranscriptionResult result)
+    {
+        result = default!;
+
+        if (string.IsNullOrWhiteSpace(_lastFullText))
+            return false;
+
+        var fullText = BuildFullText(_lastFullText);
+        if (fullText == _committedText)
+            return false;
+
+        var (backspaceCount, delta) = ComputeCommitDelta(fullText);
+        if (backspaceCount == 0 && string.IsNullOrEmpty(delta))
+            return false;
+
+        _committedText = fullText;
+
+        result = new TranscriptionResult(_committedText, delta, IsFinal: true)
+        {
+            BackspaceCount = backspaceCount
+        };
+        return true;
+    }
+
+    /// <summary>
+    /// Computes the delta (and any backspace correction) needed to move from
+    /// <see cref="_committedText"/> to <paramref name="targetText"/>.
+    /// </summary>
+    private (int BackspaceCount, string Delta) ComputeCommitDelta(string targetText)
+    {
+        if (targetText == _committedText)
+            return (0, string.Empty);
+
+        if (string.IsNullOrEmpty(_committedText))
+            return (0, targetText);
+
+        // Happy path: previously committed text is an exact prefix.
+        if (targetText.StartsWith(_committedText, StringComparison.Ordinal))
+            return (0, targetText[_committedText.Length..]);
+
+        // Revision path: find the divergence point and backspace-correct.
+        int commonLen = CommonPrefixLength(_committedText, targetText);
+        int backspaceCount = _committedText.Length - commonLen;
+        string delta = targetText[commonLen..];
+        return (backspaceCount, delta);
+    }
+
+    private static int CommonPrefixLength(string a, string b)
+    {
+        int minLen = Math.Min(a.Length, b.Length);
+        for (int i = 0; i < minLen; i++)
+        {
+            if (a[i] != b[i])
+                return i;
+        }
+        return minLen;
+    }
+
+    /// <summary>
+    /// Returns the number of leading words that are identical between two word
+    /// arrays. Used to determine which words have stabilised between consecutive
+    /// non-final chunks from the ASR model.
+    /// </summary>
+    private static int StablePrefixLength(string[] prev, string[] current)
+    {
+        int minLen = Math.Min(prev.Length, current.Length);
+        for (int i = 0; i < minLen; i++)
+        {
+            if (!string.Equals(prev[i], current[i], StringComparison.Ordinal))
+                return i;
+        }
+        return minLen;
+    }
+
+    private static string[] MergeStreamingSegmentWords(string[] previous, string[] current)
+    {
+        if (current.Length == 0)
+            return previous;
+
+        if (previous.Length == 0)
+            return current;
+
+        string previousText = string.Join(' ', previous);
+        string currentText = string.Join(' ', current);
+
+        var mergedText = MergeStreamingSegmentText(previousText, currentText);
+        return mergedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static string MergeStreamingSegmentText(string previousText, string currentText)
+    {
+        if (string.IsNullOrEmpty(currentText))
+            return previousText;
+
+        if (string.IsNullOrEmpty(previousText))
+            return currentText;
+
+        if (currentText.StartsWith(previousText, StringComparison.OrdinalIgnoreCase))
+            return currentText;
+
+        if (previousText.StartsWith(currentText, StringComparison.OrdinalIgnoreCase))
+            return previousText;
+
+        int overlap = LargestTextSuffixPrefixOverlap(previousText, currentText);
+        if (overlap > 0)
+            return previousText + currentText[overlap..];
+
+        // No safe alignment found. Use the latest interim text as the volatile
+        // hypothesis so future chunk growth can recover instead of freezing on a
+        // stale prefix.
+        return currentText;
+    }
+
+    private static int LargestTextSuffixPrefixOverlap(string previousText, string currentText)
+    {
+        int maxOverlap = Math.Min(previousText.Length, currentText.Length);
+        for (int overlap = maxOverlap; overlap > 0; overlap--)
+        {
+            int previousStart = previousText.Length - overlap;
+            if (!IsWordBoundary(previousText, previousStart) || !IsWordBoundary(currentText, overlap))
+                continue;
+
+            if (previousText.AsSpan(previousStart, overlap).Equals(currentText.AsSpan(0, overlap), StringComparison.OrdinalIgnoreCase))
+                return overlap;
+        }
+
+        return 0;
+    }
+
+    private static bool IsWordBoundary(string text, int index)
+    {
+        return index <= 0 || index >= text.Length || char.IsWhiteSpace(text[index - 1]) || char.IsWhiteSpace(text[index]);
+    }
+
+    private static string NormalizeText(string text)
+        => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    // ── Nemotron model swap ──────────────────────────────────────────────────
+    //
+    // The Foundry Local catalog ships whisper-tiny (encoder-decoder ASR) but
+    // Hush uses NVIDIA's Nemotron CPU int4 (RNN-T) for better streaming quality.
+    // After the SDK downloads whisper-tiny into the cache, this method replaces
+    // those files with Nemotron from HuggingFace.
+
+    private const string HuggingFaceBase = "https://huggingface.co/jiafatom/nemotron-cpu-int4/resolve/main";
+
+    private static readonly string[] NemotronFiles =
+    [
+        "audio_processor_config.json",
+        "decoder.onnx",
+        "decoder.onnx.data",
+        "encoder.onnx",
+        "encoder.onnx.data",
+        "genai_config.json",
+        "joint.onnx",
+        "joint.onnx.data",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.txt"
+    ];
+
+    // Whisper files that must be removed so the GenAI runtime doesn't see
+    // a model_type mismatch ("Got: whisper" vs nemotron_speech genai_config).
+    private static readonly string[] WhisperLeftovers =
+    [
+        "config.json",
+        "preprocessor_config.json",
+        "added_tokens.json",
+        "merges.txt",
+        "normalizer.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "whisper-tiny_decoder_fp32.onnx",
+        "whisper-tiny_decoder_fp32.onnx.data",
+        "whisper-tiny_encoder_fp32.onnx",
+        "whisper-tiny_encoder_fp32.onnx.data",
+        "whisper-tiny_jump_times_fp32.onnx"
+    ];
+
+    private async Task EnsureNemotronSwapAsync(string modelCacheDir, CancellationToken ct)
+    {
+        // Already swapped?
+        var genaiPath = Path.Combine(modelCacheDir, "genai_config.json");
+        if (File.Exists(genaiPath))
+        {
+            var content = await File.ReadAllTextAsync(genaiPath, ct);
+            if (content.Contains("nemotron_speech", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Nemotron model files already present in cache.");
+                CleanWhisperLeftovers(modelCacheDir);
+                return;
+            }
+        }
+
+        // Check the legacy ~/.aitk cache (setup.ps1 may have put files there)
+        var legacyDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".aitk", "Microsoft", "openai-whisper-tiny-generic-cpu-2", "cpu-fp32");
+
+        if (Directory.Exists(legacyDir))
+        {
+            var legacyConfig = Path.Combine(legacyDir, "genai_config.json");
+            if (File.Exists(legacyConfig))
+            {
+                var legContent = await File.ReadAllTextAsync(legacyConfig, ct);
+                if (legContent.Contains("nemotron_speech", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogInformation("Copying Nemotron files from legacy cache -> SDK cache.");
+                    foreach (var f in NemotronFiles)
+                    {
+                        var src = Path.Combine(legacyDir, f);
+                        if (File.Exists(src))
+                            File.Copy(src, Path.Combine(modelCacheDir, f), overwrite: true);
+                    }
+                    CleanWhisperLeftovers(modelCacheDir);
+                    return;
+                }
+            }
+        }
+
+        // Download from HuggingFace directly
+        _logger.LogInformation("Downloading Nemotron CPU int4 model from HuggingFace (~700 MB)...");
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+
+        foreach (var file in NemotronFiles)
+        {
+            var destPath = Path.Combine(modelCacheDir, file);
+            if (File.Exists(destPath) && new FileInfo(destPath).Length > 0)
+            {
+                // Could be a nemotron file from a partial previous download. Check.
+                if (file == "genai_config.json")
+                {
+                    var c = await File.ReadAllTextAsync(destPath, ct);
+                    if (c.Contains("nemotron_speech", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                }
+                else
+                {
+                    // Only skip if the nemotron genai_config was already placed
+                    continue;
+                }
+            }
+
+            _logger.LogInformation("Downloading {File}...", file);
+            var url = $"{HuggingFaceBase}/{file}";
+            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+            response.EnsureSuccessStatusCode();
+
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            await using var fs = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            await stream.CopyToAsync(fs, ct);
+        }
+
+        CleanWhisperLeftovers(modelCacheDir);
+        _logger.LogInformation("Nemotron model swap complete.");
+    }
+
+    private void CleanWhisperLeftovers(string modelCacheDir)
+    {
+        foreach (var file in WhisperLeftovers)
+        {
+            var path = Path.Combine(modelCacheDir, file);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+                _logger.LogDebug("Removed whisper leftover: {File}", file);
+            }
         }
     }
 }

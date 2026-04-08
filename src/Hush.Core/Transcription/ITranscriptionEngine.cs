@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 namespace Hush.Core.Transcription;
 
 /// <summary>
@@ -20,10 +22,16 @@ public interface ITranscriptionEngine : IAsyncDisposable
     /// Starts a new live-transcription session.
     /// Audio should be fed via <see cref="AppendAudioAsync"/> after this call.
     /// </summary>
+    /// <param name="streamingCommit">
+    /// When <see langword="true"/>, the engine commits words progressively
+    /// as they stabilise between consecutive chunks. When <see langword="false"/>,
+    /// text is held in the stability buffer until the session stops.
+    /// </param>
     Task StartSessionAsync(
         int sampleRate = 16000,
         int channels = 1,
         string language = "en",
+        bool streamingCommit = true,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Hush.Core.Audio;
 using Hush.Core.Output;
 using Hush.Core.Session;
@@ -17,7 +19,7 @@ public sealed class DictationSessionTests
         var outputMock = new Mock<ITextOutputService>();
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         engineMock
@@ -30,11 +32,34 @@ public sealed class DictationSessionTests
         await session.StartAsync();
 
         // Assert
-        engineMock.Verify(e => e.StartSessionAsync(16000, 1, "en", It.IsAny<CancellationToken>()), Times.Once);
+        engineMock.Verify(e => e.StartSessionAsync(16000, 1, "en", true, It.IsAny<CancellationToken>()), Times.Once);
         captureMock.Verify(
             c => c.Start(It.IsAny<Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>>()),
             Times.Once);
 
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StartAsync_PassesRequestedLanguageToEngine()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(AsyncEnumerable.Empty<TranscriptionResult>());
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
+
+        await session.StartAsync("fr");
+
+        engineMock.Verify(e => e.StartSessionAsync(16000, 1, "fr", true, It.IsAny<CancellationToken>()), Times.Once);
         await session.DisposeAsync();
     }
 
@@ -47,7 +72,7 @@ public sealed class DictationSessionTests
         var outputMock = new Mock<ITextOutputService>();
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         engineMock
@@ -66,7 +91,7 @@ public sealed class DictationSessionTests
     }
 
     [Fact]
-    public async Task OnInterimText_RaisedForInterimResults()
+    public async Task OnInterimText_RaisedForInterimResults_AndOnlyCommittedDeltasAreTyped()
     {
         // Arrange
         var engineMock = new Mock<ITranscriptionEngine>();
@@ -74,13 +99,14 @@ public sealed class DictationSessionTests
         var outputMock = new Mock<ITextOutputService>();
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var results = new[]
         {
-            new TranscriptionResult("hello world", string.Empty, IsFinal: false),
-            new TranscriptionResult("hello world!", "hello world!", IsFinal: true)
+            new TranscriptionResult("see you jason", "see you jason", IsFinal: false),
+            new TranscriptionResult("have fun", " have fun", IsFinal: false),
+            new TranscriptionResult("we'll miss you", " we'll miss you", IsFinal: true)
         };
 
         engineMock
@@ -89,6 +115,10 @@ public sealed class DictationSessionTests
 
         outputMock
             .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var interimTexts = new List<string>();
@@ -103,9 +133,64 @@ public sealed class DictationSessionTests
         await session.StopAsync();
 
         // Assert
-        Assert.Contains("hello world", interimTexts);
-        Assert.Contains("hello world!", committedChunks);
-        outputMock.Verify(o => o.TypeTextAsync("hello world!", It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Contains("see you jason", interimTexts);
+        Assert.Contains("we'll miss you", interimTexts);
+        Assert.Contains(" we'll miss you", committedChunks);
+        outputMock.Verify(o => o.TypeTextAsync("see you jason", It.IsAny<CancellationToken>()), Times.Once);
+        outputMock.Verify(o => o.TypeTextAsync(" have fun", It.IsAny<CancellationToken>()), Times.Once);
+        outputMock.Verify(o => o.TypeTextAsync(" we'll miss you", It.IsAny<CancellationToken>()), Times.Once);
+        outputMock.Verify(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BackspaceCorrections_AreDrivenByCommitDeltas()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var typedTexts = new List<string>();
+        var backspaceCounts = new List<int>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[]
+            {
+                new TranscriptionResult("It's not wor", "It's not wor", IsFinal: false),
+                new TranscriptionResult("It's working", "working", IsFinal: true)
+                {
+                    BackspaceCount = 7
+                }
+            }.ToAsyncEnumerable());
+
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>((text, _) =>
+            {
+                typedTexts.Add(text);
+                return Task.CompletedTask;
+            });
+
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns<int, CancellationToken>((count, _) =>
+            {
+                backspaceCounts.Add(count);
+                return Task.CompletedTask;
+            });
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
+
+        await session.StartAsync();
+        await session.StopAsync();
+
+        Assert.Equal(new[] { "It's not wor", "working" }, typedTexts);
+        Assert.Equal(new[] { 7 }, backspaceCounts);
+
+        await session.DisposeAsync();
     }
 
     [Fact]
@@ -118,7 +203,7 @@ public sealed class DictationSessionTests
         var typedText = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         engineMock
-            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         engineMock

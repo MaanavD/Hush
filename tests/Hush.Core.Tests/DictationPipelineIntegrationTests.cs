@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Hush.Core.Audio;
 using Hush.Core.Output;
 using Hush.Core.Session;
@@ -236,7 +238,7 @@ public sealed class DictationPipelineIntegrationTests
     {
         engine
             .Setup(e => e.StartSessionAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         engine

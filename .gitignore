@@ -13,9 +13,11 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+publish/
 
 # Visual Studio cache/options
 .vs/
+launchSettings.json
 
 # Visual Studio Code
 .vscode/
@@ -50,6 +52,21 @@ Thumbs.db
 # Node (if used)
 node_modules/
 
-# Executables
+# Build outputs
 *.exe
 *.dll
+*.pdb
+
+# Test results
+TestResults/
+BenchmarkDotNet.Artifacts/
+
+# Distribution build artifacts (setup.ps1 is tracked; binaries are not)
+dist/*.exe
+dist/*.zip
+dist/win-x64/
+dist/osx-arm64/
+dist/linux-x64/
+
+# Internal debugging tools
+_inspect/

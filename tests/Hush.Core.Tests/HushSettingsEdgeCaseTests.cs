@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
+
 using Hush.Core.Configuration;
 using System.Text.Json;
 
@@ -29,13 +31,11 @@ public sealed class HushSettingsEdgeCaseTests
         Assert.Equal(original.Language, loaded.Language);
         Assert.Equal(original.TranscriptionModel, loaded.TranscriptionModel);
         Assert.Equal(original.PartialsInOverlay, loaded.PartialsInOverlay);
-        Assert.Equal(original.TypeCommittedTextOnly, loaded.TypeCommittedTextOnly);
         Assert.Equal(original.ClipboardFallback, loaded.ClipboardFallback);
         Assert.Equal(original.AutoStart, loaded.AutoStart);
         Assert.Equal(original.OverlayPosition, loaded.OverlayPosition);
         Assert.Equal(original.OverlayOpacity, loaded.OverlayOpacity);
         Assert.Equal(original.SoundEffects, loaded.SoundEffects);
-        Assert.Equal(original.Theme, loaded.Theme);
     }
 
     [Fact]
@@ -47,13 +47,11 @@ public sealed class HushSettingsEdgeCaseTests
             Language = "ja",
             TranscriptionModel = "whisper-large-v3",
             PartialsInOverlay = false,
-            TypeCommittedTextOnly = false,
             ClipboardFallback = true,
             AutoStart = true,
             OverlayPosition = "top-right",
             OverlayOpacity = 0.42,
-            SoundEffects = false,
-            Theme = "light"
+            SoundEffects = false
         };
 
         var json = JsonSerializer.Serialize(original, JsonOptions);
@@ -63,13 +61,11 @@ public sealed class HushSettingsEdgeCaseTests
         Assert.Equal("ja", loaded.Language);
         Assert.Equal("whisper-large-v3", loaded.TranscriptionModel);
         Assert.False(loaded.PartialsInOverlay);
-        Assert.False(loaded.TypeCommittedTextOnly);
         Assert.True(loaded.ClipboardFallback);
         Assert.True(loaded.AutoStart);
         Assert.Equal("top-right", loaded.OverlayPosition);
         Assert.Equal(0.42, loaded.OverlayOpacity);
         Assert.False(loaded.SoundEffects);
-        Assert.Equal("light", loaded.Theme);
     }
 
     // ── Forward compatibility: extra JSON properties ─────────────────────
