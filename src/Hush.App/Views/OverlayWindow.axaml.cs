@@ -28,10 +28,10 @@ public sealed partial class OverlayWindow : Window
     private static extern nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
 
     // ── Waveform state ───────────────────────────────────────────────────────
-    private const int PointCount = 48;
-    private const double WavePadX = 24;
-    private const double WavePadY = 6;
-    private const double IdleAmplitude = 1.0;
+    private const int PointCount = 32;
+    private const double WavePadX = 12;
+    private const double WavePadY = 4;
+    private const double IdleAmplitude = 0.8;
 
     // Three distinct waveform lines — each reacts to audio differently.
     private record WaveConfig(
@@ -44,7 +44,7 @@ public sealed partial class OverlayWindow : Window
     private static readonly WaveConfig[] WaveConfigs =
     [
         // Line 1: Purple — primary, clean sinusoidal, one full cycle (peak + trough)
-        new(Color.FromRgb(147, 51, 234), 2.0, 1.0,
+        new(Color.FromRgb(147, 51, 234), 1.8, 1.0,
             Freq1: 5.0, Speed1: 3.2, Weight1: 0.90,
             Freq2: 10.0, Speed2: -1.5, Weight2: 0.07,
             Freq3: 15.0, Speed3: 2.0, Weight3: 0.03,

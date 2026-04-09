@@ -75,7 +75,7 @@ public sealed class HushSettingsEdgeCaseTests
     {
         var json = """
         {
-            "hotkey": "Ctrl+Shift+H",
+            "hotkey": "Ctrl+H",
             "language": "en",
             "futureProperty": "value",
             "anotherFutureFeature": 42
@@ -84,7 +84,7 @@ public sealed class HushSettingsEdgeCaseTests
 
         var loaded = JsonSerializer.Deserialize<HushSettings>(json, JsonOptions);
         Assert.NotNull(loaded);
-        Assert.Equal("Ctrl+Shift+H", loaded!.Hotkey);
+        Assert.Equal("Ctrl+H", loaded!.Hotkey);
         Assert.Equal("en", loaded.Language);
     }
 
@@ -110,7 +110,7 @@ public sealed class HushSettingsEdgeCaseTests
     {
         var loaded = JsonSerializer.Deserialize<HushSettings>("{}", JsonOptions);
         Assert.NotNull(loaded);
-        Assert.Equal("Ctrl+Shift+H", loaded!.Hotkey);
+        Assert.Equal("Ctrl+H", loaded!.Hotkey);
     }
 
     // ── Boundary values ──────────────────────────────────────────────────
@@ -126,7 +126,7 @@ public sealed class HushSettingsEdgeCaseTests
     }
 
     [Theory]
-    [InlineData("Ctrl+Shift+H")]
+    [InlineData("Ctrl+H")]
     [InlineData("Alt+Space")]
     [InlineData("F5")]
     [InlineData("Ctrl+Alt+Delete")]

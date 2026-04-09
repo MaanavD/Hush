@@ -76,7 +76,7 @@ public sealed class DictationSessionEdgeCaseTests
         await session.StopAsync();
 
         outputMock.Verify(
-            o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
             Times.Never);
 
         await session.DisposeAsync();
@@ -108,8 +108,8 @@ public sealed class DictationSessionEdgeCaseTests
             .Returns(results.ToAsyncEnumerable());
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((text, _) =>
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) =>
             {
                 typedTexts.Add(text);
                 return Task.CompletedTask;
@@ -161,7 +161,7 @@ public sealed class DictationSessionEdgeCaseTests
         Assert.NotEmpty(interimTexts);
         // ...but nothing typed
         outputMock.Verify(
-            o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
             Times.Never);
 
         await session.DisposeAsync();
@@ -283,8 +283,8 @@ public sealed class DictationSessionEdgeCaseTests
 
         int callCount = 0;
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((_, _) =>
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((_, _, _) =>
             {
                 callCount++;
                 if (callCount == 1)

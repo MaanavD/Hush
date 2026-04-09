@@ -9,9 +9,9 @@ namespace Hush.Core.Configuration;
 public sealed class HushSettings
 {
     /// <summary>Global hotkey combination, e.g. <c>"Ctrl+Shift+H"</c>.</summary>
-    public string Hotkey { get; set; } = "Ctrl+Shift+H";
+    public string Hotkey { get; set; } = "Ctrl+H";
 
-    /// <summary>BCP-47 language tag used for transcription, e.g. <c>"en"</c>.</summary>
+/// <summary>Language hint passed to Foundry Local. Accepts ISO 639-1 codes like <c>"en"</c> and locale tags like <c>"en-US"</c>.</summary>
     public string Language { get; set; } = "en";
 
     /// <summary>Foundry Local model alias to use for transcription.</summary>
@@ -45,4 +45,9 @@ public sealed class HushSettings
 
     /// <summary>Whether Hush should launch at OS login.</summary>
     public bool AutoStart { get; set; } = false;
+
+    /// <summary>
+    /// Audio input device index. <c>-1</c> means system default.
+    /// </summary>
+    public int MicrophoneDeviceIndex { get; set; } = -1;
 }

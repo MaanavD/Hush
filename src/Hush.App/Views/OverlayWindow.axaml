@@ -4,7 +4,7 @@
         x:Class="Hush.App.Views.OverlayWindow"
         x:DataType="vm:OverlayViewModel"
         Title="Hush Overlay"
-    Width="420" Height="112"
+        Width="180" Height="56"
         SystemDecorations="None"
         Background="Transparent"
         Topmost="True"
@@ -15,80 +15,63 @@
     <Panel>
 
         <!-- ── Preparing state ── -->
-        <Border CornerRadius="28"
-                Background="#F5FFFFFF"
-                BorderBrush="#14000000"
+        <Border CornerRadius="16"
+                Background="#F0FFFFFF"
+                BorderBrush="#30475569"
                 BorderThickness="1"
-                Padding="20 0"
+                Padding="14 0"
                 IsVisible="{Binding IsPreparing}"
-                BoxShadow="0 2 12 0 #1A000000">
+                BoxShadow="0 1 8 0 #14000000">
             <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                <Ellipse Width="8" Height="8"
+                <Ellipse Width="6" Height="6"
                          Fill="#9333EA"
                          VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1"
                            Text="Preparing…"
-                           FontSize="13"
+                           FontSize="11"
                            FontWeight="SemiBold"
-                           Foreground="#1E293B"
-                           Margin="10 0 0 0"
+                           Foreground="#64748B"
+                           Margin="8 0 0 0"
                            VerticalAlignment="Center" />
                 <TextBlock Grid.Column="2"
                            Text="{Binding ModelDownloadProgress, StringFormat={}{0:P0}}"
-                           FontSize="12"
+                           FontSize="10"
                            FontWeight="SemiBold"
                            Foreground="#7C3AED"
                            VerticalAlignment="Center" />
             </Grid>
         </Border>
 
-        <!-- ── Listening state: live transcript + waveform ── -->
-        <Border CornerRadius="28"
-                Background="#F5FFFFFF"
-                BorderBrush="#14000000"
+        <!-- ── Listening state: compact waveform pill ── -->
+        <Border CornerRadius="16"
+                Background="#F0FFFFFF"
+                BorderBrush="#309333EA"
                 BorderThickness="1"
-                Padding="18 12 18 10"
+                Padding="14 8"
                 IsVisible="{Binding IsListening}"
-                BoxShadow="0 2 12 0 #1A000000"
+                BoxShadow="0 1 8 0 #14000000"
                 ClipToBounds="True">
-            <Grid RowDefinitions="Auto,34" RowSpacing="10">
-                <Grid>
-                    <TextBlock Text="{Binding TranscriptText}"
-                               IsVisible="{Binding HasTranscript}"
-                               FontSize="14"
-                               FontWeight="SemiBold"
-                               Foreground="#0F172A"
-                               TextWrapping="Wrap"
-                               TextTrimming="CharacterEllipsis"
-                               MaxLines="2" />
-                    <TextBlock Text="Listening…"
-                               IsVisible="{Binding ShowListeningHint}"
-                               FontSize="14"
-                               FontWeight="SemiBold"
-                               Foreground="#475569" />
-                </Grid>
-                <Canvas Grid.Row="1" x:Name="WaveCanvas" />
-            </Grid>
+            <Canvas x:Name="WaveCanvas" />
         </Border>
 
         <!-- ── Error state ── -->
-        <Border CornerRadius="28"
-                Background="#F2FFFFFF"
-                BorderBrush="#14EF4444"
+        <Border CornerRadius="16"
+                Background="#F0FFFFFF"
+                BorderBrush="#40EF4444"
                 BorderThickness="1"
-                Padding="20 0"
+                Padding="14 0"
                 IsVisible="{Binding HasError}"
-                BoxShadow="0 1 8 0 #12000000">
+                BoxShadow="0 1 6 0 #10000000">
             <Grid ColumnDefinitions="Auto,*" VerticalAlignment="Center">
-                <Ellipse Width="6" Height="6"
+                <Ellipse Width="5" Height="5"
                          Fill="#EF4444"
                          VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1"
                            Text="{Binding ErrorMessage}"
-                           FontSize="12"
+                           FontSize="10"
                            Foreground="#DC2626"
                            TextTrimming="CharacterEllipsis"
-                           Margin="10 0 0 0"
+                           Margin="8 0 0 0"
                            VerticalAlignment="Center" />
             </Grid>
         </Border>

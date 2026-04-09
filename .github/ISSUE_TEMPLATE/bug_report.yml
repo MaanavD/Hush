@@ -1,0 +1,80 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to file a bug report. Please fill in as much detail as you can.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am running the latest release of Hush.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Hush version
+      placeholder: "e.g. 1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - Linux (X11)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: Tell us what you saw.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      placeholder: Tell us what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Hold Ctrl+Shift+H
+        2. Speak "..."
+        3. See error in overlay
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: |
+        Paste the relevant lines from `~/.hush/hush.log`. The log never contains your dictated text.
+      render: text
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, affected app name, anything else useful.

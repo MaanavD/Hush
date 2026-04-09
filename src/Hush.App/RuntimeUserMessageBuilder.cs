@@ -45,6 +45,22 @@ internal static class RuntimeUserMessageBuilder
         _ => "Could not start dictation. Check ~/.hush/hush.log for details."
     };
 
+    public static string BuildSettingsSaveMessage(Exception exception) => exception switch
+    {
+        InvalidOperationException { Message: var message } when IsActionableRuntimeMessage(message) => message,
+        UnauthorizedAccessException => "Hush could not save settings because it does not have permission to write its configuration files.",
+        IOException => "Hush could not save settings because the configuration file is unavailable right now. Try again in a moment.",
+        _ => "Hush could not save settings. Check ~/.hush/hush.log for details."
+    };
+
+    public static string BuildInitializationErrorMessage(Exception exception) => exception switch
+    {
+        InvalidOperationException { Message: var message } when IsActionableRuntimeMessage(message) || IsStartupMessage(message) => message,
+        UnauthorizedAccessException => "Hush could not access its startup files because it does not have permission to read or write them.",
+        IOException => "Hush could not access one of its startup files. Check that ~/.hush is available and try again.",
+        _ => "Hush failed to start. Check ~/.hush/hush.log for details."
+    };
+
     private static bool IsActionableRuntimeMessage(string message)
     {
         return message.Contains("microphone", StringComparison.OrdinalIgnoreCase)
@@ -55,7 +71,18 @@ internal static class RuntimeUserMessageBuilder
             || message.Contains("elevated", StringComparison.OrdinalIgnoreCase)
             || message.Contains("administrator", StringComparison.OrdinalIgnoreCase)
             || message.Contains("hotkey", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("launch at login", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("auto-start", StringComparison.OrdinalIgnoreCase)
             || message.Contains("X11", StringComparison.OrdinalIgnoreCase)
             || message.Contains("Accessibility", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsStartupMessage(string message)
+    {
+        return message.Contains("Foundry Local", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("model", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("catalog", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("configuration", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("settings", StringComparison.OrdinalIgnoreCase);
     }
 }

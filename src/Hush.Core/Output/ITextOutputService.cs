@@ -12,11 +12,15 @@ public interface ITextOutputService
     /// Types <paramref name="text"/> into the currently focused application by
     /// simulating keyboard input. Returns when the keystrokes have been dispatched.
     /// </summary>
-    Task TypeTextAsync(string text, CancellationToken cancellationToken = default);
+    /// <param name="skipModifierRestore">When <see langword="true"/>, held modifier
+    /// keys (Ctrl/Shift/Alt/Win) are released before typing but NOT re-pressed
+    /// afterwards. Use this during rapid sequential typing (streaming) to prevent
+    /// the modifier release/restore cycle from corrupting keystrokes.</param>
+    Task TypeTextAsync(string text, CancellationToken cancellationToken = default, bool skipModifierRestore = false);
 
     /// <summary>
     /// Sends <paramref name="count"/> backspace keystrokes to the focused application,
     /// erasing previously typed characters. Used for speculative commit corrections.
     /// </summary>
-    Task SendBackspacesAsync(int count, CancellationToken cancellationToken = default);
+    Task SendBackspacesAsync(int count, CancellationToken cancellationToken = default, bool skipModifierRestore = false);
 }

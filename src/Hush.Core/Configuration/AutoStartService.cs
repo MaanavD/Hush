@@ -42,6 +42,11 @@ public sealed class AutoStartService : IAutoStartService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to {Action} auto-start.", enable ? "enable" : "disable");
+            throw new InvalidOperationException(
+                enable
+                    ? "Hush could not enable launch at login. Check OS permissions and try again."
+                    : "Hush could not disable launch at login. Check OS permissions and try again.",
+                ex);
         }
 
         return Task.CompletedTask;

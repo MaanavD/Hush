@@ -11,7 +11,7 @@ public sealed class HushSettingsTests
     {
         var settings = new HushSettings();
 
-        Assert.Equal("Ctrl+Shift+H", settings.Hotkey);
+        Assert.Equal("Ctrl+H", settings.Hotkey);
         Assert.Equal("en", settings.Language);
         Assert.Equal("whisper-tiny", settings.TranscriptionModel);
         Assert.True(settings.PartialsInOverlay);

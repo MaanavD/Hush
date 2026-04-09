@@ -4,7 +4,7 @@
         x:Class="Hush.App.Views.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
         Title="Hush — Settings"
-        Width="460" Height="560"
+        Width="460" Height="610"
         WindowStartupLocation="CenterScreen"
         CanResize="False"
         FontFamily="{StaticResource Hush.Font}">
@@ -59,23 +59,41 @@
                     </StackPanel>
                     <TextBox Grid.Column="1"
                              Text="{Binding Hotkey}"
-                             Watermark="Ctrl+Shift+H"
-                             ToolTip.Tip="Hotkey combination to hold for push-to-talk dictation" />
+                             Watermark="Ctrl+H"
+                             ToolTip.Tip="Hotkey combination to hold for push-to-talk dictation. Changes take effect as soon as you save." />
                 </Grid>
 
                 <!-- Language -->
-                <Grid ColumnDefinitions="160,*" Margin="0 0 0 24">
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
                     <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                        <TextBlock Text="Language"
+                        <TextBlock Text="Language code"
                                    FontSize="13"
                                    Foreground="{StaticResource Hush.Text.Primary.Brush}" />
-                        <TextBlock Text="BCP-47 tag"
+                        <TextBlock Text="ISO 639-1 or locale"
                                    FontSize="10"
                                    Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
                     </StackPanel>
                     <TextBox Grid.Column="1"
                              Text="{Binding Language}"
-                             Watermark="en" />
+                             Watermark="en"
+                             ToolTip.Tip="Changes apply to the next dictation session without restarting the app. Use a language hint like en, fr, es, de, ja, or pt-BR. Common aliases like jp are normalized to ja." />
+                </Grid>
+
+                <!-- Microphone -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 24">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Microphone"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Audio input device"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{Binding AvailableMicrophones}"
+                              SelectedIndex="{Binding SelectedMicrophoneIndex}"
+                              HorizontalAlignment="Stretch"
+                              ToolTip.Tip="Choose a specific microphone or leave on System Default. Takes effect on next dictation." />
                 </Grid>
 
                 <!-- ─ Section: Model ─────────────────────────────────────── -->

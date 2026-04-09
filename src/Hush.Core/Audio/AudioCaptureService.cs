@@ -13,11 +13,14 @@ namespace Hush.Core.Audio;
 /// </summary>
 public sealed class AudioCaptureService : IAudioCaptureService
 {
-    private const int DefaultDeviceNumber = -1;
+    private const int SystemDefaultDeviceNumber = -1;
 
     private readonly ILogger<AudioCaptureService> _logger;
     private Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>? _audioAvailable;
     private bool _disposed;
+
+    /// <inheritdoc/>
+    public int DeviceIndex { get; set; } = SystemDefaultDeviceNumber;
 
     /// <inheritdoc/>
     public event Action<float>? AudioLevelChanged;
@@ -48,7 +51,7 @@ public sealed class AudioCaptureService : IAudioCaptureService
         {
             _waveIn = new NAudio.Wave.WaveInEvent
             {
-                DeviceNumber = DefaultDeviceNumber,
+                DeviceNumber = DeviceIndex,
                 WaveFormat = new NAudio.Wave.WaveFormat(rate: 16000, bits: 16, channels: 1),
                 BufferMilliseconds = 50
             };
@@ -56,8 +59,9 @@ public sealed class AudioCaptureService : IAudioCaptureService
             _waveIn.DataAvailable += OnDataAvailable;
             _waveIn.StartRecording();
             _logger.LogInformation(
-                "Audio capture started (NAudio/WaveInEvent, device='{DeviceName}', deviceCount={DeviceCount}).",
-                GetDefaultDeviceLabel(),
+                "Audio capture started (NAudio/WaveInEvent, device={DeviceIndex} '{DeviceName}', deviceCount={DeviceCount}).",
+                DeviceIndex,
+                GetDeviceLabel(DeviceIndex),
                 NAudio.Wave.WaveIn.DeviceCount);
         }
         catch (Exception ex)
@@ -196,16 +200,40 @@ public sealed class AudioCaptureService : IAudioCaptureService
         _waveIn = null;
     }
 
-    private static string GetDefaultDeviceLabel()
+    private static string GetDeviceLabel(int deviceIndex)
     {
         try
         {
-            return NAudio.Wave.WaveIn.GetCapabilities(DefaultDeviceNumber).ProductName;
+            return NAudio.Wave.WaveIn.GetCapabilities(deviceIndex).ProductName;
         }
         catch
         {
             return "system default";
         }
+    }
+
+    /// <summary>
+    /// Returns a list of available audio input devices as (index, name) pairs.
+    /// Index <c>-1</c> is the system default.
+    /// </summary>
+    public static List<(int Index, string Name)> GetAvailableDevices()
+    {
+        var devices = new List<(int, string)>();
+        devices.Add((-1, "System Default"));
+        try
+        {
+            int count = NAudio.Wave.WaveIn.DeviceCount;
+            for (int i = 0; i < count; i++)
+            {
+                var caps = NAudio.Wave.WaveIn.GetCapabilities(i);
+                devices.Add((i, caps.ProductName));
+            }
+        }
+        catch
+        {
+            // Best-effort — return at least the default entry.
+        }
+        return devices;
     }
 #endif
 }

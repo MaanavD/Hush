@@ -16,8 +16,6 @@ public sealed partial class SettingsWindow : Window
 
     private void OnSaveClicked(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is SettingsViewModel vm)
-            vm.Apply();
         Close();
     }
 }

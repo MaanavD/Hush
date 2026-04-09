@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
 using Hush.App.ViewModels;
 using Hush.App.Views;
@@ -51,53 +53,136 @@ public sealed class App : Application
             .AddConsole()
             .AddProvider(new FileLoggerProvider(logPath)));
         _logger = _loggerFactory.CreateLogger<App>();
-
-        var settingsService = new SettingsService(_loggerFactory.CreateLogger<SettingsService>());
-        var settings = await settingsService.LoadAsync();
-
-        _transcriptionEngine = new TranscriptionEngine(_loggerFactory.CreateLogger<TranscriptionEngine>());
-        _audioCapture = new AudioCaptureService(_loggerFactory.CreateLogger<AudioCaptureService>());
-        var textOutput = new KeystrokeTypingService(
-            _loggerFactory.CreateLogger<KeystrokeTypingService>(),
-            useClipboardFallback: settings.ClipboardFallback);
-        _dictationSession = new DictationSession(
-            _transcriptionEngine, _audioCapture, textOutput,
-            _loggerFactory.CreateLogger<DictationSession>());
-
-        var platformHotkeyProvider = CreatePlatformHotkeyProvider();
-        _hotkeyService = new GlobalHotkeyService(platformHotkeyProvider, _loggerFactory.CreateLogger<GlobalHotkeyService>());
-
-        var overlayVm = new OverlayViewModel();
-        var soundEffects = new SoundEffectService(_loggerFactory.CreateLogger<SoundEffectService>());
-        var autoStart = new AutoStartService(_loggerFactory.CreateLogger<AutoStartService>());
-        _mainVm = new MainViewModel(
-            settings, settingsService, _transcriptionEngine,
-            _dictationSession, _hotkeyService, soundEffects, autoStart, overlayVm,
-            _loggerFactory.CreateLogger<MainViewModel>());
-
-        _overlayWindow = new OverlayWindow { DataContext = overlayVm };
-        _overlayWindow.Show();   // Show once so visibility changes never re-activate the window.
-
-        _trayIcon = new TrayIcon(_mainVm, desktop);
+        RegisterUnhandledExceptionHandlers();
 
         try
         {
-            _hotkeyService.Register(settings.Hotkey);
+            var settingsService = new SettingsService(_loggerFactory.CreateLogger<SettingsService>());
+            var settings = await settingsService.LoadAsync();
+
+            _transcriptionEngine = new TranscriptionEngine(_loggerFactory.CreateLogger<TranscriptionEngine>());
+            _audioCapture = new AudioCaptureService(_loggerFactory.CreateLogger<AudioCaptureService>())
+            {
+                DeviceIndex = settings.MicrophoneDeviceIndex
+            };
+            var textOutput = new KeystrokeTypingService(
+                _loggerFactory.CreateLogger<KeystrokeTypingService>(),
+                useClipboardFallback: settings.ClipboardFallback);
+            _dictationSession = new DictationSession(
+                _transcriptionEngine, _audioCapture, textOutput,
+                _loggerFactory.CreateLogger<DictationSession>());
+
+            var platformHotkeyProvider = CreatePlatformHotkeyProvider();
+            _hotkeyService = new GlobalHotkeyService(platformHotkeyProvider, _loggerFactory.CreateLogger<GlobalHotkeyService>());
+
+            var overlayVm = new OverlayViewModel();
+            var soundEffects = new SoundEffectService(_loggerFactory.CreateLogger<SoundEffectService>());
+            var autoStart = new AutoStartService(_loggerFactory.CreateLogger<AutoStartService>());
+            _mainVm = new MainViewModel(
+                settings, settingsService, _transcriptionEngine,
+                _dictationSession, _hotkeyService, soundEffects, autoStart, _audioCapture, overlayVm,
+                _loggerFactory.CreateLogger<MainViewModel>());
+
+            _overlayWindow = new OverlayWindow { DataContext = overlayVm };
+            _overlayWindow.Show();   // Show once so visibility changes never re-activate the window.
+
+            _trayIcon = new TrayIcon(_mainVm, desktop);
+
+            try
+            {
+                _hotkeyService.Register(settings.Hotkey);
+            }
+            catch (Exception ex)
+            {
+                var message = RuntimeUserMessageBuilder.BuildHotkeyRegistrationMessage(ex, settings.Hotkey);
+                overlayVm.ErrorMessage = message;
+                _mainVm.StatusMessage = $"Error: {message}";
+                _logger.LogError(ex, "Failed to register startup hotkey '{Hotkey}'.", settings.Hotkey);
+            }
+
+            // Wire cleanup on shutdown.
+            desktop.ShutdownRequested += OnShutdownRequested;
+
+            await _mainVm.InitializeAsync();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            var message = RuntimeUserMessageBuilder.BuildHotkeyRegistrationMessage(ex, settings.Hotkey);
-            overlayVm.ErrorMessage = message;
-            _mainVm.StatusMessage = $"Error: {message}";
-            _logger.LogError(ex, "Failed to register startup hotkey '{Hotkey}'.", settings.Hotkey);
+            HandleStartupFailure(desktop, ex);
         }
-
-        // Wire cleanup on shutdown.
-        desktop.ShutdownRequested += OnShutdownRequested;
-
-        await _mainVm.InitializeAsync();
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private void RegisterUnhandledExceptionHandlers()
+    {
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            if (e.ExceptionObject is Exception ex)
+                _logger?.LogCritical(ex, "Unhandled application exception.");
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            _logger?.LogError(e.Exception, "Unobserved task exception.");
+            e.SetObserved();
+        };
+    }
+
+    private void HandleStartupFailure(IClassicDesktopStyleApplicationLifetime desktop, Exception exception)
+    {
+        var message = RuntimeUserMessageBuilder.BuildInitializationErrorMessage(exception);
+        _logger?.LogCritical(exception, "Fatal startup error.");
+        Console.Error.WriteLine(message);
+
+        if (_overlayWindow?.DataContext is OverlayViewModel overlayVm)
+            overlayVm.ErrorMessage = message;
+
+        if (_mainVm is not null)
+            _mainVm.StatusMessage = $"Error: {message}";
+
+        if (desktop.MainWindow is null)
+        {
+            desktop.MainWindow = BuildStartupFailureWindow(message);
+            desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
+            desktop.MainWindow.Show();
+        }
+    }
+
+    private static Window BuildStartupFailureWindow(string message)
+    {
+        return new Window
+        {
+            Title = "Hush — Startup Error",
+            Width = 460,
+            Height = 220,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            Content = new StackPanel
+            {
+                Margin = new Thickness(24),
+                Spacing = 12,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Hush couldn’t finish starting.",
+                        FontSize = 18,
+                        FontWeight = Avalonia.Media.FontWeight.SemiBold
+                    },
+                    new TextBlock
+                    {
+                        Text = message,
+                        TextWrapping = Avalonia.Media.TextWrapping.Wrap
+                    },
+                    new TextBlock
+                    {
+                        Text = "Check ~/.hush/hush.log for more detail.",
+                        TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                        Opacity = 0.75
+                    }
+                }
+            }
+        };
     }
 
     private async void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)

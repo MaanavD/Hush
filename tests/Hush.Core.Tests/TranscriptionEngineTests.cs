@@ -57,6 +57,21 @@ public sealed class TranscriptionEngineTests
         await engine.AppendAudioAsync(new byte[] { 1, 2, 3, 4 });
     }
 
+    [Theory]
+    [InlineData("fr", "fr")]
+    [InlineData("pt-BR", "pt")]
+    [InlineData("zh_CN", "zh")]
+    [InlineData("jp", "ja")]
+    [InlineData("kr", "ko")]
+    [InlineData("cn", "zh")]
+    [InlineData("  ja-JP  ", "ja")]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    public void NormalizeLanguageHint_UsesPrimarySubtag(string language, string? expected)
+    {
+        Assert.Equal(expected, ManagedLiveAudioSession.NormalizeLanguageHint(language));
+    }
+
     [Fact]
     public async Task LiveSession_UsesConfiguredLanguage_AndNormalizesCommittedOutput()
     {
@@ -77,16 +92,16 @@ public sealed class TranscriptionEngineTests
             results,
             item =>
             {
-                // Streaming mode now commits the first monotonic chunk immediately.
+                // Streaming mode now holds back the unstable tail word until it settles.
                 Assert.Equal("bonjour", item.DisplayText);
-                Assert.Equal("bonjour", item.CommittedDelta);
+                Assert.Equal(string.Empty, item.CommittedDelta);
                 Assert.False(item.IsFinal);
             },
             item =>
             {
-                // The matching final chunk adds no further delta.
+                // The matching final chunk commits the buffered word.
                 Assert.Equal("bonjour", item.DisplayText);
-                Assert.Equal(string.Empty, item.CommittedDelta);
+                Assert.Equal("bonjour", item.CommittedDelta);
                 Assert.True(item.IsFinal);
             },
             item =>
@@ -167,20 +182,20 @@ public sealed class TranscriptionEngineTests
 
         Assert.Equal(4, results.Count);
 
-        // Chunk 1: the initial cumulative hypothesis commits immediately.
-        Assert.Equal("hello world", results[0].CommittedDelta);
+        // Chunk 1: the initial cumulative hypothesis commits all but the trailing word.
+        Assert.Equal("hello", results[0].CommittedDelta);
         Assert.False(results[0].IsFinal);
 
-        // Chunk 2: only the newly grown suffix is typed.
-        Assert.Equal(" how", results[1].CommittedDelta);
+        // Chunk 2: the held-back word settles and is typed.
+        Assert.Equal(" world", results[1].CommittedDelta);
         Assert.False(results[1].IsFinal);
 
-        // Chunk 3: continue appending the new suffix.
-        Assert.Equal(" are", results[2].CommittedDelta);
+        // Chunk 3: continue releasing the previously buffered tail.
+        Assert.Equal(" how", results[2].CommittedDelta);
         Assert.False(results[2].IsFinal);
 
-        // Final: flush the remaining suffix.
-        Assert.Equal(" you", results[3].CommittedDelta);
+        // Final: flush the remaining buffered suffix.
+        Assert.Equal(" are you", results[3].CommittedDelta);
         Assert.True(results[3].IsFinal);
     }
 
@@ -209,19 +224,19 @@ public sealed class TranscriptionEngineTests
 
         Assert.Equal(5, results.Count);
 
-        Assert.Equal("the q", results[0].CommittedDelta);
+        Assert.Equal("the", results[0].CommittedDelta);
         Assert.Equal(0, results[0].BackspaceCount);
 
-        Assert.Equal("u", results[1].CommittedDelta);
+        Assert.Equal(string.Empty, results[1].CommittedDelta);
         Assert.Equal(0, results[1].BackspaceCount);
 
-        Assert.Equal("ick b", results[2].CommittedDelta);
+        Assert.Equal(" quick", results[2].CommittedDelta);
         Assert.Equal(0, results[2].BackspaceCount);
 
-        Assert.Equal("rown f", results[3].CommittedDelta);
+        Assert.Equal(" brown", results[3].CommittedDelta);
         Assert.Equal(0, results[3].BackspaceCount);
 
-        Assert.Equal("ox", results[4].CommittedDelta);
+        Assert.Equal(" fox", results[4].CommittedDelta);
         Assert.Equal(0, results[4].BackspaceCount);
         Assert.True(results[4].IsFinal);
     }
@@ -250,19 +265,19 @@ public sealed class TranscriptionEngineTests
         Assert.Equal(4, results.Count);
 
         Assert.Equal("hello world", results[0].DisplayText);
-        Assert.Equal("hello world", results[0].CommittedDelta);
+        Assert.Equal("hello", results[0].CommittedDelta);
         Assert.Equal(0, results[0].BackspaceCount);
 
         Assert.Equal("hello world how are", results[1].DisplayText);
-        Assert.Equal(" how are", results[1].CommittedDelta);
+        Assert.Equal(" world how", results[1].CommittedDelta);
         Assert.Equal(0, results[1].BackspaceCount);
 
         Assert.Equal("hello world how are you", results[2].DisplayText);
-        Assert.Equal(" you", results[2].CommittedDelta);
+        Assert.Equal(" are", results[2].CommittedDelta);
         Assert.Equal(0, results[2].BackspaceCount);
 
         Assert.Equal("hello world how are you today", results[3].DisplayText);
-        Assert.Equal(" today", results[3].CommittedDelta);
+        Assert.Equal(" you today", results[3].CommittedDelta);
         Assert.Equal(0, results[3].BackspaceCount);
         Assert.True(results[3].IsFinal);
     }
@@ -289,15 +304,15 @@ public sealed class TranscriptionEngineTests
         Assert.Equal(3, results.Count);
 
         Assert.Equal("see you jason", results[0].DisplayText);
-        Assert.Equal("see you jason", results[0].CommittedDelta);
+        Assert.Equal("see you", results[0].CommittedDelta);
         Assert.Equal(0, results[0].BackspaceCount);
 
         Assert.Equal("see you jason have fun", results[1].DisplayText);
-        Assert.Equal(" have fun", results[1].CommittedDelta);
+        Assert.Equal(" jason have", results[1].CommittedDelta);
         Assert.Equal(0, results[1].BackspaceCount);
 
         Assert.Equal("see you jason have fun we'll miss you", results[2].DisplayText);
-        Assert.Equal(" we'll miss you", results[2].CommittedDelta);
+        Assert.Equal(" fun we'll miss you", results[2].CommittedDelta);
         Assert.Equal(0, results[2].BackspaceCount);
         Assert.True(results[2].IsFinal);
     }
@@ -322,7 +337,7 @@ public sealed class TranscriptionEngineTests
         var results = await CollectAsync(engine.GetResultStreamAsync());
 
         Assert.Equal(3, results.Count);
-        Assert.Equal("hello world", results[0].CommittedDelta);
+        Assert.Equal("hello", results[0].CommittedDelta);
         Assert.Equal(0, results[0].BackspaceCount);
 
         Assert.Equal("yellow world again", results[1].DisplayText);
@@ -331,7 +346,7 @@ public sealed class TranscriptionEngineTests
         Assert.False(results[1].IsFinal);
 
         Assert.Equal("yellow world again", results[2].CommittedDelta);
-        Assert.Equal("hello world".Length, results[2].BackspaceCount);
+        Assert.Equal("hello".Length, results[2].BackspaceCount);
         Assert.True(results[2].IsFinal);
     }
 
@@ -379,6 +394,181 @@ public sealed class TranscriptionEngineTests
         Assert.Equal("final words", finalResult.DisplayText);
         Assert.Equal("final words", finalResult.CommittedDelta);
         Assert.True(finalResult.IsFinal);
+    }
+
+    [Fact]
+    public async Task LiveSession_FiltersRepetitionArtifacts_FromMiddleAndEnd()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "whisper-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        // Chunk 1: good text to establish baseline.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "I feel", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.3)));
+
+        // Chunk 2: model starts producing degenerate repeated chars.
+        // "ee" and "oo" are 2-char repeated tokens; "ttttt" has 3+ consecutive.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "I feel iike ee oo ttttt", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.6)));
+
+        // Final chunk corrects things.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "I feel like this is great", true, TimeSpan.Zero, TimeSpan.FromSeconds(1.0)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        // The final committed text must not contain artifact tokens.
+        var lastResult = results[^1];
+        Assert.True(lastResult.IsFinal);
+        Assert.Equal("I feel like this is great", lastResult.DisplayText);
+        Assert.DoesNotContain("ee", lastResult.DisplayText.Split(' '));
+        Assert.DoesNotContain("oo", lastResult.DisplayText.Split(' '));
+        Assert.DoesNotContain("ttttt", lastResult.DisplayText.Split(' '));
+    }
+
+    [Fact]
+    public async Task LiveSession_RejectsDegenerateChunks()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "whisper-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.3)));
+
+        // Entirely degenerate chunk — 10+ consecutive identical chars.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "oooooooooooooooooo ttttttttttttt", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.6)));
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world", true, TimeSpan.Zero, TimeSpan.FromSeconds(0.9)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        // The degenerate chunk should be filtered; the final text is clean.
+        var lastResult = results[^1];
+        Assert.True(lastResult.IsFinal);
+        Assert.Equal("hello world", lastResult.DisplayText);
+    }
+
+    [Fact]
+    public async Task LiveSession_FlushFiltersArtifactsAtSessionEnd()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "whisper-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        // Good text followed by artifact words — session ends without a final chunk.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "good morning ee oo", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.5)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        // The flush should not include the artifact tokens.
+        Assert.True(results.Count > 0);
+        var allText = results[^1].DisplayText;
+        Assert.DoesNotContain("ee", allText.Split(' '));
+        Assert.DoesNotContain("oo", allText.Split(' '));
+        Assert.Contains("good", allText);
+        Assert.Contains("morning", allText);
+    }
+
+    // ── BuildFullText overlap regression tests ────────────────────────────────
+    //
+    // After a final chunk commits text, _segmentBase is set to that committed
+    // text. If Nemotron's very next rolling window starts from mid-committed
+    // text (e.g. the last word of the committed sentence), BuildFullText must
+    // splice at the word boundary rather than blindly concatenate, otherwise
+    // the overlapping tail is typed twice into the target application.
+
+    [Fact]
+    public async Task LiveSession_AfterFinalChunk_RollingWindowOverlapWithBase_DoesNotDuplicateWords()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "whisper-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        // First sentence committed via a final chunk.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world", true, TimeSpan.Zero, TimeSpan.FromSeconds(1.0)));
+
+        // Nemotron's next rolling window starts from the last committed word
+        // ("world") — the classic overlap scenario that triggers the bug.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "world how are you", false, TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(1.5)));
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "world how are you today", true, TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(2.0)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        // No committed delta must contain the duplicate word "world".
+        var allDeltas = string.Concat(results.Select(r => r.CommittedDelta));
+        Assert.DoesNotContain("world world", allDeltas);
+
+        // Final display text must be clean.
+        var lastResult = results[^1];
+        Assert.True(lastResult.IsFinal);
+        Assert.Equal("hello world how are you today", lastResult.DisplayText);
+    }
+
+    [Fact]
+    public async Task LiveSession_StreamingCommit_IntermediateDeltasNeverContainArtifacts()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "whisper-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        // Progressive rolling windows that mimic Nemotron's behaviour: each
+        // window extends the current hypothesis by one or two words.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "is it gonna work", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.4)));
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "is it gonna work now or no", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.7)));
+
+        // A window that suddenly carries degenerate tokens alongside real words.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "is it gonna work now or no s but yyyyyyyyyy eeee oooooo",
+            false, TimeSpan.Zero, TimeSpan.FromSeconds(1.0)));
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "is it gonna work now or no s but sometimes it doesn't",
+            true, TimeSpan.Zero, TimeSpan.FromSeconds(1.5)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        // No individual committed delta may contain any artifact token.
+        var artifactPatterns = new[] { "yyyyyyyyyy", "eeee", "oooooo", "ee", "oo" };
+        foreach (var result in results)
+        {
+            var deltaWords = result.CommittedDelta
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var artifact in artifactPatterns)
+                Assert.DoesNotContain(artifact, deltaWords);
+        }
+
+        // Final text is clean.
+        var last = results[^1];
+        Assert.True(last.IsFinal);
+        Assert.DoesNotContain("yyyyyyyyyy", last.DisplayText);
+        Assert.DoesNotContain("eeee", last.DisplayText);
     }
 
     [Fact]

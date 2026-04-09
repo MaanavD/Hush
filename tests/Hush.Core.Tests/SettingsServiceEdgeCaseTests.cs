@@ -44,7 +44,7 @@ public sealed class SettingsServiceEdgeCaseTests
             }
 
             Assert.NotNull(loaded);
-            Assert.Equal("Ctrl+Shift+H", loaded!.Hotkey);
+            Assert.Equal("Ctrl+H", loaded!.Hotkey);
         }
         finally
         {
@@ -75,7 +75,7 @@ public sealed class SettingsServiceEdgeCaseTests
 
             // Empty file may deserialize to null
             loaded ??= new HushSettings();
-            Assert.Equal("Ctrl+Shift+H", loaded.Hotkey);
+            Assert.Equal("Ctrl+H", loaded.Hotkey);
         }
         finally
         {

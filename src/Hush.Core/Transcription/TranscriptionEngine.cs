@@ -48,7 +48,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     // In streaming mode, commit the full monotonic interim hypothesis. Non-final
     // rewrites are already blocked below, so this favors responsive live typing
     // while still deferring corrections to final chunks.
-    private const int StreamingTrailingWordHoldback = 0;
+    private const int StreamingTrailingWordHoldback = 1;
     // Allow a small timestamp overlap when the SDK rolls windows forward so a
     // later chunk can still be treated as additive speech instead of a rewrite.
     private static readonly TimeSpan DetachedChunkOverlapTolerance = TimeSpan.FromMilliseconds(150);
@@ -61,14 +61,20 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             "[inaudible]", "[ Silence ]", "(music)"
         };
 
-    // Check for blatant repetition artifacts from live ASR (e.g. "kkkking", "aaaa").
+    // Check for blatant repetition artifacts from live ASR (e.g. "kkkking", "aaaa", "ee").
     // Fires when a single character makes up ≥60% of a word-only token,
-    // or when 3+ consecutive identical characters appear.
+    // when 3+ consecutive identical characters appear, or when a 2-char
+    // token is the same character repeated (e.g. "ee", "oo", "..").
     private static bool IsRepetitionArtifact(string text)
     {
-        if (text.Length < 3) return false;
+        if (text.Length < 2) return false;
         // Only applies when the token contains no whitespace (single word).
         if (text.AsSpan().ContainsAny(' ', '\t', '\n')) return false;
+
+        // Two identical characters — no real English word consists of a single
+        // character repeated twice, but Nemotron emits these as degenerate tokens.
+        if (text.Length == 2)
+            return char.ToLowerInvariant(text[0]) == char.ToLowerInvariant(text[1]);
 
         // Fast check: 3+ consecutive identical characters (e.g. "issss", "helllo").
         for (int i = 2; i < text.Length; i++)
@@ -89,22 +95,57 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     }
 
     /// <summary>
-    /// Strips trailing repetition-artifact words from a word array.
-    /// Nemotron RNN-T can produce degenerate repeated characters at the end of
-    /// a streaming chunk (e.g. "This issssssss"). Truncating at the first
-    /// trailing artifact prevents garbled text from being committed or displayed.
+    /// Removes repetition-artifact words from anywhere in a word array.
+    /// Nemotron RNN-T can produce degenerate repeated characters at any position
+    /// in a streaming chunk (e.g. "This issssssss" or "I feel ee oo tt").
+    /// Filtering all artifacts prevents garbled text from being committed.
     /// </summary>
-    private static string[] StripTrailingArtifacts(string[] words)
+    private static string[] FilterArtifactWords(string[] words)
     {
-        int validCount = words.Length;
-        for (int i = words.Length - 1; i >= 0; i--)
+        bool hasAny = false;
+        for (int i = 0; i < words.Length; i++)
         {
             if (IsRepetitionArtifact(words[i]))
-                validCount = i;
-            else
+            {
+                hasAny = true;
                 break;
+            }
         }
-        return validCount == words.Length ? words : words[..validCount];
+        if (!hasAny) return words;
+
+        var filtered = new List<string>(words.Length);
+        for (int i = 0; i < words.Length; i++)
+        {
+            if (!IsRepetitionArtifact(words[i]))
+                filtered.Add(words[i]);
+        }
+        return filtered.ToArray();
+    }
+
+    /// <summary>
+    /// Detects chunks where the raw text is entirely degenerate — long runs of
+    /// repeated characters that indicate the ASR model has gone off the rails.
+    /// </summary>
+    private static bool IsEntirelyDegenerate(string text)
+    {
+        if (text.Length < 10) return false;
+
+        int runLength = 1;
+        for (int i = 1; i < text.Length; i++)
+        {
+            if (char.ToLowerInvariant(text[i]) == char.ToLowerInvariant(text[i - 1]))
+            {
+                runLength++;
+                if (runLength >= 10)
+                    return true;
+            }
+            else
+            {
+                runLength = 1;
+            }
+        }
+
+        return false;
     }
 
     public TranscriptionEngine(ILogger<TranscriptionEngine>? logger = null)
@@ -187,7 +228,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     }
 
     /// <inheritdoc/>
-    public Task StartSessionAsync(
+    public async Task StartSessionAsync(
         int sampleRate = 16000,
         int channels = 1,
         string language = "en",
@@ -212,7 +253,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             "Transcription session started (sampleRate={SampleRate}, channels={Channels}, language={Language}).",
             sampleRate, channels, language);
 
-        return StartLiveSessionAsync(sampleRate, channels, language, cancellationToken);
+        await StartLiveSessionAsync(sampleRate, channels, language, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task StartLiveSessionAsync(int sampleRate, int channels, string language, CancellationToken cancellationToken)
@@ -232,12 +273,27 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
     private async Task PumpResultsAsync(ILiveAudioSession liveSession, Channel<TranscriptionResult> resultChannel)
     {
+        int chunkIndex = 0;
         try
         {
             await foreach (var chunk in liveSession.GetTranscriptionStreamAsync().ConfigureAwait(false))
             {
+                chunkIndex++;
+                _logger.LogDebug(
+                    "SDK chunk #{Index}: IsFinal={IsFinal} text=\"{Text}\" start={Start} end={End}",
+                    chunkIndex, chunk.IsFinal, chunk.Text, chunk.StartTime, chunk.EndTime);
+
                 if (TryNormalizeChunk(chunk, out var result))
+                {
+                    _logger.LogDebug(
+                        "Emitting result #{Index}: display=\"{Display}\" delta=\"{Delta}\" bs={BS} segBase=\"{SegBase}\"",
+                        chunkIndex, result.DisplayText, result.CommittedDelta, result.BackspaceCount, _segmentBase);
                     resultChannel.Writer.TryWrite(result);
+                }
+                else
+                {
+                    _logger.LogDebug("Chunk #{Index} filtered out by TryNormalizeChunk.", chunkIndex);
+                }
             }
 
             // Flush any remaining tail-buffer words before completing the channel.
@@ -313,7 +369,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     private bool TryNormalizeChunk(LiveAudioSessionChunk chunk, out TranscriptionResult result)
     {
         var normalizedText = NormalizeText(chunk.Text);
-        if (string.IsNullOrWhiteSpace(normalizedText) || IsNoiseToken(normalizedText))
+        if (string.IsNullOrWhiteSpace(normalizedText) || IsNoiseToken(normalizedText) || IsEntirelyDegenerate(normalizedText))
         {
             result = default!;
             return false;
@@ -326,9 +382,9 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (chunk.IsFinal)
         {
             // Final chunk — commit the full segment and prepare for the next one.
-            // Strip any trailing repetition artifacts before committing.
+            // Filter any repetition artifacts before committing.
             var finalWords = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            finalWords = StripTrailingArtifacts(finalWords);
+            finalWords = FilterArtifactWords(finalWords);
             if (finalWords.Length == 0)
             {
                 result = default!;
@@ -341,7 +397,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
                 _logger.LogDebug(
                     "Rebasing final chunk onto committed text: committed='{Committed}' chunk='{Chunk}'",
                     _committedText, cleanedText);
-                RebaseSegmentToCommittedText();
+                RebaseSegmentToCommittedText(includeBufferedTail: true);
             }
 
             // Compose the complete text by prepending any prior segment base.
@@ -361,9 +417,9 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         }
         else
         {
-            // Split into words and strip trailing repetition artifacts.
+            // Split into words and filter repetition artifacts at any position.
             var rawSegmentWords = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            rawSegmentWords = StripTrailingArtifacts(rawSegmentWords);
+            rawSegmentWords = FilterArtifactWords(rawSegmentWords);
             if (rawSegmentWords.Length == 0)
             {
                 result = default!;
@@ -376,14 +432,17 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
                 _logger.LogDebug(
                     "Rebasing interim chunk onto committed text: committed='{Committed}' chunk='{Chunk}' start={Start} lastCommittedEnd={End}",
                     _committedText, rawSegmentText, chunk.StartTime, _lastCommittedEndTime);
-                RebaseSegmentToCommittedText();
+                RebaseSegmentToCommittedText(includeBufferedTail: true);
             }
 
             // Foundry interim chunks are not always cumulative; some arrive as a
-            // rolling suffix window. Merge each chunk into the previous segment
-            // hypothesis so the live transcript grows monotonically unless a final
-            // chunk later corrects it.
-            var segmentWords = MergeStreamingSegmentWords(_prevChunkWords, rawSegmentWords);
+            // rolling suffix window and others are full rewrites of the active
+            // segment. Merge additive windows into a monotonic hypothesis, but
+            // let clear rewrites replace the interim segment so corrections can
+            // wait for a final chunk instead of duplicating text.
+            var segmentWords = ShouldTreatChunkAsInterimRewrite(chunk, rawSegmentText)
+                ? rawSegmentWords
+                : MergeStreamingSegmentWords(_prevChunkWords, rawSegmentWords);
 
             // Store the accumulated segment text so we can flush it on stop.
             var cleanedSegment = string.Join(' ', segmentWords);
@@ -468,12 +527,22 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (segmentText.StartsWith(_segmentBase, StringComparison.OrdinalIgnoreCase))
             return segmentText;
 
+        // If the tail of _segmentBase overlaps with the head of segmentText
+        // (e.g. Nemotron's next rolling window starts from mid-committed text),
+        // splice at the overlap boundary instead of naive concatenation to
+        // prevent committed words from being typed twice.
+        int overlap = LargestTextSuffixPrefixOverlap(_segmentBase, segmentText);
+        if (overlap > 0)
+            return _segmentBase + segmentText[overlap..];
+
         return _segmentBase + " " + segmentText;
     }
 
-    private void RebaseSegmentToCommittedText()
+    private void RebaseSegmentToCommittedText(bool includeBufferedTail)
     {
-        _segmentBase = _committedText;
+        _segmentBase = includeBufferedTail && !string.IsNullOrWhiteSpace(_lastFullText)
+            ? BuildFullText(_lastFullText)
+            : _committedText;
         _lastFullText = string.Empty;
         _prevChunkWords = Array.Empty<string>();
     }
@@ -505,6 +574,29 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         return LargestTextSuffixPrefixOverlap(currentText, _lastFullText) == 0;
     }
 
+    private bool ShouldTreatChunkAsInterimRewrite(LiveAudioSessionChunk chunk, string currentText)
+    {
+        if (!_streamingCommit ||
+            string.IsNullOrEmpty(_lastFullText) ||
+            string.IsNullOrEmpty(currentText) ||
+            !chunk.StartTime.HasValue ||
+            !_lastCommittedEndTime.HasValue)
+        {
+            return false;
+        }
+
+        if (chunk.StartTime.Value + DetachedChunkOverlapTolerance >= _lastCommittedEndTime.Value)
+            return false;
+
+        if (currentText.StartsWith(_lastFullText, StringComparison.OrdinalIgnoreCase) ||
+            _lastFullText.StartsWith(currentText, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return LargestTextSuffixPrefixOverlap(_lastFullText, currentText) == 0;
+    }
+
     /// <summary>
     /// Flushes any text remaining in the stability buffer as a final committed result.
     /// Called after the SDK stream has ended but before the channel writer is completed.
@@ -516,7 +608,16 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (string.IsNullOrWhiteSpace(_lastFullText))
             return false;
 
-        var fullText = BuildFullText(_lastFullText);
+        // Apply artifact filtering before flushing — the buffered hypothesis
+        // may contain degenerate tokens that were held back by the stability
+        // mechanism but would otherwise be committed wholesale on session end.
+        var flushWords = _lastFullText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        flushWords = FilterArtifactWords(flushWords);
+        if (flushWords.Length == 0)
+            return false;
+
+        var cleanedFlush = string.Join(' ', flushWords);
+        var fullText = BuildFullText(cleanedFlush);
         if (fullText == _committedText)
             return false;
 
@@ -616,10 +717,9 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (overlap > 0)
             return previousText + currentText[overlap..];
 
-        // No safe alignment found. Use the latest interim text as the volatile
-        // hypothesis so future chunk growth can recover instead of freezing on a
-        // stale prefix.
-        return currentText;
+        // No overlap found — chunks are sequential, non-overlapping segments
+        // (typical of Nemotron RNN-T). Concatenate to build the full hypothesis.
+        return previousText + " " + currentText;
     }
 
     private static int LargestTextSuffixPrefixOverlap(string previousText, string currentText)

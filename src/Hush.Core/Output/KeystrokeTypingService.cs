@@ -24,7 +24,7 @@ public sealed class KeystrokeTypingService : ITextOutputService
     }
 
     /// <inheritdoc/>
-    public Task TypeTextAsync(string text, CancellationToken cancellationToken = default)
+    public Task TypeTextAsync(string text, CancellationToken cancellationToken = default, bool skipModifierRestore = false)
     {
         if (string.IsNullOrEmpty(text))
             return Task.CompletedTask;
@@ -36,7 +36,7 @@ public sealed class KeystrokeTypingService : ITextOutputService
         {
             return _useClipboardFallback
                 ? WindowsClipboardTyper.TypeAsync(text, cancellationToken)
-                : WindowsKeystrokeTyper.TypeAsync(text, cancellationToken);
+                : WindowsKeystrokeTyper.TypeAsync(text, cancellationToken, skipModifierRestore);
         }
 
         if (OperatingSystem.IsMacOS())
@@ -50,7 +50,7 @@ public sealed class KeystrokeTypingService : ITextOutputService
     }
 
     /// <inheritdoc/>
-    public Task SendBackspacesAsync(int count, CancellationToken cancellationToken = default)
+    public Task SendBackspacesAsync(int count, CancellationToken cancellationToken = default, bool skipModifierRestore = false)
     {
         if (count <= 0)
             return Task.CompletedTask;
@@ -59,7 +59,7 @@ public sealed class KeystrokeTypingService : ITextOutputService
             return Task.FromCanceled(cancellationToken);
 
         if (OperatingSystem.IsWindows())
-            return WindowsKeystrokeTyper.SendBackspacesAsync(count, cancellationToken);
+            return WindowsKeystrokeTyper.SendBackspacesAsync(count, cancellationToken, skipModifierRestore);
 
         if (OperatingSystem.IsMacOS())
             return MacKeystrokeTyper.SendBackspacesAsync(count, cancellationToken);
@@ -132,62 +132,91 @@ internal static class WindowsKeystrokeTyper
 
     private const ushort VK_BACK = 0x08;
 
-    internal static Task TypeAsync(string text, CancellationToken cancellationToken)
+    internal static Task TypeAsync(string text, CancellationToken cancellationToken, bool skipModifierRestore = false)
     {
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             var pressedModifiers = GetPressedModifierVks();
-            if (pressedModifiers.Count > 0)
+
+            // Build a single SendInput batch: modifier releases + text + optional modifier restores.
+            // This prevents the OS from reasserting physical modifier keys between release and typing.
+            int modCount = pressedModifiers.Count;
+            int restoreCount = skipModifierRestore ? 0 : modCount;
+            var inputs = new INPUT[modCount + text.Length * 2 + restoreCount];
+            int idx = 0;
+
+            // Release held modifiers
+            for (int i = 0; i < modCount; i++)
+                inputs[idx++] = MakeVkInput(pressedModifiers[i], KEYEVENTF_KEYUP);
+
+            // Type each character (down + up)
+            for (int i = 0; i < text.Length; i++)
             {
-                SendModifierKeys(pressedModifiers, KEYEVENTF_KEYUP);
-                Thread.Sleep(5);
+                ushort ch = text[i];
+                inputs[idx++] = MakeUnicodeInput(ch, KEYEVENTF_UNICODE);
+                inputs[idx++] = MakeUnicodeInput(ch, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
             }
 
-            try
+            // Optionally restore modifiers
+            if (!skipModifierRestore)
             {
-                SendUnicodeString(text);
+                var toRestore = GetModifiersToRestore(pressedModifiers);
+                // Resize if fewer modifiers need restoring
+                if (toRestore.Count < modCount)
+                    Array.Resize(ref inputs, modCount + text.Length * 2 + toRestore.Count);
+                for (int i = 0; i < toRestore.Count; i++)
+                    inputs[idx++] = MakeVkInput(toRestore[i], 0);
             }
-            finally
+
+            uint sent = SendInput((uint)idx, inputs, Marshal.SizeOf<INPUT>());
+            if (sent == 0 && text.Length > 0)
             {
-                var modifiersToRestore = GetModifiersToRestore(pressedModifiers);
-                if (modifiersToRestore.Count > 0)
-                    SendModifierKeys(modifiersToRestore, 0);
+                int error = Marshal.GetLastWin32Error();
+                throw new InvalidOperationException(
+                    error == 5
+                        ? "Cannot type into an elevated (administrator) application. " +
+                          "Run Hush as administrator, or switch to a non-elevated window."
+                        : $"SendInput failed (sent 0/{idx}, Win32 error {error}). " +
+                          "The focused application may not accept simulated input.");
             }
         }, cancellationToken);
     }
 
-    internal static Task SendBackspacesAsync(int count, CancellationToken cancellationToken)
+    internal static Task SendBackspacesAsync(int count, CancellationToken cancellationToken, bool skipModifierRestore = false)
     {
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             var pressedModifiers = GetPressedModifierVks();
-            if (pressedModifiers.Count > 0)
+
+            // Single atomic SendInput batch: modifier releases + backspaces + optional restores.
+            int modCount = pressedModifiers.Count;
+            int restoreCount = skipModifierRestore ? 0 : modCount;
+            var inputs = new INPUT[modCount + count * 2 + restoreCount];
+            int idx = 0;
+
+            for (int i = 0; i < modCount; i++)
+                inputs[idx++] = MakeVkInput(pressedModifiers[i], KEYEVENTF_KEYUP);
+
+            for (int i = 0; i < count; i++)
             {
-                SendModifierKeys(pressedModifiers, KEYEVENTF_KEYUP);
-                Thread.Sleep(5);
+                inputs[idx++] = MakeVkInput(VK_BACK, 0);
+                inputs[idx++] = MakeVkInput(VK_BACK, KEYEVENTF_KEYUP);
             }
 
-            try
+            if (!skipModifierRestore)
             {
-                var inputs = new INPUT[count * 2];
-                for (int i = 0; i < count; i++)
-                {
-                    inputs[i * 2]     = MakeVkInput(VK_BACK, 0);
-                    inputs[i * 2 + 1] = MakeVkInput(VK_BACK, KEYEVENTF_KEYUP);
-                }
+                var toRestore = GetModifiersToRestore(pressedModifiers);
+                if (toRestore.Count < modCount)
+                    Array.Resize(ref inputs, modCount + count * 2 + toRestore.Count);
+                for (int i = 0; i < toRestore.Count; i++)
+                    inputs[idx++] = MakeVkInput(toRestore[i], 0);
+            }
 
-                SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-            }
-            finally
-            {
-                var modifiersToRestore = GetModifiersToRestore(pressedModifiers);
-                if (modifiersToRestore.Count > 0)
-                    SendModifierKeys(modifiersToRestore, 0);
-            }
+            SendInput((uint)idx, inputs, Marshal.SizeOf<INPUT>());
         }, cancellationToken);
     }
 

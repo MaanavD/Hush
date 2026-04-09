@@ -1,0 +1,56 @@
+name: Feature Request
+description: Suggest an idea or improvement for Hush
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a way to make Hush better!
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I have searched existing issues and this has not already been requested.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the pain point or gap you are experiencing.
+      placeholder: "When I try to dictate into X app, I find that..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like Hush to address this?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you have thought of?
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - All platforms
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Mockups, links to similar tools, or any other information.

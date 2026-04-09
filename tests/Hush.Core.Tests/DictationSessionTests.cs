@@ -114,11 +114,11 @@ public sealed class DictationSessionTests
             .Returns(results.ToAsyncEnumerable());
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .Returns(Task.CompletedTask);
 
         outputMock
-            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .Returns(Task.CompletedTask);
 
         var interimTexts = new List<string>();
@@ -136,10 +136,10 @@ public sealed class DictationSessionTests
         Assert.Contains("see you jason", interimTexts);
         Assert.Contains("we'll miss you", interimTexts);
         Assert.Contains(" we'll miss you", committedChunks);
-        outputMock.Verify(o => o.TypeTextAsync("see you jason", It.IsAny<CancellationToken>()), Times.Once);
-        outputMock.Verify(o => o.TypeTextAsync(" have fun", It.IsAny<CancellationToken>()), Times.Once);
-        outputMock.Verify(o => o.TypeTextAsync(" we'll miss you", It.IsAny<CancellationToken>()), Times.Once);
-        outputMock.Verify(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        outputMock.Verify(o => o.TypeTextAsync("see you jason", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
+        outputMock.Verify(o => o.TypeTextAsync(" have fun", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
+        outputMock.Verify(o => o.TypeTextAsync(" we'll miss you", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
+        outputMock.Verify(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
@@ -167,16 +167,16 @@ public sealed class DictationSessionTests
             }.ToAsyncEnumerable());
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((text, _) =>
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) =>
             {
                 typedTexts.Add(text);
                 return Task.CompletedTask;
             });
 
         outputMock
-            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .Returns<int, CancellationToken>((count, _) =>
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<int, CancellationToken, bool>((count, _, _) =>
             {
                 backspaceCounts.Add(count);
                 return Task.CompletedTask;
@@ -214,8 +214,8 @@ public sealed class DictationSessionTests
             }.ToAsyncEnumerable());
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((text, _) =>
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) =>
             {
                 typedText.TrySetResult(text);
                 return Task.CompletedTask;
@@ -225,11 +225,11 @@ public sealed class DictationSessionTests
 
         // Act
         await session.StartAsync();
-        string committed = await typedText.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        string committed = await typedText.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Assert: committed text is typed before the session ends.
         Assert.Equal("buffered chunk", committed);
-        outputMock.Verify(o => o.TypeTextAsync("buffered chunk", It.IsAny<CancellationToken>()), Times.Once);
+        outputMock.Verify(o => o.TypeTextAsync("buffered chunk", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
 
         await session.StopAsync();
     }

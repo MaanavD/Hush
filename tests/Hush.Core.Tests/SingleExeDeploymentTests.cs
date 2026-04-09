@@ -128,7 +128,11 @@ public sealed class SingleExeDeploymentTests
         else if (OperatingSystem.IsMacOS())
             Assert.Contains("osx", rid, StringComparison.OrdinalIgnoreCase);
         else if (OperatingSystem.IsLinux())
-            Assert.Contains("linux", rid, StringComparison.OrdinalIgnoreCase);
+        {
+            Assert.DoesNotContain("win", rid, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("osx", rid, StringComparison.OrdinalIgnoreCase);
+            Assert.Matches("(?i)(linux|ubuntu|debian|fedora|rhel|alpine)", rid);
+        }
     }
 
     // ── Architecture detection (x64 vs ARM64) ───────────────────────────

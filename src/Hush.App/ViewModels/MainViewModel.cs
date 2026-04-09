@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
 using CommunityToolkit.Mvvm.ComponentModel;
+using Hush.Core.Audio;
 using Hush.Core.Configuration;
 using Hush.Core.Input;
 using Hush.Core.Output;
@@ -24,6 +25,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IGlobalHotkeyService _hotkeyService;
     private readonly ISoundEffectService _soundEffects;
     private readonly IAutoStartService _autoStart;
+    private readonly IAudioCaptureService _audioCapture;
     private readonly OverlayViewModel _overlayVm;
     private readonly ILogger<MainViewModel> _logger;
 
@@ -50,6 +52,7 @@ public sealed partial class MainViewModel : ObservableObject
         IGlobalHotkeyService hotkeyService,
         ISoundEffectService soundEffects,
         IAutoStartService autoStart,
+        IAudioCaptureService audioCapture,
         OverlayViewModel overlayVm,
         ILogger<MainViewModel>? logger = null)
     {
@@ -60,6 +63,7 @@ public sealed partial class MainViewModel : ObservableObject
         _hotkeyService = hotkeyService;
         _soundEffects = soundEffects;
         _autoStart = autoStart;
+        _audioCapture = audioCapture;
         _overlayVm = overlayVm;
         _logger = logger ?? NullLogger<MainViewModel>.Instance;
 
@@ -179,11 +183,23 @@ public sealed partial class MainViewModel : ObservableObject
             }
         }
 
-        await _settingsService.SaveAsync(_settings, cancellationToken);
-        await _autoStart.SetEnabledAsync(_settings.AutoStart, cancellationToken);
+        try
+        {
+            await _settingsService.SaveAsync(_settings, cancellationToken);
+            await _autoStart.SetEnabledAsync(_settings.AutoStart, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogError(ex, "Failed to save settings.");
+            var message = Hush.App.RuntimeUserMessageBuilder.BuildSettingsSaveMessage(ex);
+            _overlayVm.ErrorMessage = message;
+            StatusMessage = $"Error: {message}";
+            return;
+        }
 
         _overlayVm.OverlayPosition = _settings.OverlayPosition;
         _overlayVm.OverlayOpacity = _settings.OverlayOpacity;
+        _audioCapture.DeviceIndex = _settings.MicrophoneDeviceIndex;
 
         if (hotkeyError is not null)
         {

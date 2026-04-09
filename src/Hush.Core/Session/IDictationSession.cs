@@ -32,6 +32,9 @@ public interface IDictationSession : IAsyncDisposable
     /// <summary>Raised when the session has fully stopped and all output has been flushed.</summary>
     event Action? OnSessionStopped;
 
+    /// <summary>Raised when the session encounters a runtime error after it has already started.</summary>
+    event Action<Exception>? OnSessionError;
+
     /// <summary>Starts microphone capture and the transcription loop.</summary>
     /// <param name="language">BCP-47 language tag for the transcription model.</param>
     /// <param name="streamingCommit">

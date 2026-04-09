@@ -10,13 +10,19 @@ namespace Hush.Core.Audio;
 public interface IAudioCaptureService : IDisposable
 {
     /// <summary>
-    /// Starts capturing audio from the default microphone.
+    /// Starts capturing audio from the configured microphone.
     /// Each captured buffer is forwarded to <paramref name="audioAvailable"/>.
     /// </summary>
     void Start(Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask> audioAvailable);
 
     /// <summary>Stops capturing audio.</summary>
     void Stop();
+
+    /// <summary>
+    /// Gets or sets the device index to use. <c>-1</c> means system default.
+    /// Must be set before calling <see cref="Start"/>.
+    /// </summary>
+    int DeviceIndex { get; set; }
 
     /// <summary>
     /// Raised on each audio buffer with a normalised RMS level in [0, 1].

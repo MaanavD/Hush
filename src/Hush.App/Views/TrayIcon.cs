@@ -91,6 +91,10 @@ public sealed class TrayIcon : IDisposable
             return;
         }
 
+        // Refresh the microphone list each time settings opens, in case
+        // devices were plugged/unplugged since last time.
+        _mainVm.SettingsViewModel.RefreshMicrophones();
+
         _settingsWindow = new SettingsWindow
         {
             DataContext = _mainVm.SettingsViewModel

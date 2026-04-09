@@ -32,8 +32,8 @@ public sealed class DictationPipelineIntegrationTests
         });
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((t, _) =>
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((t, _, _) =>
             {
                 typedTexts.Add(t);
                 return Task.CompletedTask;
@@ -70,8 +70,8 @@ public sealed class DictationPipelineIntegrationTests
         SetupEngine(engineMock, results);
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((t, _) =>
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((t, _, _) =>
             {
                 typedTexts.Add(t);
                 return Task.CompletedTask;
@@ -103,7 +103,7 @@ public sealed class DictationPipelineIntegrationTests
         });
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .Returns(Task.CompletedTask);
 
         var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
@@ -135,8 +135,8 @@ public sealed class DictationPipelineIntegrationTests
         var allTyped = new List<string>();
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((t, _) =>
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((t, _, _) =>
             {
                 allTyped.Add(t);
                 return Task.CompletedTask;
@@ -184,8 +184,8 @@ public sealed class DictationPipelineIntegrationTests
         });
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((t, _) =>
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((t, _, _) =>
             {
                 typedText = t;
                 return Task.CompletedTask;
@@ -220,8 +220,8 @@ public sealed class DictationPipelineIntegrationTests
         });
 
         outputMock
-            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<string, CancellationToken>((t, _) => { typed = t; return Task.CompletedTask; });
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((t, _, _) => { typed = t; return Task.CompletedTask; });
 
         var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
         await session.StartAsync();

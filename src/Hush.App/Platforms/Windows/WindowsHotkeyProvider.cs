@@ -19,7 +19,9 @@ namespace Hush.App.Platforms.Windows;
 public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
 {
     private const int WM_HOTKEY = 0x0312;
+    private const uint WM_QUIT = 0x0012;
     private const int HOTKEY_ID = 9001;
+    private const int ReleasePollIntervalMs = 24;
 
     // Modifier flags for RegisterHotKey
     private const uint MOD_ALT = 0x0001;
@@ -52,6 +54,12 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
 
     [DllImport("user32.dll")]
     private static extern nint DispatchMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostThreadMessage(uint idThread, uint msg, nuint wParam, nint lParam);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 
     /// <summary>High-order bit set = key is currently held.</summary>
     [DllImport("user32.dll")]
@@ -101,6 +109,7 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
     }
 
     private Thread? _messageThread;
+    private uint _messageThreadId;
     private volatile bool _registered;
     private volatile bool _keyDown;
     private bool _disposed;
@@ -125,68 +134,94 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
     /// <inheritdoc/>
     public void Register(string hotkey)
     {
-        if (_registered)
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_registered || _messageThread is not null)
             Unregister();
 
         ParseHotkey(hotkey, out uint modifiers, out uint vk);
         _trackedReleaseVks = BuildTrackedReleaseVks(modifiers, (ushort)vk);
 
-        _messageThread = new Thread(() => MessageLoop(modifiers, vk))
+        var registrationReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _messageThread = new Thread(() => MessageLoop(modifiers, vk, registrationReady))
         {
             IsBackground = true,
             Name = "HushHotkeyThread"
         };
         _messageThread.SetApartmentState(ApartmentState.STA);
         _messageThread.Start();
+        registrationReady.Task.GetAwaiter().GetResult();
     }
 
-    private void MessageLoop(uint modifiers, uint vk)
+    private void MessageLoop(uint modifiers, uint vk, TaskCompletionSource registrationReady)
     {
-        if (!RegisterHotKey(nint.Zero, HOTKEY_ID, modifiers | MOD_NOREPEAT, vk))
-        {
-            int err = Marshal.GetLastWin32Error();
-            throw new InvalidOperationException(
-                $"RegisterHotKey failed with Win32 error {err}. " +
-                "The hotkey may already be in use by another application.");
-        }
+        _messageThreadId = GetCurrentThreadId();
 
-        _registered = true;
-
-        while (GetMessage(out var msg, nint.Zero, 0, 0))
+        try
         {
-            if (msg.Message == WM_HOTKEY && (int)msg.WParam == HOTKEY_ID)
+            if (!RegisterHotKey(nint.Zero, HOTKEY_ID, modifiers | MOD_NOREPEAT, vk))
             {
-                if (!_keyDown)
-                {
-                    _keyDown = true;
-
-                    // Snapshot which chord keys are physically held right now.
-                    // This must happen before the hook is installed and before
-                    // any synthetic key events are injected.
-                    _physicallyHeldChordKeys.Clear();
-                    foreach (var vk2 in _trackedReleaseVks)
-                    {
-                        if ((GetAsyncKeyState(vk2) & 0x8000) != 0)
-                            _physicallyHeldChordKeys.Add(vk2);
-                    }
-                    Volatile.Write(ref _physicallyHeldCount, _physicallyHeldChordKeys.Count);
-
-                    // Suppress all keyboard input while dictating.
-                    // The hook is installed on this thread which runs GetMessage,
-                    // so the pump is present and hook callbacks will fire.
-                    _hookProc = SuppressAllKeyboardInput;
-                    _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, nint.Zero, 0);
-                    HotkeyPressed?.Invoke(this, EventArgs.Empty);
-                    _ = PollForReleaseAsync();
-                }
+                int err = Marshal.GetLastWin32Error();
+                registrationReady.TrySetException(new InvalidOperationException(
+                    $"RegisterHotKey failed with Win32 error {err}. " +
+                    "The hotkey may already be in use by another application."));
+                return;
             }
 
-            TranslateMessage(ref msg);
-            DispatchMessage(ref msg);
-        }
+            _registered = true;
+            registrationReady.TrySetResult();
 
-        UnregisterHotKey(nint.Zero, HOTKEY_ID);
-        _registered = false;
+            while (GetMessage(out var msg, nint.Zero, 0, 0))
+            {
+                if (msg.Message == WM_HOTKEY && (int)msg.WParam == HOTKEY_ID)
+                {
+                    if (!_keyDown)
+                    {
+                        _keyDown = true;
+
+                        // Snapshot which chord keys are physically held right now.
+                        // This must happen before the hook is installed and before
+                        // any synthetic key events are injected.
+                        _physicallyHeldChordKeys.Clear();
+                        foreach (var vk2 in _trackedReleaseVks)
+                        {
+                            if ((GetAsyncKeyState(vk2) & 0x8000) != 0)
+                                _physicallyHeldChordKeys.Add(vk2);
+                        }
+                        Volatile.Write(ref _physicallyHeldCount, _physicallyHeldChordKeys.Count);
+
+                        // Suppress all keyboard input while dictating.
+                        // The hook is installed on this thread which runs GetMessage,
+                        // so the pump is present and hook callbacks will fire.
+                        _hookProc = SuppressAllKeyboardInput;
+                        _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, nint.Zero, 0);
+                        HotkeyPressed?.Invoke(this, EventArgs.Empty);
+                        _ = PollForReleaseAsync();
+                    }
+                }
+
+                TranslateMessage(ref msg);
+                DispatchMessage(ref msg);
+            }
+        }
+        catch (Exception ex)
+        {
+            registrationReady.TrySetException(ex);
+        }
+        finally
+        {
+            CleanupKeyboardHook();
+            _physicallyHeldChordKeys.Clear();
+            Volatile.Write(ref _physicallyHeldCount, 0);
+
+            if (_registered)
+                UnregisterHotKey(nint.Zero, HOTKEY_ID);
+
+            _registered = false;
+            _keyDown = false;
+            _messageThreadId = 0;
+            _messageThread = null;
+        }
     }
 
     private async Task PollForReleaseAsync()
@@ -194,7 +229,7 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
         int releaseCount = 0;   // consecutive polls where all chord keys are physically released
         while (_keyDown && _registered)
         {
-            await Task.Delay(16).ConfigureAwait(false);
+            await Task.Delay(ReleasePollIntervalMs).ConfigureAwait(false);
 
             // Check hook-based physical tracking instead of GetAsyncKeyState.
             // This is immune to synthetic modifier release/restore events
@@ -232,12 +267,17 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
     {
         _registered = false;
         _keyDown = false;
-        if (_hook != 0)
-        {
-            UnhookWindowsHookEx(_hook);
-            _hook = 0;
-            _hookProc = null;
-        }
+        CleanupKeyboardHook();
+        _physicallyHeldChordKeys.Clear();
+        Volatile.Write(ref _physicallyHeldCount, 0);
+
+        var thread = _messageThread;
+        var threadId = _messageThreadId;
+        if (threadId != 0)
+            PostThreadMessage(threadId, WM_QUIT, 0, 0);
+
+        if (thread is not null && thread != Thread.CurrentThread)
+            thread.Join(TimeSpan.FromSeconds(2));
     }
 
     /// <inheritdoc/>
@@ -247,6 +287,16 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
             return;
         _disposed = true;
         Unregister();
+    }
+
+    private void CleanupKeyboardHook()
+    {
+        if (_hook != 0)
+        {
+            UnhookWindowsHookEx(_hook);
+            _hook = 0;
+            _hookProc = null;
+        }
     }
 
     private static void ParseHotkey(string hotkey, out uint modifiers, out uint vk)

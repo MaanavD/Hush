@@ -51,6 +51,13 @@ internal sealed class ManagedLiveAudioSession : ILiveAudioSession
     private readonly ILogger _logger;
 
     private LiveAudioTranscriptionSession? _session;
+    private static readonly Dictionary<string, string> LanguageAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["jp"] = "ja",
+        ["kr"] = "ko",
+        ["cn"] = "zh"
+    };
+
     private bool _started;
     private bool _stopped;
     private bool _streamConsumed;
@@ -75,8 +82,9 @@ internal sealed class ManagedLiveAudioSession : ILiveAudioSession
         _session.Settings.Channels = channels;
         _session.Settings.BitsPerSample = BitsPerSample;
 
-        if (!string.IsNullOrWhiteSpace(language))
-            _session.Settings.Language = language;
+        var normalizedLanguage = NormalizeLanguageHint(language);
+        if (!string.IsNullOrWhiteSpace(normalizedLanguage))
+            _session.Settings.Language = normalizedLanguage;
 
         await _session.StartAsync(cancellationToken).ConfigureAwait(false);
 
@@ -86,7 +94,23 @@ internal sealed class ManagedLiveAudioSession : ILiveAudioSession
 
         _logger.LogInformation(
             "Managed live audio session started (sampleRate={SampleRate}, channels={Channels}, language={Language}).",
-            sampleRate, channels, language ?? "default");
+            sampleRate, channels, normalizedLanguage ?? "default");
+    }
+
+    internal static string? NormalizeLanguageHint(string? language)
+    {
+        if (string.IsNullOrWhiteSpace(language))
+            return null;
+
+        var trimmed = language.Trim();
+        var primarySubtag = trimmed.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries)[0];
+        if (string.IsNullOrWhiteSpace(primarySubtag))
+            return null;
+
+        var normalized = primarySubtag.ToLowerInvariant();
+        return LanguageAliases.TryGetValue(normalized, out var alias)
+            ? alias
+            : normalized;
     }
 
     public ValueTask AppendAsync(ReadOnlyMemory<byte> pcmData, CancellationToken cancellationToken = default)

@@ -31,6 +31,7 @@ public sealed class DictationSession : IDictationSession
     private CancellationTokenSource? _loopCts;
     private bool _disposed;
     private bool _showSpinner;
+    private int _sessionErrorRaised;
 
     private static readonly char[] SpinnerFrames = { '|', '/', '\u2014', '\\' };
     private const int SpinnerIntervalMs = 120;
@@ -61,11 +62,15 @@ public sealed class DictationSession : IDictationSession
     public event Action? OnSessionStopped;
 
     /// <inheritdoc/>
+    public event Action<Exception>? OnSessionError;
+
+    /// <inheritdoc/>
     public async Task StartAsync(string language = "en", bool streamingCommit = true, bool showSpinner = false, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         _showSpinner = showSpinner;
+        _sessionErrorRaised = 0;
 
         // Capture in a local so post-await code is safe even if StopAsync
         // nullifies _loopCts while we are suspended at the await below.
@@ -82,7 +87,7 @@ public sealed class DictationSession : IDictationSession
         _capture.AudioLevelChanged += _audioLevelForwarder;
         try
         {
-            _capture.Start((pcm, ct) => _engine.AppendAudioAsync(pcm, ct));
+            _capture.Start(ForwardAudioToEngineAsync);
         }
         catch
         {
@@ -99,7 +104,7 @@ public sealed class DictationSession : IDictationSession
             cts.Token);
     }
 
-    // ── Streaming path: type committed deltas as they arrive ─────────────
+    // ── Streaming path: commit only stable deltas ────────────────────────
 
     private async Task StreamingTranscriptionLoopAsync(CancellationToken cancellationToken)
     {
@@ -107,15 +112,17 @@ public sealed class DictationSession : IDictationSession
         {
             await foreach (var result in _engine.GetResultStreamAsync(cancellationToken))
             {
-                if (!string.IsNullOrEmpty(result.DisplayText))
-                    OnInterimText?.Invoke(result.DisplayText);
+                var targetText = result.DisplayText ?? string.Empty;
+
+                if (!string.IsNullOrEmpty(targetText))
+                    OnInterimText?.Invoke(targetText);
 
                 if (result.BackspaceCount > 0)
-                    await _output.SendBackspacesAsync(result.BackspaceCount, cancellationToken);
+                    await _output.SendBackspacesAsync(result.BackspaceCount, cancellationToken, skipModifierRestore: true);
 
                 if (!string.IsNullOrEmpty(result.CommittedDelta))
                 {
-                    await _output.TypeTextAsync(result.CommittedDelta, cancellationToken);
+                    await _output.TypeTextAsync(result.CommittedDelta, cancellationToken, skipModifierRestore: true);
                     OnCommittedChunk?.Invoke(result.CommittedDelta);
                 }
             }
@@ -126,7 +133,7 @@ public sealed class DictationSession : IDictationSession
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Transcription loop encountered an unhandled error.");
+            ReportSessionError(ex, "Transcription loop encountered an unhandled error.");
         }
     }
 
@@ -177,7 +184,7 @@ public sealed class DictationSession : IDictationSession
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Transcription loop encountered an unhandled error.");
+            ReportSessionError(ex, "Transcription loop encountered an unhandled error.");
         }
 
         // Stop the spinner before typing accumulated text.
@@ -250,6 +257,29 @@ public sealed class DictationSession : IDictationSession
                 _logger.LogWarning(ex, "Failed to erase spinner character on cleanup.");
             }
         }
+    }
+
+    private async ValueTask ForwardAudioToEngineAsync(ReadOnlyMemory<byte> pcm, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _engine.AppendAudioAsync(pcm, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Session is shutting down.
+        }
+        catch (Exception ex)
+        {
+            ReportSessionError(ex, "Failed to append microphone audio to the transcription session.");
+        }
+    }
+
+    private void ReportSessionError(Exception ex, string message)
+    {
+        _logger.LogError(ex, message);
+        if (Interlocked.Exchange(ref _sessionErrorRaised, 1) == 0)
+            OnSessionError?.Invoke(ex);
     }
 
     /// <inheritdoc/>
