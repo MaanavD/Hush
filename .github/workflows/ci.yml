@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+# Cancel in-progress runs for the same branch/PR so new pushes don't queue up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test (Windows)
+    runs-on: windows-latest
+
+    # NOTE: This workflow requires pre-release NuGet packages that are not yet
+    # published to nuget.org. Place the following .nupkg files in the repo root
+    # before running locally or in CI:
+    #   - Microsoft.AI.Foundry.Local (1.0.0-dev.*)
+    #   - Microsoft.AI.Foundry.Local.Core (1.0.0-dev-*)
+    # See README.md § Build Prerequisites for details.
+    # These packages will be removed from this note once published to nuget.org.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build (Release)
+        run: dotnet build --no-restore -c Release
+
+      - name: Run tests
+        run: >
+          dotnet test --no-build -c Release
+          --logger "trx;LogFileName=TestResults.trx"
+          --logger "console;verbosity=normal"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: "**/TestResults/*.trx"
+          retention-days: 30
