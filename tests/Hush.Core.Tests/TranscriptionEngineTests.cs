@@ -572,6 +572,45 @@ public sealed class TranscriptionEngineTests
     }
 
     [Fact]
+    public async Task LiveSession_StreamingMode_NeverCommitsPartialWord_EvenIfStable()
+    {
+        // Regression: if the model emits the same partial token ("wor") in two
+        // consecutive chunks, StablePrefixLength would count it as stable and
+        // the old Math.Max logic would commit it — typing "wor" mid-word.
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "whisper-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        // Model gives the same partial last token twice in a row.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello wor", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.2)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello wor", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.35)));
+
+        // Then the word completes.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.5)));
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world", true, TimeSpan.Zero, TimeSpan.FromSeconds(0.7)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        // No result should ever have committed the partial word "wor".
+        foreach (var r in results)
+            Assert.DoesNotContain("wor", r.CommittedDelta.Split(' '));
+
+        // Final text must be the complete word.
+        var last = results[^1];
+        Assert.True(last.IsFinal);
+        Assert.Equal("hello world", last.DisplayText);
+        Assert.Equal(0, last.BackspaceCount);
+    }
+
+    [Fact]
     public async Task LiveSession_FinalChunk_SameWordsWithCapitalisationAndPunctuation_DoesNotBackspace()
     {
         // Regression test: when the final chunk adds punctuation/capitalisation to words

@@ -465,8 +465,12 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
             if (_streamingCommit)
             {
-                int speculativeCount = Math.Max(0, segmentWords.Length - StreamingTrailingWordHoldback);
-                safeCount = Math.Max(stableCount, speculativeCount);
+                // Always hold back the last word — it may still be a partial token
+                // that the model hasn't extended yet. stableCount is used in batch
+                // mode but must NOT override the holdback here: if the model repeats
+                // the same partial word token across two chunks it would be counted
+                // as "stable" and committed before it is complete.
+                safeCount = Math.Max(0, segmentWords.Length - StreamingTrailingWordHoldback);
             }
             else
             {
