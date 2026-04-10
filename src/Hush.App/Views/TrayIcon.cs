@@ -70,10 +70,17 @@ public sealed class TrayIcon : IDisposable
     {
         var menu = new NativeMenu();
 
+        // 1. Status (non-clickable)
         _statusItem = new NativeMenuItem("Starting…") { IsEnabled = false };
         menu.Add(_statusItem);
         menu.Add(new NativeMenuItemSeparator());
 
+        // 2. Keyboard reminders (non-clickable)
+        menu.Add(new NativeMenuItem("Ctrl+H — Dictate") { IsEnabled = false });
+        menu.Add(new NativeMenuItem("Alt+H — Dictate & clean") { IsEnabled = false });
+        menu.Add(new NativeMenuItemSeparator());
+
+        // 3. Copy last dictation
         var copyLastItem = new NativeMenuItem("Copy last dictation");
         copyLastItem.Click += (_, _) =>
         {
@@ -87,12 +94,14 @@ public sealed class TrayIcon : IDisposable
         };
         menu.Add(copyLastItem);
 
+        // 4. Settings
         var settingsItem = new NativeMenuItem("Settings…");
         settingsItem.Click += (_, _) => OpenSettings();
         menu.Add(settingsItem);
 
         menu.Add(new NativeMenuItemSeparator());
 
+        // 5. Quit
         var quitItem = new NativeMenuItem("Quit Hush");
         quitItem.Click += (_, _) => _desktop.Shutdown();
         menu.Add(quitItem);

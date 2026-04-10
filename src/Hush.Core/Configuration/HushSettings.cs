@@ -52,8 +52,7 @@ public sealed class HushSettings
     /// <summary>Whether Hush should launch at OS login.</summary>
     public bool AutoStart { get; set; } = false;
 
-    /// <summary>Audio input device index. <c>-1</c> means system default.
-    /// </summary>
+    /// <summary>Audio input device index. <c>-1</c> means system default.</summary>
     public int MicrophoneDeviceIndex { get; set; } = -1;
 
     /// <summary>User-defined word substitutions applied to committed dictation output.</summary>
@@ -64,4 +63,28 @@ public sealed class HushSettings
 
     /// <summary>How long after the last session before the transcription model is unloaded to free RAM.</summary>
     public ModelUnloadTimeout ModelUnloadTimeout { get; set; } = ModelUnloadTimeout.Min5;
+
+    // ── Clean Mode ────────────────────────────────────────────────────────
+    /// <summary>Hotkey combination for clean-mode (LLM-rewritten) dictation.</summary>
+    public string CleanHotkey { get; set; } = "Alt+H";
+
+    /// <summary>Whether to run an LLM rewrite pass in clean-mode sessions.</summary>
+    public bool PostProcessingEnabled { get; set; } = true;
+
+    /// <summary>Foundry Local model alias used for LLM rewriting.</summary>
+    public string PostProcessingModel { get; set; } = "qwen3-0.6b";
+
+    /// <summary>ID of the active post-processing prompt template.</summary>
+    public string? ActivePostProcessingPromptId { get; set; }
+
+    /// <summary>User-defined prompt templates for LLM rewriting.</summary>
+    public List<HushPromptEntry> PostProcessingPrompts { get; set; } = new();
+}
+
+/// <summary>Persisted user-defined prompt template entry.</summary>
+public sealed record HushPromptEntry
+{
+    public string Id { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Prompt { get; init; } = "";
 }
