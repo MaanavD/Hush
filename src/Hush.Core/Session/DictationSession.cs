@@ -111,9 +111,15 @@ public sealed class DictationSession : IDictationSession
     // through an async pipeline (Notepad/WinUI3 via TSF/XAML, some UWP apps)
     // may not have finished processing VK_BACK messages by the time SendInput
     // returns, causing the replacement text to land in the wrong cursor
-    // position. A ~15 ms pause is imperceptible to the user but long enough
-    // for a single message-pump cycle in all observed targets.
+    // position or, worse, late-arriving backspaces deleting the replacement.
     private const int BackspaceSettleMs = 15;
+    // TSF-aware apps (Notepad, WinUI3) process each VK_BACK through an async
+    // pipeline: WM_KEYDOWN → TSF → document update → XAML layout → render.
+    // Large batches (e.g. 80 backspaces on a final correction) need several
+    // hundred milliseconds. We scale linearly and cap at a reasonable maximum.
+    private const int TsfBackspacePerCharMs = 5;
+    private const int TsfBackspaceMinMs = 60;
+    private const int TsfBackspaceMaxMs = 600;
 
     private async Task StreamingTranscriptionLoopAsync(CancellationToken cancellationToken)
     {
@@ -133,9 +139,9 @@ public sealed class DictationSession : IDictationSession
                 if (result.BackspaceCount > 0)
                 {
                     await _output.SendBackspacesAsync(result.BackspaceCount, cancellationToken, skipModifierRestore: true);
-                    // Give the target app's input pipeline time to process the
-                    // backspace events before the replacement characters arrive.
-                    await Task.Delay(BackspaceSettleMs, cancellationToken);
+                    int settleMs = CalculateBackspaceSettleMs(result.BackspaceCount);
+                    _logger.LogDebug("Backspace settle: {SettleMs}ms for {Count} backspaces", settleMs, result.BackspaceCount);
+                    await Task.Delay(settleMs, cancellationToken);
                 }
 
                 if (!string.IsNullOrEmpty(result.CommittedDelta))
@@ -153,6 +159,14 @@ public sealed class DictationSession : IDictationSession
         {
             ReportSessionError(ex, "Transcription loop encountered an unhandled error.");
         }
+    }
+
+    private static int CalculateBackspaceSettleMs(int backspaceCount)
+    {
+        if (OperatingSystem.IsWindows() && Output.ForegroundWindowDetector.IsTsfProblematic())
+            return Math.Clamp(backspaceCount * TsfBackspacePerCharMs, TsfBackspaceMinMs, TsfBackspaceMaxMs);
+
+        return BackspaceSettleMs;
     }
 
     // ── Spinner path: animate indicator, buffer text, type on stop ───────

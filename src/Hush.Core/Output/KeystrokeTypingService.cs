@@ -9,8 +9,9 @@ namespace Hush.Core.Output;
 /// <summary>
 /// Outputs transcribed text into the currently focused application.
 /// On Windows, text is injected via <c>SendInput</c> with <c>KEYEVENTF_UNICODE</c>,
-/// which does not touch the clipboard. A clipboard-paste fallback is available
-/// for apps that don't support Unicode input events (set <c>ClipboardFallback = true</c>).
+/// which does not touch the clipboard. A clipboard-paste fallback is used
+/// automatically for apps whose TSF layer garbles Unicode input events
+/// (e.g. Windows 11 Notepad, WinUI3 TextBox), or when <c>ClipboardFallback = true</c>.
 /// </summary>
 public sealed class KeystrokeTypingService : ITextOutputService
 {
@@ -37,7 +38,10 @@ public sealed class KeystrokeTypingService : ITextOutputService
 
         if (OperatingSystem.IsWindows())
         {
-            return _useClipboardFallback
+            bool useClipboard = _useClipboardFallback || ForegroundWindowDetector.IsTsfProblematic();
+            if (useClipboard)
+                _logger.LogDebug("TypeText: using clipboard paste (TSF-problematic window detected)");
+            return useClipboard
                 ? WindowsClipboardTyper.TypeAsync(text, cancellationToken)
                 : WindowsKeystrokeTyper.TypeAsync(text, cancellationToken, skipModifierRestore, _logger);
         }
@@ -76,6 +80,56 @@ public sealed class KeystrokeTypingService : ITextOutputService
             $"Text output is not supported on this platform ({RuntimeInformation.OSDescription}).");
     }
 
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Windows — Foreground window detection for TSF-problematic apps
+//
+// Windows 11 Notepad and other WinUI3 apps use the Text Services Framework
+// (TSF) for text input. TSF garbles KEYEVENTF_UNICODE events — even when
+// sent one character at a time — producing repeated last-character output.
+// This helper detects such windows so the typing service can switch to
+// clipboard-paste automatically.
+// ────────────────────────────────────────────────────────────────────────────
+
+internal static class ForegroundWindowDetector
+{
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetClassName(nint hWnd, char[] lpClassName, int nMaxCount);
+
+    // Known window class names whose TSF layer garbles KEYEVENTF_UNICODE events.
+    private static readonly string[] TsfProblematicClasses =
+    [
+        "Notepad",                         // Windows 11 Notepad (WinUI3)
+        "WinUIDesktopWin32WindowClass",    // Generic WinUI3 host window
+    ];
+
+    /// <summary>
+    /// Returns true when the foreground window belongs to an app class that is
+    /// known to garble <c>KEYEVENTF_UNICODE</c> SendInput events.
+    /// </summary>
+    internal static bool IsTsfProblematic()
+    {
+        nint hwnd = GetForegroundWindow();
+        if (hwnd == 0) return false;
+
+        var buf = new char[256];
+        int len = GetClassName(hwnd, buf, buf.Length);
+        if (len <= 0) return false;
+
+        var className = new ReadOnlySpan<char>(buf, 0, len);
+        foreach (string problematic in TsfProblematicClasses)
+        {
+            if (className.Equals(problematic, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        // Also catch child-process WinUI3 windows whose class contains "WinUI"
+        return className.Contains("WinUI", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -146,48 +200,56 @@ internal static class WindowsKeystrokeTyper
             cancellationToken.ThrowIfCancellationRequested();
 
             var pressedModifiers = GetPressedModifierVks();
-
-            // Build a single SendInput batch: modifier releases + text + optional modifier restores.
-            // This prevents the OS from reasserting physical modifier keys between release and typing.
             int modCount = pressedModifiers.Count;
-            int restoreCount = skipModifierRestore ? 0 : modCount;
-            var inputs = new INPUT[modCount + text.Length * 2 + restoreCount];
-            int idx = 0;
+            int cbSize = Marshal.SizeOf<INPUT>();
 
-            // Release held modifiers
-            for (int i = 0; i < modCount; i++)
-                inputs[idx++] = MakeVkInput(pressedModifiers[i], KEYEVENTF_KEYUP);
+            // Release held modifiers (separate batch so they're lifted before we type)
+            if (modCount > 0)
+            {
+                var modInputs = new INPUT[modCount];
+                for (int i = 0; i < modCount; i++)
+                    modInputs[i] = MakeVkInput(pressedModifiers[i], KEYEVENTF_KEYUP);
+                SendInput((uint)modCount, modInputs, cbSize);
+            }
 
-            // Type each character (down + up)
+            // Type each character as an individual SendInput call (down + up).
+            // TSF-aware apps (Windows 11 Notepad, WinUI3 TextBox) garble batched
+            // KEYEVENTF_UNICODE events — they apply the last scan code to every
+            // character in the batch. Sending one char at a time avoids this.
+            var charPair = new INPUT[2];
+            uint totalSent = 0;
             for (int i = 0; i < text.Length; i++)
             {
                 ushort ch = text[i];
-                inputs[idx++] = MakeUnicodeInput(ch, KEYEVENTF_UNICODE);
-                inputs[idx++] = MakeUnicodeInput(ch, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+                charPair[0] = MakeUnicodeInput(ch, KEYEVENTF_UNICODE);
+                charPair[1] = MakeUnicodeInput(ch, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+                totalSent += SendInput(2, charPair, cbSize);
             }
 
             // Optionally restore modifiers
             if (!skipModifierRestore)
             {
                 var toRestore = GetModifiersToRestore(pressedModifiers);
-                // Resize if fewer modifiers need restoring
-                if (toRestore.Count < modCount)
-                    Array.Resize(ref inputs, modCount + text.Length * 2 + toRestore.Count);
-                for (int i = 0; i < toRestore.Count; i++)
-                    inputs[idx++] = MakeVkInput(toRestore[i], 0);
+                if (toRestore.Count > 0)
+                {
+                    var restoreInputs = new INPUT[toRestore.Count];
+                    for (int i = 0; i < toRestore.Count; i++)
+                        restoreInputs[i] = MakeVkInput(toRestore[i], 0);
+                    SendInput((uint)toRestore.Count, restoreInputs, cbSize);
+                }
             }
 
-            logger?.LogDebug("SendInput(type): mods={ModCount} chars={Chars} totalEvents={Total}", modCount, text.Length, idx);
-            uint sent = SendInput((uint)idx, inputs, Marshal.SizeOf<INPUT>());
-            logger?.LogDebug("SendInput(type) returned: sent={Sent}/{Total}", sent, idx);
-            if (sent == 0 && text.Length > 0)
+            int totalEvents = modCount + text.Length * 2;
+            logger?.LogDebug("SendInput(type): mods={ModCount} chars={Chars} totalEvents={Total}", modCount, text.Length, totalEvents);
+            logger?.LogDebug("SendInput(type) returned: sent={Sent}/{Total}", totalSent, text.Length * 2);
+            if (totalSent == 0 && text.Length > 0)
             {
                 int error = Marshal.GetLastWin32Error();
                 throw new InvalidOperationException(
                     error == 5
                         ? "Cannot type into an elevated (administrator) application. " +
                           "Run Hush as administrator, or switch to a non-elevated window."
-                        : $"SendInput failed (sent 0/{idx}, Win32 error {error}). " +
+                        : $"SendInput failed (sent 0/{totalEvents}, Win32 error {error}). " +
                           "The focused application may not accept simulated input.");
             }
         }, cancellationToken);
@@ -251,31 +313,8 @@ internal static class WindowsKeystrokeTyper
         return modifiersToRestore;
     }
 
-    private static void SendUnicodeString(string text)
-    {
-        // Build all key events at once for efficiency (down+up per char).
-        // Surrogate pairs are handled by sending each surrogate code unit separately —
-        // Windows merges them into a single WM_CHAR with the full codepoint.
-        var inputs = new INPUT[text.Length * 2];
-        for (int i = 0; i < text.Length; i++)
-        {
-            ushort ch = text[i];
-            inputs[i * 2]     = MakeUnicodeInput(ch, KEYEVENTF_UNICODE);
-            inputs[i * 2 + 1] = MakeUnicodeInput(ch, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
-        }
-
-        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-        if (sent == 0)
-        {
-            int error = Marshal.GetLastWin32Error();
-            throw new InvalidOperationException(
-                error == 5 // ERROR_ACCESS_DENIED — UIPI blocks injection to elevated windows
-                    ? "Cannot type into an elevated (administrator) application. " +
-                      "Run Hush as administrator, or switch to a non-elevated window."
-                    : $"SendInput failed (sent 0/{inputs.Length}, Win32 error {error}). " +
-                      "The focused application may not accept simulated input.");
-        }
-    }
+    // SendUnicodeString was removed — all typing now goes through TypeAsync
+    // which sends each character individually to avoid TSF batching issues.
 
     private static void SendModifierKeys(IReadOnlyList<ushort> virtualKeys, uint flags)
     {
