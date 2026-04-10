@@ -13,6 +13,8 @@ internal static class Program
 {
     private const string MutexName = "Global\\Hush_SingleInstance_B8F2A1D0";
 
+    private static readonly string[] KnownFlags = ["--toggle", "--toggle-clean", "--cancel", "--copy-last"];
+
     // Avalonia configuration; don't remove or modify.
     [STAThread]
     public static void Main(string[] args)
@@ -28,10 +30,35 @@ internal static class Program
         // Must run before any ORT type is touched.
         PreloadOnnxRuntime();
 
+        // Parse CLI flags before acquiring the mutex so we can send commands
+        // to an already-running instance if one is present.
+        string? remoteCommand = ParseRemoteCommand(args);
+
         using var mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
+
+        if (remoteCommand is not null)
+        {
+            if (!createdNew)
+            {
+                // Another instance is running — send it the command via IPC.
+                bool sent = TrySendRemoteCommand(remoteCommand);
+                if (!sent)
+                    Console.Error.WriteLine("[Hush] Warning: Could not send command to running instance.");
+                return; // exit 0 regardless; failures are best-effort
+            }
+            else
+            {
+                // No running instance to receive the command.
+                Console.Error.WriteLine("Hush is not running.");
+                mutex.ReleaseMutex();
+                Environment.Exit(1);
+                return;
+            }
+        }
+
         if (!createdNew)
         {
-            // Another instance is already running.
+            // Another instance is already running and no remote command was given.
             Console.Error.WriteLine("Hush is already running.");
             return;
         }
@@ -44,6 +71,63 @@ internal static class Program
             .UsePlatformDetect()
             .UseReactiveUI()
             .LogToTrace();
+
+    /// <summary>
+    /// Maps a CLI flag to the IPC command string, or returns <see langword="null"/>
+    /// if no recognised flag is present.
+    /// </summary>
+    private static string? ParseRemoteCommand(string[] args)
+    {
+        foreach (var arg in args)
+        {
+            switch (arg.ToLowerInvariant())
+            {
+                case "--toggle":       return "toggle";
+                case "--toggle-clean": return "toggle-clean";
+                case "--cancel":       return "cancel";
+                case "--copy-last":    return "copy-last";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Sends a command string to the running Hush instance via named pipe (Windows)
+    /// or Unix domain socket (macOS/Linux). Returns <see langword="true"/> on success.
+    /// </summary>
+    private static bool TrySendRemoteCommand(string command)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using var client = new System.IO.Pipes.NamedPipeClientStream(
+                    ".", RemoteControlService.WindowsPipeName,
+                    System.IO.Pipes.PipeDirection.Out,
+                    System.IO.Pipes.PipeOptions.None);
+                client.Connect(2000);
+                using var writer = new StreamWriter(client) { AutoFlush = true };
+                writer.WriteLine(command);
+            }
+            else
+            {
+                using var socket = new System.Net.Sockets.Socket(
+                    System.Net.Sockets.AddressFamily.Unix,
+                    System.Net.Sockets.SocketType.Stream,
+                    System.Net.Sockets.ProtocolType.Unspecified);
+                socket.Connect(new System.Net.Sockets.UnixDomainSocketEndPoint(RemoteControlService.UnixSocketPath));
+                using var ns = new System.Net.Sockets.NetworkStream(socket);
+                using var writer = new StreamWriter(ns) { AutoFlush = true };
+                writer.WriteLine(command);
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Hush] Warning: failed to send remote command '{command}': {ex.Message}");
+            return false;
+        }
+    }
 
     /// <summary>
     /// Pre-load <c>onnxruntime.dll</c> from the app's native library directory

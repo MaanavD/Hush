@@ -74,6 +74,8 @@ public sealed partial class MainViewModel : ObservableObject
 
         _hotkeyService.HotkeyPressed += OnHotkeyPressed;
         _hotkeyService.HotkeyReleased += OnHotkeyReleased;
+        _hotkeyService.CleanHotkeyPressed += OnCleanHotkeyPressed;
+        _hotkeyService.CleanHotkeyReleased += OnCleanHotkeyReleased;
 
         _dictationSession.OnAudioLevel += level =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -171,6 +173,7 @@ public sealed partial class MainViewModel : ObservableObject
     public async Task SaveSettingsAsync(CancellationToken cancellationToken = default)
     {
         var previousHotkey = _settings.Hotkey;
+        var previousCleanHotkey = _settings.CleanHotkey;
         SettingsViewModel.Apply();
 
         string? hotkeyError = null;
@@ -181,6 +184,17 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 _settings.Hotkey = previousHotkey;
                 SettingsViewModel.Hotkey = previousHotkey;
+            }
+        }
+
+        string? cleanHotkeyError = null;
+        if (!string.Equals(previousCleanHotkey, _settings.CleanHotkey, StringComparison.Ordinal))
+        {
+            cleanHotkeyError = TryApplyCleanHotkeyChange(previousCleanHotkey, _settings.CleanHotkey);
+            if (cleanHotkeyError is not null)
+            {
+                _settings.CleanHotkey = previousCleanHotkey;
+                SettingsViewModel.CleanHotkey = previousCleanHotkey;
             }
         }
 
@@ -206,6 +220,11 @@ public sealed partial class MainViewModel : ObservableObject
         {
             _overlayVm.ErrorMessage = hotkeyError;
             StatusMessage = $"Error: {hotkeyError}";
+        }
+        else if (cleanHotkeyError is not null)
+        {
+            _overlayVm.ErrorMessage = cleanHotkeyError;
+            StatusMessage = $"Error: {cleanHotkeyError}";
         }
         else if (IsModelReady)
         {
@@ -285,6 +304,97 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    private async void OnCleanHotkeyPressed(object? sender, EventArgs e)
+    {
+        if (!IsModelReady)
+            return;
+
+        try
+        {
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                IsListening = true;
+                _overlayVm.BeginSession(_settings.PartialsInOverlay);
+                _overlayVm.IsListening = true;
+                _overlayVm.ErrorMessage = null;
+            });
+
+            if (_settings.SoundEffects)
+                _ = _soundEffects.PlayStartAsync();
+
+            // postProcessingPrompt will be wired once feature/llm-postprocessing merges.
+            // _settings.PostProcessingEnabled and _settings.PostProcessingModel are already
+            // persisted and ready to pass once IDictationSession.StartAsync gains the parameter.
+            // TODO: pass postProcessingPrompt: _settings.PostProcessingEnabled ? GetActivePrompt() : null
+            await _dictationSession.StartAsync(
+                _settings.Language,
+                streamingCommit: false,
+                showSpinner: true);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogError(ex, "Failed to start clean dictation session.");
+
+            try
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    _overlayVm.IsListening = false;
+                    IsListening = false;
+                    _overlayVm.ErrorMessage = Hush.App.RuntimeUserMessageBuilder.BuildSessionErrorMessage(ex);
+                    StatusMessage = $"Error: {_overlayVm.ErrorMessage}";
+                });
+            }
+            catch { /* app may be shutting down */ }
+        }
+    }
+
+    private async void OnCleanHotkeyReleased(object? sender, EventArgs e)
+    {
+        try
+        {
+            await _dictationSession.StopAsync();
+
+            if (_settings.SoundEffects)
+                _ = _soundEffects.PlayStopAsync();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogError(ex, "Failed to stop clean dictation session.");
+            try
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    _overlayVm.IsListening = false;
+                    IsListening = false;
+                });
+            }
+            catch { /* app may be shutting down */ }
+        }
+    }
+
+    /// <summary>Triggers the raw hotkey pressed event (used by RemoteControlService).</summary>
+    internal void TriggerHotkeyPressed() => OnHotkeyPressed(this, EventArgs.Empty);
+
+    /// <summary>Triggers the raw hotkey released event (used by RemoteControlService).</summary>
+    internal void TriggerHotkeyReleased() => OnHotkeyReleased(this, EventArgs.Empty);
+
+    /// <summary>Triggers the clean hotkey pressed event (used by RemoteControlService).</summary>
+    internal void TriggerCleanHotkeyPressed() => OnCleanHotkeyPressed(this, EventArgs.Empty);
+
+    /// <summary>Triggers the clean hotkey released event (used by RemoteControlService).</summary>
+    internal void TriggerCleanHotkeyReleased() => OnCleanHotkeyReleased(this, EventArgs.Empty);
+
+    /// <summary>Cancels the active session if any (used by RemoteControlService).</summary>
+    internal async void CancelSession()
+    {
+        try { await _dictationSession.StopAsync(); }
+        catch (Exception ex) { _logger.LogError(ex, "Cancel session error."); }
+    }
+
+    /// <summary>Returns the last committed transcript text from the overlay (used by RemoteControlService).</summary>
+    internal string LastTranscript => _overlayVm.TranscriptText;
+
     private string? TryApplyHotkeyChange(string previousHotkey, string requestedHotkey)
     {
         try
@@ -302,6 +412,23 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    private string? TryApplyCleanHotkeyChange(string previousHotkey, string requestedHotkey)
+    {
+        try
+        {
+            _hotkeyService.UnregisterClean();
+            _hotkeyService.RegisterClean(requestedHotkey);
+            _logger.LogInformation("Clean hotkey changed to '{Hotkey}'.", requestedHotkey);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to re-register clean hotkey '{Hotkey}'.", requestedHotkey);
+            TryRestoreCleanHotkey(previousHotkey);
+            return Hush.App.RuntimeUserMessageBuilder.BuildHotkeyRegistrationMessage(ex, requestedHotkey);
+        }
+    }
+
     private void TryRestoreHotkey(string hotkey)
     {
         try
@@ -315,5 +442,19 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    private string BuildReadyStatusMessage() => $"Ready — hold {_settings.Hotkey} to dictate";
+    private void TryRestoreCleanHotkey(string hotkey)
+    {
+        try
+        {
+            _hotkeyService.UnregisterClean();
+            _hotkeyService.RegisterClean(hotkey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to restore previous clean hotkey '{Hotkey}'.", hotkey);
+        }
+    }
+
+    private string BuildReadyStatusMessage() =>
+        $"Ready — hold {_settings.Hotkey} (raw) or {_settings.CleanHotkey} (clean)";
 }

@@ -51,12 +51,18 @@
                 <!-- Hotkey -->
                 <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
                     <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                        <TextBlock Text="Global hotkey"
-                                   FontSize="13"
-                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <Border Width="8" Height="8" CornerRadius="4"
+                                    Background="{StaticResource Hush.Accent.Brush}"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Text="Global hotkey"
+                                       FontSize="13"
+                                       Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        </StackPanel>
                         <TextBlock Text="Hold to dictate"
                                    FontSize="10"
-                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                                   Margin="14 0 0 0" />
                     </StackPanel>
                     <TextBox Grid.Column="1"
                              Text="{Binding Hotkey}"
@@ -100,16 +106,22 @@
                 <!-- Section: Clean Mode -->
                 <TextBlock Text="CLEAN MODE"
                            FontSize="9" FontWeight="Bold" LetterSpacing="2"
-                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Foreground="{StaticResource Hush.CleanMode.Brush}"
                            Margin="0 0 0 10" />
 
                 <!-- Clean hotkey -->
                 <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
                     <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                        <TextBlock Text="Clean hotkey"
-                                   FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <Border Width="8" Height="8" CornerRadius="4"
+                                    Background="{StaticResource Hush.CleanMode.Brush}"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Text="Clean hotkey"
+                                       FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        </StackPanel>
                         <TextBlock Text="Runs LLM rewrite"
-                                   FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                                   FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                                   Margin="14 0 0 0" />
                     </StackPanel>
                     <TextBox Grid.Column="1"
                              Text="{Binding CleanHotkey}"
@@ -143,6 +155,7 @@
                     <TextBox Grid.Column="1"
                              Text="{Binding PostProcessingModel}"
                              Watermark="qwen3-0.6b"
+                             IsEnabled="{Binding PostProcessingEnabled}"
                              ToolTip.Tip="Foundry Local model alias used for LLM rewriting. Must be a small chat model." />
                 </Grid>
                 <TextBlock Text="Model loads on first clean-mode use. Requires ~400 MB disk space."
@@ -421,3 +434,4 @@
 
     </Grid>
 </Window>
+

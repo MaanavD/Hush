@@ -106,6 +106,21 @@ public sealed class App : Application
                 _logger.LogError(ex, "Failed to register startup hotkey '{Hotkey}'.", settings.Hotkey);
             }
 
+            try
+            {
+                _hotkeyService.RegisterClean(settings.CleanHotkey);
+            }
+            catch (Exception ex)
+            {
+                var message = RuntimeUserMessageBuilder.BuildHotkeyRegistrationMessage(ex, settings.CleanHotkey);
+                overlayVm.ErrorMessage = message;
+                _logger.LogError(ex, "Failed to register clean hotkey '{Hotkey}'.", settings.CleanHotkey);
+            }
+
+            // Start named-pipe remote control listener for CLI flags and Wayland daemons.
+            var remoteControl = new RemoteControlService(_mainVm);
+            _ = remoteControl.StartListeningAsync();
+
             // Wire cleanup on shutdown.
             desktop.ShutdownRequested += OnShutdownRequested;
 
@@ -196,6 +211,7 @@ public sealed class App : Application
         try
         {
             _hotkeyService?.Unregister();
+            _hotkeyService?.UnregisterClean();
             _hotkeyService?.Dispose();
 
             if (_dictationSession is not null)

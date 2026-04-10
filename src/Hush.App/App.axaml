@@ -26,6 +26,8 @@
             <Color x:Key="Hush.Border">#1C1C2C</Color>
             <Color x:Key="Hush.Accent">#64C5B3</Color>
             <Color x:Key="Hush.Accent.Dim">#2D6B63</Color>
+            <Color x:Key="Hush.CleanMode">#9B7FEB</Color>
+            <Color x:Key="Hush.CleanMode.Dim">#4B3E8A</Color>
             <Color x:Key="Hush.Recording">#E05757</Color>
             <Color x:Key="Hush.Error">#C94040</Color>
 
@@ -35,12 +37,14 @@
             <Color x:Key="Hush.Text.Muted">#35354E</Color>
 
             <!-- Brushes derived from above -->
-            <SolidColorBrush x:Key="Hush.Bg.Brush"        Color="{StaticResource Hush.Bg}" />
-            <SolidColorBrush x:Key="Hush.Surface.Brush"   Color="{StaticResource Hush.Surface}" />
-            <SolidColorBrush x:Key="Hush.Border.Brush"    Color="{StaticResource Hush.Border}" />
-            <SolidColorBrush x:Key="Hush.Accent.Brush"    Color="{StaticResource Hush.Accent}" />
-            <SolidColorBrush x:Key="Hush.Recording.Brush" Color="{StaticResource Hush.Recording}" />
-            <SolidColorBrush x:Key="Hush.Error.Brush"     Color="{StaticResource Hush.Error}" />
+            <SolidColorBrush x:Key="Hush.Bg.Brush"           Color="{StaticResource Hush.Bg}" />
+            <SolidColorBrush x:Key="Hush.Surface.Brush"      Color="{StaticResource Hush.Surface}" />
+            <SolidColorBrush x:Key="Hush.Border.Brush"       Color="{StaticResource Hush.Border}" />
+            <SolidColorBrush x:Key="Hush.Accent.Brush"       Color="{StaticResource Hush.Accent}" />
+            <SolidColorBrush x:Key="Hush.CleanMode.Brush"    Color="{StaticResource Hush.CleanMode}" />
+            <SolidColorBrush x:Key="Hush.CleanMode.Dim.Brush" Color="{StaticResource Hush.CleanMode.Dim}" />
+            <SolidColorBrush x:Key="Hush.Recording.Brush"    Color="{StaticResource Hush.Recording}" />
+            <SolidColorBrush x:Key="Hush.Error.Brush"        Color="{StaticResource Hush.Error}" />
             <SolidColorBrush x:Key="Hush.Text.Primary.Brush"   Color="{StaticResource Hush.Text.Primary}" />
             <SolidColorBrush x:Key="Hush.Text.Secondary.Brush" Color="{StaticResource Hush.Text.Secondary}" />
             <SolidColorBrush x:Key="Hush.Text.Muted.Brush"     Color="{StaticResource Hush.Text.Muted}" />

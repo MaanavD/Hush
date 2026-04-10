@@ -21,6 +21,7 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
     private const int WM_HOTKEY = 0x0312;
     private const uint WM_QUIT = 0x0012;
     private const int HOTKEY_ID = 9001;
+    private const int HOTKEY_ID_CLEAN = 9002;
     private const int ReleasePollIntervalMs = 24;
 
     // Modifier flags for RegisterHotKey
@@ -87,6 +88,10 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
     private LowLevelKeyboardProc? _hookProc;   // held as field to prevent GC
     private nint _hook;
 
+    // ── Clean-side hook ───────────────────────────────────────────────────────
+    private LowLevelKeyboardProc? _cleanHookProc;
+    private nint _cleanHook;
+
     [StructLayout(LayoutKind.Sequential)]
     private struct MSG
     {
@@ -125,11 +130,26 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
     private readonly HashSet<ushort> _physicallyHeldChordKeys = new();
     private int _physicallyHeldCount;
 
+    // ── Clean-side state ──────────────────────────────────────────────────────
+    private Thread? _cleanMessageThread;
+    private uint _cleanMessageThreadId;
+    private volatile bool _cleanRegistered;
+    private volatile bool _cleanKeyDown;
+    private ushort[] _cleanTrackedReleaseVks = Array.Empty<ushort>();
+    private readonly HashSet<ushort> _cleanPhysicallyHeldChordKeys = new();
+    private int _cleanPhysicallyHeldCount;
+
     /// <inheritdoc/>
     public event EventHandler? HotkeyPressed;
 
     /// <inheritdoc/>
     public event EventHandler? HotkeyReleased;
+
+    /// <inheritdoc/>
+    public event EventHandler? CleanHotkeyPressed;
+
+    /// <inheritdoc/>
+    public event EventHandler? CleanHotkeyReleased;
 
     /// <inheritdoc/>
     public void Register(string hotkey)
@@ -281,12 +301,189 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
     }
 
     /// <inheritdoc/>
+    public void RegisterClean(string hotkey)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_cleanRegistered || _cleanMessageThread is not null)
+            UnregisterClean();
+
+        ParseHotkey(hotkey, out uint modifiers, out uint vk);
+        _cleanTrackedReleaseVks = BuildTrackedReleaseVks(modifiers, (ushort)vk);
+
+        var registrationReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _cleanMessageThread = new Thread(() => CleanMessageLoop(modifiers, vk, registrationReady))
+        {
+            IsBackground = true,
+            Name = "HushCleanHotkeyThread"
+        };
+        _cleanMessageThread.SetApartmentState(ApartmentState.STA);
+        _cleanMessageThread.Start();
+        registrationReady.Task.GetAwaiter().GetResult();
+    }
+
+    /// <inheritdoc/>
+    public void UnregisterClean()
+    {
+        _cleanRegistered = false;
+        _cleanKeyDown = false;
+        CleanupCleanKeyboardHook();
+        _cleanPhysicallyHeldChordKeys.Clear();
+        Volatile.Write(ref _cleanPhysicallyHeldCount, 0);
+
+        var thread = _cleanMessageThread;
+        var threadId = _cleanMessageThreadId;
+        if (threadId != 0)
+            PostThreadMessage(threadId, WM_QUIT, 0, 0);
+
+        if (thread is not null && thread != Thread.CurrentThread)
+            thread.Join(TimeSpan.FromSeconds(2));
+    }
+
+    private void CleanMessageLoop(uint modifiers, uint vk, TaskCompletionSource registrationReady)
+    {
+        _cleanMessageThreadId = GetCurrentThreadId();
+
+        try
+        {
+            if (!RegisterHotKey(nint.Zero, HOTKEY_ID_CLEAN, modifiers | MOD_NOREPEAT, vk))
+            {
+                int err = Marshal.GetLastWin32Error();
+                registrationReady.TrySetException(new InvalidOperationException(
+                    $"RegisterHotKey (clean) failed with Win32 error {err}. " +
+                    "The hotkey may already be in use by another application."));
+                return;
+            }
+
+            _cleanRegistered = true;
+            registrationReady.TrySetResult();
+
+            while (GetMessage(out var msg, nint.Zero, 0, 0))
+            {
+                if (msg.Message == WM_HOTKEY && (int)msg.WParam == HOTKEY_ID_CLEAN)
+                {
+                    if (!_cleanKeyDown)
+                    {
+                        _cleanKeyDown = true;
+
+                        _cleanPhysicallyHeldChordKeys.Clear();
+                        foreach (var vk2 in _cleanTrackedReleaseVks)
+                        {
+                            if ((GetAsyncKeyState(vk2) & 0x8000) != 0)
+                                _cleanPhysicallyHeldChordKeys.Add(vk2);
+                        }
+                        Volatile.Write(ref _cleanPhysicallyHeldCount, _cleanPhysicallyHeldChordKeys.Count);
+
+                        _cleanHookProc = SuppressAllKeyboardInputClean;
+                        _cleanHook = SetWindowsHookEx(WH_KEYBOARD_LL, _cleanHookProc, nint.Zero, 0);
+                        CleanHotkeyPressed?.Invoke(this, EventArgs.Empty);
+                        _ = PollForCleanReleaseAsync();
+                    }
+                }
+
+                TranslateMessage(ref msg);
+                DispatchMessage(ref msg);
+            }
+        }
+        catch (Exception ex)
+        {
+            registrationReady.TrySetException(ex);
+        }
+        finally
+        {
+            CleanupCleanKeyboardHook();
+            _cleanPhysicallyHeldChordKeys.Clear();
+            Volatile.Write(ref _cleanPhysicallyHeldCount, 0);
+
+            if (_cleanRegistered)
+                UnregisterHotKey(nint.Zero, HOTKEY_ID_CLEAN);
+
+            _cleanRegistered = false;
+            _cleanKeyDown = false;
+            _cleanMessageThreadId = 0;
+            _cleanMessageThread = null;
+        }
+    }
+
+    private async Task PollForCleanReleaseAsync()
+    {
+        int releaseCount = 0;
+        while (_cleanKeyDown && _cleanRegistered)
+        {
+            await Task.Delay(ReleasePollIntervalMs).ConfigureAwait(false);
+
+            bool anyPhysicallyHeld = Volatile.Read(ref _cleanPhysicallyHeldCount) > 0;
+
+            if (!anyPhysicallyHeld)
+            {
+                if (++releaseCount >= 2)
+                {
+                    _cleanKeyDown = false;
+                    if (_cleanHook != 0)
+                    {
+                        UnhookWindowsHookEx(_cleanHook);
+                        _cleanHook = 0;
+                        _cleanHookProc = null;
+                    }
+                    CleanHotkeyReleased?.Invoke(this, EventArgs.Empty);
+                    return;
+                }
+            }
+            else
+            {
+                releaseCount = 0;
+            }
+        }
+    }
+
+    private nint SuppressAllKeyboardInputClean(int nCode, nuint wParam, nint lParam)
+    {
+        if (nCode != HC_ACTION || !_cleanKeyDown)
+            return CallNextHookEx(_cleanHook, nCode, wParam, lParam);
+
+        const nuint WM_KEYUP      = 0x0101;
+        const nuint WM_SYSKEYDOWN = 0x0104;
+        const nuint WM_SYSKEYUP   = 0x0105;
+
+        if (wParam == WM_SYSKEYDOWN || wParam == WM_SYSKEYUP)
+            return CallNextHookEx(_cleanHook, nCode, wParam, lParam);
+
+        var keyboard = Marshal.PtrToStructure<KbdLlHookStruct>(lParam);
+        var vkCode = (ushort)keyboard.VkCode;
+
+        if ((keyboard.Flags & LLKHF_INJECTED) != 0
+            || keyboard.DwExtraInfo == WindowsInputCoordinator.InjectedExtraInfo)
+            return CallNextHookEx(_cleanHook, nCode, wParam, lParam);
+
+        if (wParam == WM_KEYUP && Array.IndexOf(_cleanTrackedReleaseVks, vkCode) >= 0)
+        {
+            if (_cleanPhysicallyHeldChordKeys.Remove(vkCode))
+                Interlocked.Decrement(ref _cleanPhysicallyHeldCount);
+            return CallNextHookEx(_cleanHook, nCode, wParam, lParam);
+        }
+
+        if (vkCode == 0x1B /* VK_ESCAPE */)
+        {
+            _cleanKeyDown = false;
+            var h = _cleanHook;
+            _cleanHook = 0;
+            _cleanHookProc = null;
+            if (h != 0) ThreadPool.QueueUserWorkItem(_ => UnhookWindowsHookEx(h));
+            CleanHotkeyReleased?.Invoke(this, EventArgs.Empty);
+            return 1;
+        }
+
+        return 1;
+    }
+
+    /// <inheritdoc/>
     public void Dispose()
     {
         if (_disposed)
             return;
         _disposed = true;
         Unregister();
+        UnregisterClean();
     }
 
     private void CleanupKeyboardHook()
@@ -296,6 +493,16 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
             UnhookWindowsHookEx(_hook);
             _hook = 0;
             _hookProc = null;
+        }
+    }
+
+    private void CleanupCleanKeyboardHook()
+    {
+        if (_cleanHook != 0)
+        {
+            UnhookWindowsHookEx(_cleanHook);
+            _cleanHook = 0;
+            _cleanHookProc = null;
         }
     }
 

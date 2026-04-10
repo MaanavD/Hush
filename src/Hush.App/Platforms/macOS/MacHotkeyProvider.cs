@@ -90,16 +90,32 @@ public sealed class MacHotkeyProvider : IGlobalHotkeyService
     private volatile bool _isHeld;
     private volatile bool _disposed;
 
+    // ── Clean-side state ──────────────────────────────────────────────────────
+    private GCHandle _cleanSelfHandle;
+    private nint _cleanMachPort;
+    private nint _cleanRunLoop;
+    private Thread? _cleanThread;
+    private ushort _cleanTargetVk;
+    private ulong _cleanTargetModMask;
+    private volatile bool _cleanIsHeld;
+
     // Keep delegate alive to prevent GC collection.
     private readonly unsafe delegate* unmanaged[Cdecl]<nint, uint, nint, nint, nint> _callbackPtr;
+    private readonly unsafe delegate* unmanaged[Cdecl]<nint, uint, nint, nint, nint> _cleanCallbackPtr;
 
     public event EventHandler? HotkeyPressed;
     public event EventHandler? HotkeyReleased;
+    public event EventHandler? CleanHotkeyPressed;
+    public event EventHandler? CleanHotkeyReleased;
 
     public MacHotkeyProvider(ILogger<MacHotkeyProvider>? logger = null)
     {
         _logger = logger ?? NullLogger<MacHotkeyProvider>.Instance;
-        unsafe { _callbackPtr = &TapCallback; }
+        unsafe
+        {
+            _callbackPtr = &TapCallback;
+            _cleanCallbackPtr = &CleanTapCallback;
+        }
     }
 
     /// <inheritdoc/>
@@ -210,11 +226,117 @@ public sealed class MacHotkeyProvider : IGlobalHotkeyService
     }
 
     /// <inheritdoc/>
+    public void RegisterClean(string hotkey)
+    {
+        ParseHotkey(hotkey, out _cleanTargetVk, out _cleanTargetModMask);
+
+        _cleanSelfHandle = GCHandle.Alloc(this);
+        ulong eventMask = kCGEventMaskKeyDown | kCGEventMaskKeyUp | kCGEventMaskFlagsChanged;
+
+        unsafe
+        {
+            _cleanMachPort = CGEventTapCreate(
+                kCGSessionEventTap,
+                kCGHeadInsertEventTap,
+                kCGEventTapOptionListenOnly,
+                eventMask,
+                (nint)_cleanCallbackPtr,
+                GCHandle.ToIntPtr(_cleanSelfHandle));
+        }
+
+        if (_cleanMachPort == 0)
+        {
+            _cleanSelfHandle.Free();
+            throw new PlatformNotSupportedException(
+                "CGEventTapCreate returned null for clean-mode hotkey. Grant Accessibility permission to Hush " +
+                "in System Settings → Privacy & Security → Accessibility, then restart the app.");
+        }
+
+        _cleanThread = new Thread(RunCleanLoop) { IsBackground = true, Name = "Hush.MacCleanHotkeyRunLoop" };
+        _cleanThread.Start();
+        _logger.LogInformation("macOS clean hotkey '{Hotkey}' registered (vk={Vk}, mods=0x{Mods:X}).",
+            hotkey, _cleanTargetVk, _cleanTargetModMask);
+    }
+
+    private void RunCleanLoop()
+    {
+        _cleanRunLoop = CFRunLoopGetCurrent();
+
+        var source = CFMachPortCreateRunLoopSource(0, _cleanMachPort, 0);
+        var mode = GetDefaultRunLoopMode();
+        CFRunLoopAddSource(_cleanRunLoop, source, mode);
+        CFRelease(source);
+
+        CFRunLoopRun();
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    private static nint CleanTapCallback(nint proxy, uint type, nint @event, nint userInfo)
+    {
+        if (@event == 0) return 0;
+
+        if (GCHandle.FromIntPtr(userInfo).Target is MacHotkeyProvider self)
+            self.OnCleanEvent(type, @event);
+
+        return @event;
+    }
+
+    private void OnCleanEvent(uint type, nint @event)
+    {
+        if (type == kCGEventKeyDown)
+        {
+            var vk = (ushort)CGEventGetIntegerValueField(@event, kCGKeyboardEventVirtualKey);
+            var flags = CGEventGetFlags(@event) & (kMaskShift | kMaskControl | kMaskOption | kMaskCommand);
+            if (vk == _cleanTargetVk && flags == _cleanTargetModMask && !_cleanIsHeld)
+            {
+                _cleanIsHeld = true;
+                CleanHotkeyPressed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+        else if (type == kCGEventKeyUp)
+        {
+            var vk = (ushort)CGEventGetIntegerValueField(@event, kCGKeyboardEventVirtualKey);
+            if (vk == _cleanTargetVk && _cleanIsHeld)
+            {
+                _cleanIsHeld = false;
+                CleanHotkeyReleased?.Invoke(this, EventArgs.Empty);
+            }
+        }
+        else if (type == kCGEventFlagsChanged && _cleanIsHeld)
+        {
+            var flags = CGEventGetFlags(@event) & (kMaskShift | kMaskControl | kMaskOption | kMaskCommand);
+            if ((flags & _cleanTargetModMask) != _cleanTargetModMask)
+            {
+                _cleanIsHeld = false;
+                CleanHotkeyReleased?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public void UnregisterClean()
+    {
+        if (_cleanRunLoop != 0)
+            CFRunLoopStop(_cleanRunLoop);
+
+        if (_cleanMachPort != 0)
+        {
+            CGEventTapEnable(_cleanMachPort, false);
+            CFRelease(_cleanMachPort);
+            _cleanMachPort = 0;
+        }
+
+        if (_cleanSelfHandle.IsAllocated)
+            _cleanSelfHandle.Free();
+    }
+
+    /// <inheritdoc/>
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         Unregister();
+        UnregisterClean();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

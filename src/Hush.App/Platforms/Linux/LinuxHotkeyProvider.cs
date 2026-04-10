@@ -88,8 +88,21 @@ public sealed class LinuxHotkeyProvider : IGlobalHotkeyService
     private Thread? _thread;
     private volatile bool _disposed;
 
+    // ── Clean-side state ──────────────────────────────────────────────────────
+    // Note: X11 global hotkeys require XGrabKey on each display connection.
+    // The clean hotkey uses a separate display connection and polling thread
+    // so both hotkeys are independently registerable/unregisterable.
+    // Wayland-only sessions are not supported; the same X11 limitation applies.
+    private nint _cleanDisplay;
+    private nint _cleanRootWindow;
+    private int _cleanKeycode;
+    private uint _cleanModMask;
+    private Thread? _cleanThread;
+
     public event EventHandler? HotkeyPressed;
     public event EventHandler? HotkeyReleased;
+    public event EventHandler? CleanHotkeyPressed;
+    public event EventHandler? CleanHotkeyReleased;
 
     public LinuxHotkeyProvider(ILogger<LinuxHotkeyProvider>? logger = null)
         => _logger = logger ?? NullLogger<LinuxHotkeyProvider>.Instance;
@@ -105,7 +118,7 @@ public sealed class LinuxHotkeyProvider : IGlobalHotkeyService
                 "Wayland-only sessions are not supported in Hush v1.");
 
         _rootWindow = XDefaultRootWindow(_display);
-        ParseHotkey(hotkey, out _keycode, out _modMask);
+        ParseHotkey(_display, hotkey, out _keycode, out _modMask);
 
         if (_keycode == 0)
             throw new ArgumentException($"Unrecognised hotkey: '{hotkey}'.");
@@ -160,16 +173,82 @@ public sealed class LinuxHotkeyProvider : IGlobalHotkeyService
     }
 
     /// <inheritdoc/>
+    public void RegisterClean(string hotkey)
+    {
+        _cleanDisplay = XOpenDisplay(null);
+        if (_cleanDisplay == 0)
+            throw new PlatformNotSupportedException(
+                "Could not open an X11 display connection for the clean hotkey. " +
+                "Ensure the DISPLAY environment variable is set. " +
+                "Wayland-only sessions are not supported in Hush v1.");
+
+        _cleanRootWindow = XDefaultRootWindow(_cleanDisplay);
+        ParseHotkey(_cleanDisplay, hotkey, out _cleanKeycode, out _cleanModMask);
+
+        if (_cleanKeycode == 0)
+            throw new ArgumentException($"Unrecognised clean hotkey: '{hotkey}'.");
+
+        XSelectInput(_cleanDisplay, _cleanRootWindow, KeyPressMask | KeyReleaseMask);
+
+        foreach (uint extra in LockVariants())
+            XGrabKey(_cleanDisplay, _cleanKeycode, _cleanModMask | extra, _cleanRootWindow, false, GrabModeAsync, GrabModeAsync);
+
+        XFlush(_cleanDisplay);
+
+        _cleanThread = new Thread(CleanPollLoop) { IsBackground = true, Name = "Hush.X11CleanHotkeyPoll" };
+        _cleanThread.Start();
+        _logger.LogInformation("Linux clean hotkey '{Hotkey}' grabbed (keycode={Kc}, mods=0x{M:X}).",
+            hotkey, _cleanKeycode, _cleanModMask);
+    }
+
+    private void CleanPollLoop()
+    {
+        while (!_disposed)
+        {
+            if (XPending(_cleanDisplay) > 0)
+            {
+                XNextEvent(_cleanDisplay, out var ev);
+                uint cleanState = ev.State & ~(LockMask | Mod2Mask);
+
+                if (ev.Type == KeyPress && ev.Keycode == (uint)_cleanKeycode && cleanState == _cleanModMask)
+                    CleanHotkeyPressed?.Invoke(this, EventArgs.Empty);
+                else if (ev.Type == KeyRelease && ev.Keycode == (uint)_cleanKeycode)
+                    CleanHotkeyReleased?.Invoke(this, EventArgs.Empty);
+            }
+            else
+            {
+                Thread.Sleep(8);
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public void UnregisterClean()
+    {
+        if (_cleanDisplay == 0) return;
+
+        foreach (uint extra in LockVariants())
+            XUngrabKey(_cleanDisplay, _cleanKeycode, _cleanModMask | extra, _cleanRootWindow);
+
+        XCloseDisplay(_cleanDisplay);
+        _cleanDisplay = 0;
+    }
+
+    /// <inheritdoc/>
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         Unregister();
+        UnregisterClean();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void ParseHotkey(string hotkey, out int keycode, out uint modMask)
+        => ParseHotkey(_display, hotkey, out keycode, out modMask);
+
+    private void ParseHotkey(nint display, string hotkey, out int keycode, out uint modMask)
     {
         keycode = 0;
         modMask = 0;
@@ -183,16 +262,15 @@ public sealed class LinuxHotkeyProvider : IGlobalHotkeyService
                 case "alt":               modMask |= Mod1Mask; break;
                 case "super" or "win":    modMask |= Mod4Mask; break;
                 default:
-                    // XStringToKeysym accepts X11 keysym names (case-sensitive) like "space", "Return"
                     var xname = part.ToLowerInvariant() switch
                     {
                         "space" => "space", "return" => "Return", "tab" => "Tab",
                         "escape" or "esc" => "Escape", "delete" => "Delete",
-                        _ => part // single letters work directly
+                        _ => part
                     };
                     ulong keysym = XStringToKeysym(xname);
                     if (keysym != 0)
-                        keycode = XKeysymToKeycode(_display, keysym);
+                        keycode = XKeysymToKeycode(display, keysym);
                     break;
             }
         }

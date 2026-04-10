@@ -26,4 +26,22 @@ public interface IGlobalHotkeyService : IDisposable
 
     /// <summary>Unregisters the current global hotkey if one is registered.</summary>
     void Unregister();
+
+    /// <summary>Raised when the clean-mode hotkey transitions from up to down (pressed).</summary>
+    event EventHandler? CleanHotkeyPressed;
+
+    /// <summary>Raised when the clean-mode hotkey transitions from down to up (released).</summary>
+    event EventHandler? CleanHotkeyReleased;
+
+    /// <summary>
+    /// Registers the global clean-mode hotkey described by <paramref name="hotkey"/>,
+    /// e.g. <c>"Alt+H"</c>. Can be active simultaneously with the raw hotkey.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the hotkey is already in use by another application.
+    /// </exception>
+    void RegisterClean(string hotkey);
+
+    /// <summary>Unregisters the clean-mode hotkey if one is registered.</summary>
+    void UnregisterClean();
 }
