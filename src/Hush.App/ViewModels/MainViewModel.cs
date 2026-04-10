@@ -136,7 +136,8 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 try
                 {
-                    await _dictationSession.StartAsync(_settings.Language, _settings.StreamingCommit);
+                    await _dictationSession.StartAsync(_settings.Language, _settings.StreamingCommit,
+                        showSpinner: false, postProcessingPrompt: null);
                     await _dictationSession.StopAsync();
                     _logger.LogDebug("JIT warmup complete.");
                 }
@@ -231,7 +232,16 @@ public sealed partial class MainViewModel : ObservableObject
             if (_settings.SoundEffects)
                 _ = _soundEffects.PlayStartAsync();
 
-            await _dictationSession.StartAsync(_settings.Language, _settings.StreamingCommit);
+            // Post-processing only applies in batch (non-streaming) mode.
+            var postProcessingPrompt = (!_settings.StreamingCommit && _settings.PostProcessingEnabled)
+                ? _settings.GetActivePrompt().Prompt
+                : null;
+
+            await _dictationSession.StartAsync(
+                _settings.Language,
+                _settings.StreamingCommit,
+                showSpinner: !_settings.StreamingCommit,
+                postProcessingPrompt: postProcessingPrompt);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

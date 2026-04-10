@@ -4,7 +4,7 @@
         x:Class="Hush.App.Views.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
         Title="Hush — Settings"
-        Width="460" Height="610"
+        Width="460" Height="720"
         WindowStartupLocation="CenterScreen"
         CanResize="False"
         FontFamily="{StaticResource Hush.Font}">
@@ -145,7 +145,7 @@
                         <TextBlock Text="Stream text while speaking"
                                    FontSize="13"
                                    Foreground="{StaticResource Hush.Text.Primary.Brush}" />
-                        <TextBlock Text="Off = all text appears on key release"
+                        <TextBlock Text="Off = all text appears on key release (enables LLM cleanup)"
                                    FontSize="10"
                                    Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
                     </StackPanel>
@@ -155,6 +155,56 @@
                           FontSize="13"
                           Foreground="{StaticResource Hush.Text.Primary.Brush}"
                           Margin="0 0 0 24" />
+
+                <!-- ─ Section: Post-processing ───────────────────────────── -->
+                <TextBlock Text="POST-PROCESSING"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           LetterSpacing="2"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 10" />
+
+                <CheckBox IsChecked="{Binding PostProcessingEnabled}"
+                          FontSize="13"
+                          Foreground="{StaticResource Hush.Text.Primary.Brush}"
+                          Margin="0 0 0 2">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="LLM cleanup after dictation"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Rewrites transcript via qwen3-0.6b before typing"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                </CheckBox>
+
+                <!-- Prompt picker — only meaningful when post-processing is on -->
+                <Grid ColumnDefinitions="160,*" Margin="0 8 0 4"
+                      IsEnabled="{Binding PostProcessingEnabled}">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Cleanup style"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="System prompt used"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{Binding AvailablePrompts}"
+                              SelectedItem="{Binding SelectedPrompt}"
+                              DisplayMemberBinding="{Binding Name}"
+                              HorizontalAlignment="Stretch"
+                              ToolTip.Tip="The system prompt sent to the LLM with your raw transcript." />
+                </Grid>
+
+                <TextBlock FontSize="10"
+                           Foreground="{StaticResource Hush.Text.Muted.Brush}"
+                           Margin="0 0 0 24"
+                           TextWrapping="Wrap">
+                    <Run Text="⚠ Only active when " />
+                    <Run Text="Stream text while speaking" FontWeight="SemiBold" />
+                    <Run Text=" is off. Has no effect in streaming mode." />
+                </TextBlock>
 
                 <!-- ─ Section: Appearance ────────────────────────────────── -->
                 <TextBlock Text="APPEARANCE"

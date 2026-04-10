@@ -3,6 +3,7 @@
 using System.Text;
 using Hush.Core.Audio;
 using Hush.Core.Output;
+using Hush.Core.PostProcessing;
 using Hush.Core.Transcription;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -26,11 +27,13 @@ public sealed class DictationSession : IDictationSession
     private readonly ITextOutputService _output;
     private readonly ILogger<DictationSession> _logger;
     private readonly Action<float> _audioLevelForwarder;
+    private readonly IPostProcessingService? _postProcessor;
 
     private Task? _transcriptionLoop;
     private CancellationTokenSource? _loopCts;
     private bool _disposed;
     private bool _showSpinner;
+    private string? _postProcessingPrompt;
     private int _sessionErrorRaised;
 
     private static readonly char[] SpinnerFrames = { '|', '/', '\u2014', '\\' };
@@ -40,12 +43,14 @@ public sealed class DictationSession : IDictationSession
         ITranscriptionEngine engine,
         IAudioCaptureService capture,
         ITextOutputService output,
-        ILogger<DictationSession>? logger = null)
+        ILogger<DictationSession>? logger = null,
+        IPostProcessingService? postProcessor = null)
     {
         _engine = engine;
         _capture = capture;
         _output = output;
         _logger = logger ?? NullLogger<DictationSession>.Instance;
+        _postProcessor = postProcessor;
         _audioLevelForwarder = level => OnAudioLevel?.Invoke(level);
     }
 
@@ -65,11 +70,14 @@ public sealed class DictationSession : IDictationSession
     public event Action<Exception>? OnSessionError;
 
     /// <inheritdoc/>
-    public async Task StartAsync(string language = "en", bool streamingCommit = true, bool showSpinner = false, CancellationToken cancellationToken = default)
+    public async Task StartAsync(string language = "en", bool streamingCommit = true,
+        bool showSpinner = false, string? postProcessingPrompt = null,
+        CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         _showSpinner = showSpinner;
+        _postProcessingPrompt = postProcessingPrompt;
         _sessionErrorRaised = 0;
 
         // Capture in a local so post-await code is safe even if StopAsync
@@ -235,6 +243,14 @@ public sealed class DictationSession : IDictationSession
         var finalText = accumulatedText.ToString();
         if (!string.IsNullOrEmpty(finalText))
         {
+            // Optional LLM post-processing pass (spinner mode only).
+            if (_postProcessor is not null && !string.IsNullOrEmpty(_postProcessingPrompt))
+            {
+                var rewritten = await _postProcessor.RewriteAsync(finalText, _postProcessingPrompt, CancellationToken.None);
+                if (!string.IsNullOrEmpty(rewritten))
+                    finalText = rewritten;
+            }
+
             try
             {
                 await _output.TypeTextAsync(finalText, CancellationToken.None);

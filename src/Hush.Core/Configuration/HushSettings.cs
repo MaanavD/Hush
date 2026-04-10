@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using Hush.Core.PostProcessing;
+
 namespace Hush.Core.Configuration;
 
 /// <summary>
@@ -50,4 +52,41 @@ public sealed class HushSettings
     /// Audio input device index. <c>-1</c> means system default.
     /// </summary>
     public int MicrophoneDeviceIndex { get; set; } = -1;
+
+    /// <summary>Whether to run an LLM cleanup pass on the accumulated transcript in spinner mode.</summary>
+    public bool PostProcessingEnabled { get; set; } = true;
+
+    /// <summary>Foundry Local model alias used for post-processing.</summary>
+    public string PostProcessingModel { get; set; } = "qwen3-0.6b";
+
+    /// <summary>User-defined prompts added to the built-in set.</summary>
+    public List<LlmPrompt> PostProcessingPrompts { get; set; } = new();
+
+    /// <summary>
+    /// Id of the active <see cref="LlmPrompt"/>. <see langword="null"/> falls back
+    /// to <see cref="BuiltInPrompts"/>[0].
+    /// </summary>
+    public string? ActivePostProcessingPromptId { get; set; }
+
+    public static IReadOnlyList<LlmPrompt> BuiltInPrompts { get; } = new LlmPrompt[]
+    {
+        new() { Id = "fix-punctuation", Name = "Fix punctuation & grammar",
+                Prompt = "Fix punctuation, capitalization, and grammar. Return only the corrected text. Do not add commentary.", IsBuiltIn = true },
+        new() { Id = "formal-prose", Name = "Rewrite as formal prose",
+                Prompt = "Rewrite the text as formal, professional prose. Return only the result. Do not add commentary.", IsBuiltIn = true },
+        new() { Id = "bullet-list", Name = "Convert to bullet list",
+                Prompt = "Convert the text into a concise bullet list, one idea per item. Return only the list. Do not add commentary.", IsBuiltIn = true },
+    };
+
+    /// <summary>All prompts: built-ins first, then user-defined.</summary>
+    public IReadOnlyList<LlmPrompt> AllPrompts =>
+        BuiltInPrompts.Concat(PostProcessingPrompts).ToList();
+
+    /// <summary>
+    /// Returns the active prompt, or <see cref="BuiltInPrompts"/>[0] as fallback
+    /// when <see cref="ActivePostProcessingPromptId"/> is null or unrecognised.
+    /// </summary>
+    public LlmPrompt GetActivePrompt() =>
+        AllPrompts.FirstOrDefault(p => p.Id == ActivePostProcessingPromptId)
+        ?? BuiltInPrompts[0];
 }

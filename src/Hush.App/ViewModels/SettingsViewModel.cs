@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Hush.Core.Audio;
 using Hush.Core.Configuration;
+using Hush.Core.PostProcessing;
 
 namespace Hush.App.ViewModels;
 
@@ -24,8 +25,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _streamingCommit;
     [ObservableProperty] private bool _autoStart;
     [ObservableProperty] private int _selectedMicrophoneIndex;
+    [ObservableProperty] private bool _postProcessingEnabled;
+    [ObservableProperty] private LlmPrompt? _selectedPrompt;
 
     public ObservableCollection<MicrophoneDevice> AvailableMicrophones { get; } = new();
+    public ObservableCollection<LlmPrompt> AvailablePrompts { get; } = new();
 
     public SettingsViewModel(HushSettings settings)
     {
@@ -39,9 +43,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         _soundEffects = settings.SoundEffects;
         _streamingCommit = settings.StreamingCommit;
         _autoStart = settings.AutoStart;
+        _postProcessingEnabled = settings.PostProcessingEnabled;
 
         RefreshMicrophones();
         _selectedMicrophoneIndex = FindMicIndex(settings.MicrophoneDeviceIndex);
+
+        RefreshPrompts(settings);
     }
 
     public void RefreshMicrophones()
@@ -53,6 +60,16 @@ public sealed partial class SettingsViewModel : ObservableObject
 #else
         AvailableMicrophones.Add(new MicrophoneDevice(-1, "System Default"));
 #endif
+    }
+
+    private void RefreshPrompts(HushSettings settings)
+    {
+        AvailablePrompts.Clear();
+        foreach (var p in settings.AllPrompts)
+            AvailablePrompts.Add(p);
+
+        SelectedPrompt = AvailablePrompts.FirstOrDefault(p => p.Id == settings.ActivePostProcessingPromptId)
+            ?? AvailablePrompts.FirstOrDefault();
     }
 
     private int FindMicIndex(int deviceIndex)
@@ -80,6 +97,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.MicrophoneDeviceIndex = SelectedMicrophoneIndex >= 0 && SelectedMicrophoneIndex < AvailableMicrophones.Count
             ? AvailableMicrophones[SelectedMicrophoneIndex].DeviceIndex
             : -1;
+        _settings.PostProcessingEnabled = PostProcessingEnabled;
+        _settings.ActivePostProcessingPromptId = SelectedPrompt?.Id;
     }
 }
 
@@ -87,3 +106,4 @@ public sealed record MicrophoneDevice(int DeviceIndex, string Name)
 {
     public override string ToString() => Name;
 }
+

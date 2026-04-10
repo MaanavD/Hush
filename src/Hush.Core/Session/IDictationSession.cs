@@ -47,8 +47,15 @@ public interface IDictationSession : IAsyncDisposable
     /// in the focused application while dictation is active. All committed text
     /// is buffered and typed in one shot after the session ends.
     /// </param>
+    /// <param name="postProcessingPrompt">
+    /// When non-null and <paramref name="showSpinner"/> is <see langword="true"/>,
+    /// the accumulated transcript is passed through the LLM post-processor using
+    /// this system prompt before being typed into the target application.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task StartAsync(string language = "en", bool streamingCommit = true, bool showSpinner = false, CancellationToken cancellationToken = default);
+    Task StartAsync(string language = "en", bool streamingCommit = true,
+        bool showSpinner = false, string? postProcessingPrompt = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Stops microphone capture, signals the transcription session to finalise,

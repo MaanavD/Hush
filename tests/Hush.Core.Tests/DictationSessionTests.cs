@@ -2,6 +2,7 @@
 
 using Hush.Core.Audio;
 using Hush.Core.Output;
+using Hush.Core.PostProcessing;
 using Hush.Core.Session;
 using Hush.Core.Transcription;
 using Moq;
@@ -232,6 +233,164 @@ public sealed class DictationSessionTests
         outputMock.Verify(o => o.TypeTextAsync("buffered chunk", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
 
         await session.StopAsync();
+    }
+
+    // ── Spinner mode + post-processing tests ─────────────────────────────
+
+    [Fact]
+    public async Task SpinnerMode_WithPostProcessor_ReplacesAccumulatedTextWithRewritten()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var postProcessorMock = new Mock<IPostProcessingService>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[]
+            {
+                new TranscriptionResult("raw text", "raw text", IsFinal: true)
+            }.ToAsyncEnumerable());
+
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        postProcessorMock
+            .Setup(p => p.RewriteAsync("raw text", "Fix punctuation.", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("Raw text.");
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object,
+            postProcessor: postProcessorMock.Object);
+
+        await session.StartAsync(showSpinner: true, postProcessingPrompt: "Fix punctuation.");
+        await session.StopAsync();
+
+        // Should type the rewritten text, NOT the raw text.
+        outputMock.Verify(o => o.TypeTextAsync("Raw text.", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
+        outputMock.Verify(o => o.TypeTextAsync("raw text", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SpinnerMode_WithPostProcessorReturningNull_TypesRawText()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var postProcessorMock = new Mock<IPostProcessingService>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[]
+            {
+                new TranscriptionResult("fallback text", "fallback text", IsFinal: true)
+            }.ToAsyncEnumerable());
+
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        // Processor returns null (failure/unavailable).
+        postProcessorMock
+            .Setup(p => p.RewriteAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object,
+            postProcessor: postProcessorMock.Object);
+
+        await session.StartAsync(showSpinner: true, postProcessingPrompt: "Fix punctuation.");
+        await session.StopAsync();
+
+        // Should fall back to raw text.
+        outputMock.Verify(o => o.TypeTextAsync("fallback text", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SpinnerMode_WithNullPostProcessor_TypesRawTextUnmodified()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[]
+            {
+                new TranscriptionResult("raw unmodified", "raw unmodified", IsFinal: true)
+            }.ToAsyncEnumerable());
+
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        // No post-processor injected.
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
+
+        await session.StartAsync(showSpinner: true, postProcessingPrompt: "Fix punctuation.");
+        await session.StopAsync();
+
+        outputMock.Verify(o => o.TypeTextAsync("raw unmodified", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SpinnerMode_WithEmptyPromptString_SkipsPostProcessing()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var postProcessorMock = new Mock<IPostProcessingService>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[]
+            {
+                new TranscriptionResult("skip me", "skip me", IsFinal: true)
+            }.ToAsyncEnumerable());
+
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object,
+            postProcessor: postProcessorMock.Object);
+
+        // Empty prompt string → skip post-processing.
+        await session.StartAsync(showSpinner: true, postProcessingPrompt: "");
+        await session.StopAsync();
+
+        postProcessorMock.Verify(
+            p => p.RewriteAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        outputMock.Verify(o => o.TypeTextAsync("skip me", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
     }
 }
 
