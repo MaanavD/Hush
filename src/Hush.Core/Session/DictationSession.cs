@@ -105,6 +105,15 @@ public sealed class DictationSession : IDictationSession
     }
 
     // ── Streaming path: commit only stable deltas ────────────────────────
+    //
+    // A brief settle delay is inserted between backspace events and the
+    // immediately-following text characters. Apps that route keyboard input
+    // through an async pipeline (Notepad/WinUI3 via TSF/XAML, some UWP apps)
+    // may not have finished processing VK_BACK messages by the time SendInput
+    // returns, causing the replacement text to land in the wrong cursor
+    // position. A ~15 ms pause is imperceptible to the user but long enough
+    // for a single message-pump cycle in all observed targets.
+    private const int BackspaceSettleMs = 15;
 
     private async Task StreamingTranscriptionLoopAsync(CancellationToken cancellationToken)
     {
@@ -118,7 +127,12 @@ public sealed class DictationSession : IDictationSession
                     OnInterimText?.Invoke(targetText);
 
                 if (result.BackspaceCount > 0)
+                {
                     await _output.SendBackspacesAsync(result.BackspaceCount, cancellationToken, skipModifierRestore: true);
+                    // Give the target app's input pipeline time to process the
+                    // backspace events before the replacement characters arrive.
+                    await Task.Delay(BackspaceSettleMs, cancellationToken);
+                }
 
                 if (!string.IsNullOrEmpty(result.CommittedDelta))
                 {

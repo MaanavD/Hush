@@ -130,7 +130,9 @@ internal static class WindowsKeystrokeTyper
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(ushort vKey);
 
-    private const ushort VK_BACK = 0x08;
+    private const ushort VK_BACK      = 0x08;
+    private const ushort SC_BACK      = 0x0E;   // Hardware scan code for backspace key
+    private const uint KEYEVENTF_SCANCODE = 0x0008;
 
     internal static Task TypeAsync(string text, CancellationToken cancellationToken, bool skipModifierRestore = false)
     {
@@ -203,8 +205,8 @@ internal static class WindowsKeystrokeTyper
 
             for (int i = 0; i < count; i++)
             {
-                inputs[idx++] = MakeVkInput(VK_BACK, 0);
-                inputs[idx++] = MakeVkInput(VK_BACK, KEYEVENTF_KEYUP);
+                inputs[idx++] = MakeBackspaceInput(0);
+                inputs[idx++] = MakeBackspaceInput(KEYEVENTF_KEYUP);
             }
 
             if (!skipModifierRestore)
@@ -320,6 +322,24 @@ internal static class WindowsKeystrokeTyper
                 ScanCode = 0,
                 Flags = flags,
                 ExtraInfo = (nint)WindowsInputCoordinator.InjectedExtraInfo,
+            }
+        }
+    };
+
+    // Backspace is sent with both VirtualKey AND ScanCode so that TSF-aware apps
+    // (WinUI3 Notepad, UWP TextBox, etc.) see a fully-formed hardware-like event
+    // and don't need to infer the character from the scan code alone.
+    private static INPUT MakeBackspaceInput(uint extraFlags) => new()
+    {
+        Type = INPUT_KEYBOARD,
+        Union = new INPUTUNION
+        {
+            Keyboard = new KEYBDINPUT
+            {
+                VirtualKey = VK_BACK,
+                ScanCode   = SC_BACK,
+                Flags      = extraFlags,
+                ExtraInfo  = (nint)WindowsInputCoordinator.InjectedExtraInfo,
             }
         }
     };
