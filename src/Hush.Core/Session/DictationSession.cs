@@ -30,11 +30,13 @@ public sealed class DictationSession : IDictationSession
     private readonly Action<float> _audioLevelForwarder;
     private readonly IReadOnlyList<TextSubstitution>? _substitutions;
     private readonly ITranscriptBuffer? _transcriptBuffer;
+    private readonly IPostProcessingService? _postProcessor;
 
     private Task? _transcriptionLoop;
     private CancellationTokenSource? _loopCts;
     private bool _disposed;
     private bool _showSpinner;
+    private string? _postProcessingPrompt;
     private int _sessionErrorRaised;
     private AutoSubmitKey _autoSubmitKey;
     private readonly StringBuilder _sessionAccumulated = new();
@@ -48,7 +50,8 @@ public sealed class DictationSession : IDictationSession
         ITextOutputService output,
         ILogger<DictationSession>? logger = null,
         IReadOnlyList<TextSubstitution>? substitutions = null,
-        ITranscriptBuffer? transcriptBuffer = null)
+        ITranscriptBuffer? transcriptBuffer = null,
+        IPostProcessingService? postProcessor = null)
     {
         _engine = engine;
         _capture = capture;
@@ -56,6 +59,7 @@ public sealed class DictationSession : IDictationSession
         _logger = logger ?? NullLogger<DictationSession>.Instance;
         _substitutions = substitutions;
         _transcriptBuffer = transcriptBuffer;
+        _postProcessor = postProcessor;
         _audioLevelForwarder = level => OnAudioLevel?.Invoke(level);
     }
 
@@ -86,6 +90,7 @@ public sealed class DictationSession : IDictationSession
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         _showSpinner = showSpinner;
+        _postProcessingPrompt = postProcessingPrompt;
         _sessionErrorRaised = 0;
         _autoSubmitKey = autoSubmitKey;
         _sessionAccumulated.Clear();
@@ -260,6 +265,14 @@ public sealed class DictationSession : IDictationSession
         _sessionAccumulated.Append(finalText);
         if (!string.IsNullOrEmpty(finalText))
         {
+            // Optional LLM post-processing pass (spinner mode only).
+            if (_postProcessor is not null && !string.IsNullOrEmpty(_postProcessingPrompt))
+            {
+                var rewritten = await _postProcessor.RewriteAsync(finalText, _postProcessingPrompt, CancellationToken.None);
+                if (!string.IsNullOrEmpty(rewritten))
+                    finalText = rewritten;
+            }
+
             try
             {
                 await _output.TypeTextAsync(finalText, CancellationToken.None);

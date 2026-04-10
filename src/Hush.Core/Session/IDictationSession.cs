@@ -50,8 +50,9 @@ public interface IDictationSession : IAsyncDisposable
     /// is buffered and typed in one shot after the session ends.
     /// </param>
     /// <param name="postProcessingPrompt">
-    /// Optional LLM post-processing prompt. Reserved for <c>feature/llm-postprocessing</c>;
-    /// pass <see langword="null"/> to skip LLM post-processing.
+    /// When non-null and <paramref name="showSpinner"/> is <see langword="true"/>,
+    /// the accumulated transcript is passed through the LLM post-processor using
+    /// this system prompt before being typed into the target application.
     /// </param>
     /// <param name="autoSubmitKey">Key combination to send after dictation ends.</param>
     /// <param name="cancellationToken">Cancellation token.</param>

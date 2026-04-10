@@ -106,7 +106,7 @@ namespace Hush.App.ViewModels
             };
 
             // Prompts — built-ins first, then user-defined
-            foreach (var p in BuiltInPromptStubs.All)
+            foreach (var p in HushSettings.BuiltInPrompts)
                 AllPrompts.Add(new LlmPromptViewModel(p.Id, p.Name, p.Prompt, isBuiltIn: true));
             foreach (var p in settings.PostProcessingPrompts)
                 AllPrompts.Add(new LlmPromptViewModel(p.Id, p.Name, p.Prompt, isBuiltIn: false));
@@ -233,7 +233,7 @@ namespace Hush.App.ViewModels
             // Prompts (user-defined only; built-ins are hard-coded stubs)
             _settings.PostProcessingPrompts = AllPrompts
                 .Where(p => p.IsUserDefined)
-                .Select(p => new HushPromptEntry { Id = p.Id, Name = p.Name, Prompt = p.Prompt })
+                .Select(p => new LlmPrompt { Id = p.Id, Name = p.Name, Prompt = p.Prompt, IsBuiltIn = false })
                 .ToList();
 
             // Dictionary
@@ -280,38 +280,4 @@ namespace Hush.App.ViewModels
         public override string ToString() => Name;
     }
 
-    // Stubs for types from sibling PRs
-    // TODO: Remove once feature/llm-postprocessing and feature/dictionary-buffer-extras merge into master.
-#if !HUSH_CORE_POSTPROCESSING
-    internal static class BuiltInPromptStubs
-    {
-        public static IReadOnlyList<Hush.Core.PostProcessing.LlmPrompt> All { get; } = new[]
-        {
-            new Hush.Core.PostProcessing.LlmPrompt
-                { Id = "fix-punctuation", Name = "Fix punctuation & grammar",
-                  Prompt = "Fix punctuation, capitalization, and grammar. Return only the corrected text.", IsBuiltIn = true },
-            new Hush.Core.PostProcessing.LlmPrompt
-                { Id = "formal-prose",    Name = "Rewrite as formal prose",
-                  Prompt = "Rewrite as formal, professional prose. Return only the result.", IsBuiltIn = true },
-            new Hush.Core.PostProcessing.LlmPrompt
-                { Id = "bullet-list",     Name = "Convert to bullet list",
-                  Prompt = "Convert to a concise bullet list. Return only the list.", IsBuiltIn = true },
-        };
-    }
-#endif
 }
-
-// Stub for LlmPrompt — real type coming from feature/llm-postprocessing PR.
-// TODO: Remove once feature/llm-postprocessing merges into master.
-#if !HUSH_CORE_POSTPROCESSING
-namespace Hush.Core.PostProcessing
-{
-    public sealed record LlmPrompt
-    {
-        public string Id { get; init; } = "";
-        public string Name { get; init; } = "";
-        public string Prompt { get; init; } = "";
-        public bool IsBuiltIn { get; init; }
-    }
-}
-#endif

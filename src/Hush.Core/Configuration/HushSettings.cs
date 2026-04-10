@@ -17,7 +17,7 @@ public sealed class HushSettings
     /// <summary>Global hotkey combination, e.g. <c>"Ctrl+Shift+H"</c>.</summary>
     public string Hotkey { get; set; } = "Ctrl+H";
 
-/// <summary>Language hint passed to Foundry Local. Accepts ISO 639-1 codes like <c>"en"</c> and locale tags like <c>"en-US"</c>.</summary>
+    /// <summary>Language hint passed to Foundry Local. Accepts ISO 639-1 codes like <c>"en"</c> and locale tags like <c>"en-US"</c>.</summary>
     public string Language { get; set; } = "en";
 
     /// <summary>Foundry Local model alias to use for transcription.</summary>
@@ -78,7 +78,29 @@ public sealed class HushSettings
     public string? ActivePostProcessingPromptId { get; set; }
 
     /// <summary>User-defined prompt templates for LLM rewriting.</summary>
-    public List<HushPromptEntry> PostProcessingPrompts { get; set; } = new();
+    public List<LlmPrompt> PostProcessingPrompts { get; set; } = new();
+
+    public static IReadOnlyList<LlmPrompt> BuiltInPrompts { get; } = new LlmPrompt[]
+    {
+        new() { Id = "fix-punctuation", Name = "Fix punctuation & grammar",
+                Prompt = "Fix punctuation, capitalization, and grammar. Return only the corrected text. Do not add commentary.", IsBuiltIn = true },
+        new() { Id = "formal-prose", Name = "Rewrite as formal prose",
+                Prompt = "Rewrite the text as formal, professional prose. Return only the result. Do not add commentary.", IsBuiltIn = true },
+        new() { Id = "bullet-list", Name = "Convert to bullet list",
+                Prompt = "Convert the text into a concise bullet list, one idea per item. Return only the list. Do not add commentary.", IsBuiltIn = true },
+    };
+
+    /// <summary>All prompts: built-ins first, then user-defined.</summary>
+    public IReadOnlyList<LlmPrompt> AllPrompts =>
+        BuiltInPrompts.Concat(PostProcessingPrompts).ToList();
+
+    /// <summary>
+    /// Returns the active prompt, or <see cref="BuiltInPrompts"/>[0] as fallback
+    /// when <see cref="ActivePostProcessingPromptId"/> is null or unrecognised.
+    /// </summary>
+    public LlmPrompt GetActivePrompt() =>
+        AllPrompts.FirstOrDefault(p => p.Id == ActivePostProcessingPromptId)
+        ?? BuiltInPrompts[0];
 }
 
 /// <summary>Persisted user-defined prompt template entry.</summary>

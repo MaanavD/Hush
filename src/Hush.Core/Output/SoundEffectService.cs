@@ -46,6 +46,18 @@ public sealed class SoundEffectService : ISoundEffectService
 #endif
     }
 
+    /// <inheritdoc/>
+    public Task PlayProcessingCompleteAsync(CancellationToken cancellationToken = default)
+    {
+#if WINDOWS
+        // Ascending two-note chime: 880 Hz (60 ms) → 1320 Hz (80 ms).
+        // Distinct from start (880→1109) and stop (660→523).
+        return PlayChimeAsync([880.0, 1320.0], [60, 80]);
+#else
+        return Task.CompletedTask;
+#endif
+    }
+
 #if WINDOWS
     /// <summary>
     /// Plays a multi-note chime by concatenating sine-wave segments and awaiting
