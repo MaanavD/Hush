@@ -4,9 +4,10 @@
         x:Class="Hush.App.Views.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
         Title="Hush — Settings"
-        Width="460" Height="650"
+        Width="460" Height="800"
+        MinHeight="610" MaxHeight="1100"
         WindowStartupLocation="CenterScreen"
-        CanResize="False"
+        CanResize="True"
         FontFamily="{StaticResource Hush.Font}">
 
     <!--
@@ -49,34 +50,24 @@
 
                 <!-- Hotkey -->
                 <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
-                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                        <TextBlock Text="Global hotkey"
-                                   FontSize="13"
-                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Orientation="Vertical">
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <Border Width="8" Height="8" CornerRadius="4"
+                                    Background="{StaticResource Hush.Accent.Brush}"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Text="Global hotkey"
+                                       FontSize="13"
+                                       Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        </StackPanel>
                         <TextBlock Text="Hold to dictate (raw)"
                                    FontSize="10"
-                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                                   Margin="14 0 0 0" />
                     </StackPanel>
                     <TextBox Grid.Column="1"
                              Text="{Binding Hotkey}"
                              Watermark="Ctrl+H"
                              ToolTip.Tip="Hotkey combination to hold for push-to-talk dictation. Changes take effect as soon as you save." />
-                </Grid>
-
-                <!-- Clean hotkey -->
-                <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
-                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                        <TextBlock Text="Clean hotkey"
-                                   FontSize="13"
-                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
-                        <TextBlock Text="Hold for clean mode"
-                                   FontSize="10"
-                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
-                    </StackPanel>
-                    <TextBox Grid.Column="1"
-                             Text="{Binding CleanHotkey}"
-                             Watermark="Alt+H"
-                             ToolTip.Tip="Hotkey for clean-mode dictation: records audio, then rewrites it with an LLM before committing. Uses spinner mode while processing." />
                 </Grid>
 
                 <!-- Language -->
@@ -111,6 +102,74 @@
                               HorizontalAlignment="Stretch"
                               ToolTip.Tip="Choose a specific microphone or leave on System Default. Takes effect on next dictation." />
                 </Grid>
+
+                <!-- ─ Section: Clean Mode ────────────────────────────────── -->
+                <TextBlock Text="CLEAN MODE"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           LetterSpacing="2"
+                           Foreground="{StaticResource Hush.CleanMode.Brush}"
+                           Margin="0 0 0 10" />
+
+                <!-- Clean hotkey -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" Orientation="Vertical">
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <Border Width="8" Height="8" CornerRadius="4"
+                                    Background="{StaticResource Hush.CleanMode.Brush}"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Text="Clean hotkey"
+                                       FontSize="13"
+                                       Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        </StackPanel>
+                        <TextBlock Text="Runs LLM rewrite"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                                   Margin="14 0 0 0" />
+                    </StackPanel>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding CleanHotkey}"
+                             Watermark="Alt+H"
+                             ToolTip.Tip="Hold this key for clean-mode dictation. Audio is recorded, then an LLM rewrites the transcript before committing. Max 2 keypresses (1 modifier + 1 key)." />
+                </Grid>
+
+                <!-- LLM rewrite toggle -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="LLM rewrite"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="On clean-mode sessions"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <ToggleSwitch Grid.Column="1"
+                                  IsChecked="{Binding PostProcessingEnabled}"
+                                  HorizontalAlignment="Left"
+                                  VerticalAlignment="Center"
+                                  OffContent="" OnContent="" />
+                </Grid>
+
+                <!-- LLM model -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 6">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="LLM model"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Foundry Local alias"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding PostProcessingModel}"
+                             Watermark="qwen3-0.6b"
+                             IsEnabled="{Binding PostProcessingEnabled}"
+                             ToolTip.Tip="Foundry Local model alias for LLM rewriting. Must be a small chat model (~400 MB)." />
+                </Grid>
+                <TextBlock Text="Model loads on first clean-mode use. Requires ~400 MB disk space."
+                           FontSize="10"
+                           Foreground="{StaticResource Hush.Text.Muted.Brush}"
+                           Margin="0 0 0 24" />
 
                 <!-- ─ Section: Model ─────────────────────────────────────── -->
                 <TextBlock Text="MODEL"

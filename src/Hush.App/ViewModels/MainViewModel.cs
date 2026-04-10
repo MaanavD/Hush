@@ -312,9 +312,10 @@ public sealed partial class MainViewModel : ObservableObject
             if (_settings.SoundEffects)
                 _ = _soundEffects.PlayStartAsync();
 
-            // postProcessingPrompt wired up once feature/llm-postprocessing merges.
-            // For now, passes showSpinner: true — spinner mode without LLM rewrite.
-            // TODO: wire from settings once feature/llm-postprocessing merges
+            // postProcessingPrompt will be wired once feature/llm-postprocessing merges.
+            // _settings.PostProcessingEnabled and _settings.PostProcessingModel are already
+            // persisted and ready to pass once IDictationSession.StartAsync gains the parameter.
+            // TODO: pass postProcessingPrompt: _settings.PostProcessingEnabled ? GetActivePrompt() : null
             await _dictationSession.StartAsync(
                 _settings.Language,
                 streamingCommit: false,

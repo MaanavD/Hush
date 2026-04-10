@@ -17,6 +17,12 @@ public sealed class HushSettings
     /// </summary>
     public string CleanHotkey { get; set; } = "Alt+H";
 
+    /// <summary>Whether to run an LLM rewrite pass in clean-mode sessions.</summary>
+    public bool PostProcessingEnabled { get; set; } = true;
+
+    /// <summary>Foundry Local model alias used for LLM rewriting in clean mode.</summary>
+    public string PostProcessingModel { get; set; } = "qwen3-0.6b";
+
 /// <summary>Language hint passed to Foundry Local. Accepts ISO 639-1 codes like <c>"en"</c> and locale tags like <c>"en-US"</c>.</summary>
     public string Language { get; set; } = "en";
 
