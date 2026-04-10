@@ -4,9 +4,10 @@
         x:Class="Hush.App.Views.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
         Title="Hush — Settings"
-        Width="460" Height="610"
+        Width="460" Height="860"
+        MinHeight="610" MaxHeight="1100"
         WindowStartupLocation="CenterScreen"
-        CanResize="False"
+        CanResize="True"
         FontFamily="{StaticResource Hush.Font}">
 
     <!--
@@ -19,7 +20,7 @@
     -->
     <Grid RowDefinitions="Auto,*,Auto">
 
-        <!-- ── Header ────────────────────────────────────────────────────── -->
+        <!-- Header -->
         <Border Grid.Row="0"
                 Padding="28 22 28 16"
                 BorderBrush="{StaticResource Hush.Border.Brush}"
@@ -35,11 +36,11 @@
             </StackPanel>
         </Border>
 
-        <!-- ── Scrollable content ────────────────────────────────────────── -->
+        <!-- Scrollable content -->
         <ScrollViewer Grid.Row="1" Margin="0">
             <StackPanel Margin="28 20 28 4" Spacing="0">
 
-                <!-- ─ Section: Input ─────────────────────────────────────── -->
+                <!-- Section: Input -->
                 <TextBlock Text="INPUT"
                            FontSize="9"
                            FontWeight="Bold"
@@ -96,7 +97,194 @@
                               ToolTip.Tip="Choose a specific microphone or leave on System Default. Takes effect on next dictation." />
                 </Grid>
 
-                <!-- ─ Section: Model ─────────────────────────────────────── -->
+                <!-- Section: Clean Mode -->
+                <TextBlock Text="CLEAN MODE"
+                           FontSize="9" FontWeight="Bold" LetterSpacing="2"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 10" />
+
+                <!-- Clean hotkey -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Clean hotkey"
+                                   FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Runs LLM rewrite"
+                                   FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding CleanHotkey}"
+                             Watermark="Alt+H"
+                             ToolTip.Tip="Hold this key for clean-mode dictation. The full transcript is processed by a small language model before being typed. Max 2 keypresses (1 modifier + 1 key)." />
+                </Grid>
+
+                <!-- Post-processing toggle -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="LLM rewrite"
+                                   FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="On clean-mode sessions"
+                                   FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <ToggleSwitch Grid.Column="1"
+                                  IsChecked="{Binding PostProcessingEnabled}"
+                                  HorizontalAlignment="Left"
+                                  VerticalAlignment="Center"
+                                  OffContent="" OnContent="" />
+                </Grid>
+
+                <!-- LLM model -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 6">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="LLM model"
+                                   FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Foundry Local alias"
+                                   FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding PostProcessingModel}"
+                             Watermark="qwen3-0.6b"
+                             ToolTip.Tip="Foundry Local model alias used for LLM rewriting. Must be a small chat model." />
+                </Grid>
+                <TextBlock Text="Model loads on first clean-mode use. Requires ~400 MB disk space."
+                           FontSize="10" Foreground="{StaticResource Hush.Text.Muted.Brush}"
+                           Margin="0 0 0 24" />
+
+                <!-- Section: Prompts -->
+                <TextBlock Text="PROMPTS"
+                           FontSize="9" FontWeight="Bold" LetterSpacing="2"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 10" />
+
+                <TextBlock Text="Templates used by clean-mode LLM rewriting."
+                           FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 8" />
+
+                <!-- Prompt list -->
+                <ListBox ItemsSource="{Binding AllPrompts}"
+                         SelectedItem="{Binding SelectedPrompt}"
+                         MaxHeight="180"
+                         Margin="0 0 0 8">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:LlmPromptViewModel">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding Name}"
+                                           FontSize="12"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1"
+                                           Text="🔒"
+                                           FontSize="10"
+                                           IsVisible="{Binding IsBuiltIn}"
+                                           Opacity="0.4"
+                                           VerticalAlignment="Center"
+                                           Margin="8 0 0 0" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- Action buttons -->
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0 0 0 8">
+                    <Button Content="+ Add"
+                            Command="{Binding AddPromptCommand}"
+                            Padding="10 5" FontSize="12" />
+                    <Button Content="Edit"
+                            Command="{Binding EditPromptCommand}"
+                            CommandParameter="{Binding SelectedPrompt}"
+                            IsVisible="{Binding SelectedPrompt.IsUserDefined}"
+                            Padding="10 5" FontSize="12" />
+                    <Button Content="Remove"
+                            Command="{Binding DeletePromptCommand}"
+                            CommandParameter="{Binding SelectedPrompt}"
+                            IsVisible="{Binding SelectedPrompt.IsUserDefined}"
+                            Padding="10 5" FontSize="12" />
+                </StackPanel>
+
+                <!-- Inline editor -->
+                <Border IsVisible="{Binding IsEditingPrompt}"
+                        BorderBrush="{StaticResource Hush.Border.Brush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="12"
+                        Margin="0 0 0 8">
+                    <StackPanel Spacing="8">
+                        <TextBox Text="{Binding EditingPromptName}"
+                                 Watermark="Prompt name"
+                                 FontSize="12" />
+                        <TextBox Text="{Binding EditingPromptText}"
+                                 Watermark="Fix punctuation, capitalization, and grammar. Return only the corrected text."
+                                 AcceptsReturn="True"
+                                 MinHeight="80"
+                                 FontSize="12" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Save"
+                                    Command="{Binding SavePromptCommand}"
+                                    Padding="12 6" FontSize="12" />
+                            <Button Content="Cancel"
+                                    Command="{Binding CancelEditCommand}"
+                                    Padding="12 6" FontSize="12" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Spacer to next section -->
+                <Border Height="1" Margin="0 4 0 20" />
+
+                <!-- Section: Dictionary -->
+                <TextBlock Text="DICTIONARY"
+                           FontSize="9" FontWeight="Bold" LetterSpacing="2"
+                           Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 10" />
+
+                <TextBlock Text="Words the transcription model gets wrong consistently."
+                           FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           Margin="0 0 0 8" />
+
+                <!-- Empty state -->
+                <TextBlock Text="No substitutions yet. Example: foundry local → Foundry Local"
+                           FontSize="11" Foreground="{StaticResource Hush.Text.Muted.Brush}"
+                           IsVisible="{Binding !HasCustomSubstitutions}"
+                           Margin="0 0 0 8" />
+
+                <!-- Rules list -->
+                <ItemsControl ItemsSource="{Binding CustomSubstitutions}"
+                              IsVisible="{Binding HasCustomSubstitutions}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SubstitutionRuleViewModel">
+                            <Grid ColumnDefinitions="*,Auto,*,Auto" Margin="0 0 0 6">
+                                <TextBox Grid.Column="0"
+                                         Text="{Binding Match}"
+                                         Watermark="Say this"
+                                         FontSize="12" />
+                                <TextBlock Grid.Column="1"
+                                           Text="→"
+                                           FontSize="12"
+                                           Margin="6 0"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                                <TextBox Grid.Column="2"
+                                         Text="{Binding Replace}"
+                                         Watermark="Type this"
+                                         FontSize="12" />
+                                <Button Grid.Column="3"
+                                        Content="✕"
+                                        Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveSubstitutionCommand}"
+                                        CommandParameter="{Binding}"
+                                        Padding="6 4"
+                                        Margin="6 0 0 0"
+                                        FontSize="11" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Button Content="+ Add rule"
+                        Command="{Binding AddSubstitutionCommand}"
+                        Padding="10 5"
+                        FontSize="12"
+                        Margin="0 4 0 24" />
+
+                <!-- Section: Model -->
                 <TextBlock Text="MODEL"
                            FontSize="9"
                            FontWeight="Bold"
@@ -124,7 +312,7 @@
                            Foreground="{StaticResource Hush.Text.Muted.Brush}"
                            Margin="0 0 0 24" />
 
-                <!-- ─ Section: Behavior ──────────────────────────────────── -->
+                <!-- Section: Behavior -->
                 <TextBlock Text="BEHAVIOR"
                            FontSize="9"
                            FontWeight="Bold"
@@ -154,9 +342,39 @@
                           IsChecked="{Binding AutoStart}"
                           FontSize="13"
                           Foreground="{StaticResource Hush.Text.Primary.Brush}"
-                          Margin="0 0 0 24" />
+                          Margin="0 0 0 6" />
 
-                <!-- ─ Section: Appearance ────────────────────────────────── -->
+                <!-- Auto-submit key -->
+                <Grid ColumnDefinitions="160,*" Margin="0 6 0 10">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Auto-submit key"
+                                   FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Sent after dictation ends"
+                                   FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{Binding AutoSubmitKeyOptions}"
+                              SelectedItem="{Binding AutoSubmitKey}"
+                              HorizontalAlignment="Stretch"
+                              ToolTip.Tip="Optionally press Enter or Ctrl+Enter in the target app after dictation ends. Useful for chat apps." />
+                </Grid>
+
+                <!-- Model unload timeout -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 24">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Model unload"
+                                   FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Free RAM when idle"
+                                   FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{Binding ModelUnloadTimeoutOptions}"
+                              SelectedItem="{Binding ModelUnloadTimeout}"
+                              HorizontalAlignment="Stretch"
+                              ToolTip.Tip="Unload the transcription model from memory after this idle period to free RAM. It will reload on next dictation." />
+                </Grid>
+
+                <!-- Section: Appearance -->
                 <TextBlock Text="APPEARANCE"
                            FontSize="9"
                            FontWeight="Bold"
@@ -190,7 +408,7 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- ── Footer / action ───────────────────────────────────────────── -->
+        <!-- Footer / action -->
         <Border Grid.Row="2"
                 Padding="28 14"
                 BorderBrush="{StaticResource Hush.Border.Brush}"
@@ -203,4 +421,3 @@
 
     </Grid>
 </Window>
-

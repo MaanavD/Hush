@@ -50,4 +50,46 @@ public sealed class HushSettings
     /// Audio input device index. <c>-1</c> means system default.
     /// </summary>
     public int MicrophoneDeviceIndex { get; set; } = -1;
+
+    // ── Clean Mode ────────────────────────────────────────────────────────
+    /// <summary>Hotkey combination for clean-mode (LLM-rewritten) dictation.</summary>
+    public string CleanHotkey { get; set; } = "Alt+H";
+
+    /// <summary>Whether to run an LLM rewrite pass in clean-mode sessions.</summary>
+    public bool PostProcessingEnabled { get; set; } = true;
+
+    /// <summary>Foundry Local model alias used for LLM rewriting.</summary>
+    public string PostProcessingModel { get; set; } = "qwen3-0.6b";
+
+    /// <summary>ID of the active post-processing prompt template.</summary>
+    public string? ActivePostProcessingPromptId { get; set; }
+
+    /// <summary>User-defined prompt templates for LLM rewriting.</summary>
+    public List<HushPromptEntry> PostProcessingPrompts { get; set; } = new();
+
+    // ── Dictionary ────────────────────────────────────────────────────────
+    /// <summary>Custom word substitution rules applied after transcription.</summary>
+    public List<HushSubstitutionEntry> CustomSubstitutions { get; set; } = new();
+
+    // ── Behavior additions ────────────────────────────────────────────────
+    /// <summary>Display-string key sent to target app after dictation ends (e.g. "None", "Enter", "Ctrl+Enter").</summary>
+    public string AutoSubmitKey { get; set; } = "None";
+
+    /// <summary>Display-string for model unload idle timeout (e.g. "After 5 min").</summary>
+    public string ModelUnloadTimeout { get; set; } = "After 5 min";
+}
+
+/// <summary>Persisted user-defined prompt template entry.</summary>
+public sealed record HushPromptEntry
+{
+    public string Id { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Prompt { get; init; } = "";
+}
+
+/// <summary>Persisted word-substitution rule.</summary>
+public sealed record HushSubstitutionEntry
+{
+    public string Match { get; init; } = "";
+    public string Replace { get; init; } = "";
 }
