@@ -650,11 +650,68 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (targetText.StartsWith(_committedText, StringComparison.Ordinal))
             return (0, targetText[_committedText.Length..]);
 
-        // Revision path: find the divergence point and backspace-correct.
+        // Character-level divergence point.
         int commonLen = CommonPrefixLength(_committedText, targetText);
-        int backspaceCount = _committedText.Length - commonLen;
-        string delta = targetText[commonLen..];
-        return (backspaceCount, delta);
+        int charBackspaces = _committedText.Length - commonLen;
+        string charDelta = targetText[commonLen..];
+
+        // Word-level diff: treats words as identical when they differ only in
+        // capitalisation or punctuation (e.g. "hello" ≈ "Hello,"). This avoids
+        // erasing and retyping words that are already correct on screen when the
+        // final model chunk adds punctuation or corrects capitalisation.
+        var (wordBackspaces, wordDelta) = ComputeWordLevelDelta(_committedText, targetText);
+        return wordBackspaces < charBackspaces
+            ? (wordBackspaces, wordDelta)
+            : (charBackspaces, charDelta);
+    }
+
+    /// <summary>
+    /// Word-level delta that normalises away punctuation and case differences.
+    /// Returns the minimum backspace count and new text needed to move from
+    /// <paramref name="committedText"/> to <paramref name="targetText"/> at
+    /// word granularity, so that words which are already correct are not erased.
+    /// </summary>
+    private static (int BackspaceCount, string Delta) ComputeWordLevelDelta(
+        string committedText, string targetText)
+    {
+        var cWords = committedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var tWords = targetText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (cWords.Length == 0 || tWords.Length == 0)
+            return (committedText.Length, targetText);
+
+        int minLen = Math.Min(cWords.Length, tWords.Length);
+        int commonCount = 0;
+        for (int i = 0; i < minLen; i++)
+        {
+            var cNorm = NormalizeWordForComparison(cWords[i]);
+            var tNorm = NormalizeWordForComparison(tWords[i]);
+            if (string.IsNullOrEmpty(cNorm) || cNorm != tNorm)
+                break;
+            commonCount++;
+        }
+
+        if (commonCount == 0)
+            return (committedText.Length, targetText);
+
+        // Text is space-normalised, so joining the first N words gives the exact
+        // character offset of the end of the last common word in each string.
+        int cPos = string.Join(' ', cWords[..commonCount]).Length;
+        int tPos = string.Join(' ', tWords[..commonCount]).Length;
+
+        return (committedText.Length - cPos, targetText[tPos..]);
+    }
+
+    /// <summary>
+    /// Strips leading/trailing punctuation and returns the lowercase core of a
+    /// word token so that "Hello," and "hello" compare as equal.
+    /// </summary>
+    private static string NormalizeWordForComparison(string word)
+    {
+        int start = 0, end = word.Length;
+        while (start < end && (char.IsPunctuation(word[start]) || char.IsSymbol(word[start]))) start++;
+        while (end > start && (char.IsPunctuation(word[end - 1]) || char.IsSymbol(word[end - 1]))) end--;
+        return start >= end ? string.Empty : word[start..end].ToLowerInvariant();
     }
 
     private static int CommonPrefixLength(string a, string b)

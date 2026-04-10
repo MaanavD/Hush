@@ -572,6 +572,40 @@ public sealed class TranscriptionEngineTests
     }
 
     [Fact]
+    public async Task LiveSession_FinalChunk_SameWordsWithCapitalisationAndPunctuation_DoesNotBackspace()
+    {
+        // Regression test: when the final chunk adds punctuation/capitalisation to words
+        // already committed, the word-level diff should avoid erasing and retyping them.
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "whisper-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        // Progressive chunks — engine commits each stable word in turn.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.3)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world how", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.5)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world how are", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.7)));
+
+        // Final chunk: same words but now capitalised and punctuated, plus a new word.
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "Hello, world! How are you.", true, TimeSpan.Zero, TimeSpan.FromSeconds(1.0)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        // The final result must not backspace the already-correct words.
+        var finalResult = results[^1];
+        Assert.True(finalResult.IsFinal);
+        Assert.Equal(0, finalResult.BackspaceCount);
+        // Only the new word (and its punctuation suffix) should be typed.
+        Assert.Equal(" are you.", finalResult.CommittedDelta);
+    }
+
+    [Fact]
     public async Task AppendAudioAsync_ForwardsAudioToLiveSession()
     {
         var factory = new FakeLiveAudioSessionFactory();
