@@ -4,7 +4,7 @@
         x:Class="Hush.App.Views.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
         Title="Hush — Settings"
-        Width="460" Height="610"
+        Width="460" Height="650"
         WindowStartupLocation="CenterScreen"
         CanResize="False"
         FontFamily="{StaticResource Hush.Font}">
@@ -53,7 +53,7 @@
                         <TextBlock Text="Global hotkey"
                                    FontSize="13"
                                    Foreground="{StaticResource Hush.Text.Primary.Brush}" />
-                        <TextBlock Text="Hold to dictate"
+                        <TextBlock Text="Hold to dictate (raw)"
                                    FontSize="10"
                                    Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
                     </StackPanel>
@@ -61,6 +61,22 @@
                              Text="{Binding Hotkey}"
                              Watermark="Ctrl+H"
                              ToolTip.Tip="Hotkey combination to hold for push-to-talk dictation. Changes take effect as soon as you save." />
+                </Grid>
+
+                <!-- Clean hotkey -->
+                <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Clean hotkey"
+                                   FontSize="13"
+                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                        <TextBlock Text="Hold for clean mode"
+                                   FontSize="10"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                    </StackPanel>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding CleanHotkey}"
+                             Watermark="Alt+H"
+                             ToolTip.Tip="Hotkey for clean-mode dictation: records audio, then rewrites it with an LLM before committing. Uses spinner mode while processing." />
                 </Grid>
 
                 <!-- Language -->
