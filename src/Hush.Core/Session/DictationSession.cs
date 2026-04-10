@@ -126,6 +126,10 @@ public sealed class DictationSession : IDictationSession
                 if (!string.IsNullOrEmpty(targetText))
                     OnInterimText?.Invoke(targetText);
 
+                _logger.LogDebug(
+                    "Output: bs={BS} delta='{Delta}' isFinal={Final} display='{Display}'",
+                    result.BackspaceCount, result.CommittedDelta, result.IsFinal, targetText);
+
                 if (result.BackspaceCount > 0)
                 {
                     await _output.SendBackspacesAsync(result.BackspaceCount, cancellationToken, skipModifierRestore: true);

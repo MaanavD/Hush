@@ -32,11 +32,14 @@ public sealed class KeystrokeTypingService : ITextOutputService
         if (cancellationToken.IsCancellationRequested)
             return Task.FromCanceled(cancellationToken);
 
+        _logger.LogDebug("TypeText: len={Len} skip={Skip} text={Text}",
+            text.Length, skipModifierRestore, text);
+
         if (OperatingSystem.IsWindows())
         {
             return _useClipboardFallback
                 ? WindowsClipboardTyper.TypeAsync(text, cancellationToken)
-                : WindowsKeystrokeTyper.TypeAsync(text, cancellationToken, skipModifierRestore);
+                : WindowsKeystrokeTyper.TypeAsync(text, cancellationToken, skipModifierRestore, _logger);
         }
 
         if (OperatingSystem.IsMacOS())
@@ -58,8 +61,10 @@ public sealed class KeystrokeTypingService : ITextOutputService
         if (cancellationToken.IsCancellationRequested)
             return Task.FromCanceled(cancellationToken);
 
+        _logger.LogDebug("SendBackspaces: count={Count} skip={Skip}", count, skipModifierRestore);
+
         if (OperatingSystem.IsWindows())
-            return WindowsKeystrokeTyper.SendBackspacesAsync(count, cancellationToken, skipModifierRestore);
+            return WindowsKeystrokeTyper.SendBackspacesAsync(count, cancellationToken, skipModifierRestore, _logger);
 
         if (OperatingSystem.IsMacOS())
             return MacKeystrokeTyper.SendBackspacesAsync(count, cancellationToken);
@@ -134,7 +139,7 @@ internal static class WindowsKeystrokeTyper
     private const ushort SC_BACK      = 0x0E;   // Hardware scan code for backspace key
     private const uint KEYEVENTF_SCANCODE = 0x0008;
 
-    internal static Task TypeAsync(string text, CancellationToken cancellationToken, bool skipModifierRestore = false)
+    internal static Task TypeAsync(string text, CancellationToken cancellationToken, bool skipModifierRestore = false, ILogger? logger = null)
     {
         return Task.Run(() =>
         {
@@ -172,7 +177,9 @@ internal static class WindowsKeystrokeTyper
                     inputs[idx++] = MakeVkInput(toRestore[i], 0);
             }
 
+            logger?.LogDebug("SendInput(type): mods={ModCount} chars={Chars} totalEvents={Total}", modCount, text.Length, idx);
             uint sent = SendInput((uint)idx, inputs, Marshal.SizeOf<INPUT>());
+            logger?.LogDebug("SendInput(type) returned: sent={Sent}/{Total}", sent, idx);
             if (sent == 0 && text.Length > 0)
             {
                 int error = Marshal.GetLastWin32Error();
@@ -186,7 +193,7 @@ internal static class WindowsKeystrokeTyper
         }, cancellationToken);
     }
 
-    internal static Task SendBackspacesAsync(int count, CancellationToken cancellationToken, bool skipModifierRestore = false)
+    internal static Task SendBackspacesAsync(int count, CancellationToken cancellationToken, bool skipModifierRestore = false, ILogger? logger = null)
     {
         return Task.Run(() =>
         {
@@ -218,7 +225,9 @@ internal static class WindowsKeystrokeTyper
                     inputs[idx++] = MakeVkInput(toRestore[i], 0);
             }
 
+            logger?.LogDebug("SendInput(backspace): count={Count} mods={ModCount} totalEvents={Total}", count, modCount, idx);
             SendInput((uint)idx, inputs, Marshal.SizeOf<INPUT>());
+            logger?.LogDebug("SendInput(backspace) returned");
         }, cancellationToken);
     }
 

@@ -50,6 +50,7 @@ public sealed class App : Application
             ".hush", "hush.log");
 
         _loggerFactory = LoggerFactory.Create(b => b
+            .SetMinimumLevel(LogLevel.Debug)
             .AddConsole()
             .AddProvider(new FileLoggerProvider(logPath)));
         _logger = _loggerFactory.CreateLogger<App>();
