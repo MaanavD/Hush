@@ -15,6 +15,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly HushSettings _settings;
 
     [ObservableProperty] private string _hotkey;
+    [ObservableProperty] private string _cleanHotkey;
     [ObservableProperty] private string _language;
     [ObservableProperty] private string _transcriptionModel;
     [ObservableProperty] private bool _partialsInOverlay;
@@ -31,6 +32,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         _settings = settings;
         _hotkey = settings.Hotkey;
+        _cleanHotkey = settings.CleanHotkey;
         _language = settings.Language;
         _transcriptionModel = settings.TranscriptionModel;
         _partialsInOverlay = settings.PartialsInOverlay;
@@ -69,6 +71,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public void Apply()
     {
         _settings.Hotkey = Hotkey;
+        _settings.CleanHotkey = CleanHotkey;
         _settings.Language = Language;
         _settings.TranscriptionModel = TranscriptionModel;
         _settings.PartialsInOverlay = PartialsInOverlay;

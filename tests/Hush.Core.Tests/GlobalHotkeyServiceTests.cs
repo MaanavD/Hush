@@ -82,6 +82,62 @@ public sealed class GlobalHotkeyServiceTests
         innerMock.Verify(s => s.Dispose(), Times.Once);
     }
 
+    // ── Clean hotkey event forwarding ────────────────────────────────────
+
+    [Fact]
+    public void RegisterClean_ForwardsPressed()
+    {
+        var innerMock = new Mock<IGlobalHotkeyService>();
+        var service = new GlobalHotkeyService(innerMock.Object);
+
+        bool pressed = false;
+        service.CleanHotkeyPressed += (_, _) => pressed = true;
+
+        innerMock.Raise(s => s.CleanHotkeyPressed += null, EventArgs.Empty);
+
+        Assert.True(pressed);
+        service.Dispose();
+    }
+
+    [Fact]
+    public void RegisterClean_ForwardsReleased()
+    {
+        var innerMock = new Mock<IGlobalHotkeyService>();
+        var service = new GlobalHotkeyService(innerMock.Object);
+
+        bool released = false;
+        service.CleanHotkeyReleased += (_, _) => released = true;
+
+        innerMock.Raise(s => s.CleanHotkeyReleased += null, EventArgs.Empty);
+
+        Assert.True(released);
+        service.Dispose();
+    }
+
+    [Fact]
+    public void UnregisterClean_CallsInner()
+    {
+        var innerMock = new Mock<IGlobalHotkeyService>();
+        var service = new GlobalHotkeyService(innerMock.Object);
+
+        service.UnregisterClean();
+
+        innerMock.Verify(s => s.UnregisterClean(), Times.Once);
+        service.Dispose();
+    }
+
+    [Fact]
+    public void RegisterClean_DelegatesToInner()
+    {
+        var innerMock = new Mock<IGlobalHotkeyService>();
+        var service = new GlobalHotkeyService(innerMock.Object);
+
+        service.RegisterClean("Alt+H");
+
+        innerMock.Verify(s => s.RegisterClean("Alt+H"), Times.Once);
+        service.Dispose();
+    }
+
     // ── Rapid press/release sequence ─────────────────────────────────────
 
     [Fact]

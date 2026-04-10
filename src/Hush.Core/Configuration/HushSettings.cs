@@ -11,6 +11,12 @@ public sealed class HushSettings
     /// <summary>Global hotkey combination, e.g. <c>"Ctrl+Shift+H"</c>.</summary>
     public string Hotkey { get; set; } = "Ctrl+H";
 
+    /// <summary>
+    /// Global hotkey for clean-mode dictation (spinner + LLM rewrite).
+    /// Default is Alt+H (2 keypresses max).
+    /// </summary>
+    public string CleanHotkey { get; set; } = "Alt+H";
+
 /// <summary>Language hint passed to Foundry Local. Accepts ISO 639-1 codes like <c>"en"</c> and locale tags like <c>"en-US"</c>.</summary>
     public string Language { get; set; } = "en";
 

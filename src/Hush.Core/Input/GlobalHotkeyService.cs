@@ -26,6 +26,8 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
 
         _inner.HotkeyPressed += (s, e) => HotkeyPressed?.Invoke(s, e);
         _inner.HotkeyReleased += (s, e) => HotkeyReleased?.Invoke(s, e);
+        _inner.CleanHotkeyPressed += (s, e) => CleanHotkeyPressed?.Invoke(s, e);
+        _inner.CleanHotkeyReleased += (s, e) => CleanHotkeyReleased?.Invoke(s, e);
     }
 
     /// <inheritdoc/>
@@ -33,6 +35,12 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
 
     /// <inheritdoc/>
     public event EventHandler? HotkeyReleased;
+
+    /// <inheritdoc/>
+    public event EventHandler? CleanHotkeyPressed;
+
+    /// <inheritdoc/>
+    public event EventHandler? CleanHotkeyReleased;
 
     /// <inheritdoc/>
     public void Register(string hotkey)
@@ -46,6 +54,20 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
     {
         _logger.LogInformation("Unregistering global hotkey.");
         _inner.Unregister();
+    }
+
+    /// <inheritdoc/>
+    public void RegisterClean(string hotkey)
+    {
+        _logger.LogInformation("Registering clean-mode hotkey: {Hotkey}", hotkey);
+        _inner.RegisterClean(hotkey);
+    }
+
+    /// <inheritdoc/>
+    public void UnregisterClean()
+    {
+        _logger.LogInformation("Unregistering clean-mode hotkey.");
+        _inner.UnregisterClean();
     }
 
     /// <inheritdoc/>
