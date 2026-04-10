@@ -2,7 +2,9 @@
 
 using System.Text;
 using Hush.Core.Audio;
+using Hush.Core.Configuration;
 using Hush.Core.Output;
+using Hush.Core.PostProcessing;
 using Hush.Core.Transcription;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -26,12 +28,16 @@ public sealed class DictationSession : IDictationSession
     private readonly ITextOutputService _output;
     private readonly ILogger<DictationSession> _logger;
     private readonly Action<float> _audioLevelForwarder;
+    private readonly IReadOnlyList<TextSubstitution>? _substitutions;
+    private readonly ITranscriptBuffer? _transcriptBuffer;
 
     private Task? _transcriptionLoop;
     private CancellationTokenSource? _loopCts;
     private bool _disposed;
     private bool _showSpinner;
     private int _sessionErrorRaised;
+    private AutoSubmitKey _autoSubmitKey;
+    private readonly StringBuilder _sessionAccumulated = new();
 
     private static readonly char[] SpinnerFrames = { '|', '/', '\u2014', '\\' };
     private const int SpinnerIntervalMs = 120;
@@ -40,12 +46,16 @@ public sealed class DictationSession : IDictationSession
         ITranscriptionEngine engine,
         IAudioCaptureService capture,
         ITextOutputService output,
-        ILogger<DictationSession>? logger = null)
+        ILogger<DictationSession>? logger = null,
+        IReadOnlyList<TextSubstitution>? substitutions = null,
+        ITranscriptBuffer? transcriptBuffer = null)
     {
         _engine = engine;
         _capture = capture;
         _output = output;
         _logger = logger ?? NullLogger<DictationSession>.Instance;
+        _substitutions = substitutions;
+        _transcriptBuffer = transcriptBuffer;
         _audioLevelForwarder = level => OnAudioLevel?.Invoke(level);
     }
 
@@ -65,12 +75,20 @@ public sealed class DictationSession : IDictationSession
     public event Action<Exception>? OnSessionError;
 
     /// <inheritdoc/>
-    public async Task StartAsync(string language = "en", bool streamingCommit = true, bool showSpinner = false, CancellationToken cancellationToken = default)
+    public async Task StartAsync(
+        string language = "en",
+        bool streamingCommit = true,
+        bool showSpinner = false,
+        string? postProcessingPrompt = null,
+        AutoSubmitKey autoSubmitKey = AutoSubmitKey.None,
+        CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         _showSpinner = showSpinner;
         _sessionErrorRaised = 0;
+        _autoSubmitKey = autoSubmitKey;
+        _sessionAccumulated.Clear();
 
         // Capture in a local so post-await code is safe even if StopAsync
         // nullifies _loopCts while we are suspended at the await below.
@@ -146,8 +164,12 @@ public sealed class DictationSession : IDictationSession
 
                 if (!string.IsNullOrEmpty(result.CommittedDelta))
                 {
-                    await _output.TypeTextAsync(result.CommittedDelta, cancellationToken, skipModifierRestore: true);
-                    OnCommittedChunk?.Invoke(result.CommittedDelta);
+                    var delta = _substitutions?.Count > 0
+                        ? SubstitutionProcessor.Apply(result.CommittedDelta, _substitutions)
+                        : result.CommittedDelta;
+                    _sessionAccumulated.Append(delta);
+                    await _output.TypeTextAsync(delta, cancellationToken, skipModifierRestore: true);
+                    OnCommittedChunk?.Invoke(delta);
                 }
             }
         }
@@ -233,6 +255,9 @@ public sealed class DictationSession : IDictationSession
 
         // Type the full accumulated transcript in one shot.
         var finalText = accumulatedText.ToString();
+        if (_substitutions?.Count > 0)
+            finalText = SubstitutionProcessor.Apply(finalText, _substitutions);
+        _sessionAccumulated.Append(finalText);
         if (!string.IsNullOrEmpty(finalText))
         {
             try
@@ -328,6 +353,15 @@ public sealed class DictationSession : IDictationSession
             await _transcriptionLoop.WaitAsync(cancellationToken);
             _transcriptionLoop = null;
         }
+
+        if (_sessionAccumulated.Length > 0)
+        {
+            _transcriptBuffer?.Push(_sessionAccumulated.ToString());
+            _sessionAccumulated.Clear();
+        }
+
+        if (_autoSubmitKey != AutoSubmitKey.None)
+            await _output.SendKeyAsync(_autoSubmitKey, CancellationToken.None);
 
         _loopCts?.Cancel();
         _loopCts?.Dispose();

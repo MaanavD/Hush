@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using Hush.Core.Configuration;
+
 namespace Hush.Core.Output;
 
 /// <summary>
@@ -23,4 +25,7 @@ public interface ITextOutputService
     /// erasing previously typed characters. Used for speculative commit corrections.
     /// </summary>
     Task SendBackspacesAsync(int count, CancellationToken cancellationToken = default, bool skipModifierRestore = false);
+
+    /// <summary>Sends a single well-known key combination to the focused application.</summary>
+    Task SendKeyAsync(AutoSubmitKey key, CancellationToken cancellationToken = default);
 }

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
 using System.Runtime.InteropServices;
+using Hush.Core.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -75,6 +76,25 @@ public sealed class KeystrokeTypingService : ITextOutputService
 
         if (OperatingSystem.IsLinux())
             return LinuxKeystrokeTyper.SendBackspacesAsync(count, cancellationToken);
+
+        throw new PlatformNotSupportedException(
+            $"Text output is not supported on this platform ({RuntimeInformation.OSDescription}).");
+    }
+
+    /// <inheritdoc/>
+    public Task SendKeyAsync(AutoSubmitKey key, CancellationToken cancellationToken = default)
+    {
+        if (key == AutoSubmitKey.None)
+            return Task.CompletedTask;
+
+        if (OperatingSystem.IsWindows())
+            return WindowsKeystrokeTyper.SendKeyAsync(key, cancellationToken);
+
+        if (OperatingSystem.IsMacOS())
+            return MacKeystrokeTyper.SendKeyAsync(key, cancellationToken);
+
+        if (OperatingSystem.IsLinux())
+            return LinuxKeystrokeTyper.SendKeyAsync(key, cancellationToken);
 
         throw new PlatformNotSupportedException(
             $"Text output is not supported on this platform ({RuntimeInformation.OSDescription}).");
@@ -391,6 +411,39 @@ internal static class WindowsKeystrokeTyper
             }
         }
     };
+
+    private const ushort VK_RETURN  = 0x0D;
+    private const ushort VK_CONTROL = 0x11;
+
+    internal static Task SendKeyAsync(AutoSubmitKey key, CancellationToken cancellationToken)
+    {
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int cbSize = Marshal.SizeOf<INPUT>();
+
+            if (key == AutoSubmitKey.CtrlEnter)
+            {
+                INPUT[] inputs =
+                [
+                    MakeVkInput(VK_CONTROL, 0),
+                    MakeVkInput(VK_RETURN, 0),
+                    MakeVkInput(VK_RETURN, KEYEVENTF_KEYUP),
+                    MakeVkInput(VK_CONTROL, KEYEVENTF_KEYUP),
+                ];
+                SendInput((uint)inputs.Length, inputs, cbSize);
+            }
+            else // AutoSubmitKey.Enter
+            {
+                INPUT[] inputs =
+                [
+                    MakeVkInput(VK_RETURN, 0),
+                    MakeVkInput(VK_RETURN, KEYEVENTF_KEYUP),
+                ];
+                SendInput((uint)inputs.Length, inputs, cbSize);
+            }
+        }, cancellationToken);
+    }
 }
 
 
@@ -707,6 +760,39 @@ internal static class MacKeystrokeTyper
 
         return Task.CompletedTask;
     }
+
+    // macOS virtual key codes for Return and Control.
+    private const ushort kVK_Return    = 0x24;
+    private const ushort kVK_Control   = 0x3B;
+
+    internal static Task SendKeyAsync(AutoSubmitKey key, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (key == AutoSubmitKey.CtrlEnter)
+        {
+            nint ctrlDown = CGEventCreateKeyboardEvent(0, kVK_Control, true);
+            CGEventPost(kCGHIDEventTap, ctrlDown);
+            CFRelease(ctrlDown);
+        }
+
+        nint retDown = CGEventCreateKeyboardEvent(0, kVK_Return, true);
+        CGEventPost(kCGHIDEventTap, retDown);
+        CFRelease(retDown);
+
+        nint retUp = CGEventCreateKeyboardEvent(0, kVK_Return, false);
+        CGEventPost(kCGHIDEventTap, retUp);
+        CFRelease(retUp);
+
+        if (key == AutoSubmitKey.CtrlEnter)
+        {
+            nint ctrlUp = CGEventCreateKeyboardEvent(0, kVK_Control, false);
+            CGEventPost(kCGHIDEventTap, ctrlUp);
+            CFRelease(ctrlUp);
+        }
+
+        return Task.CompletedTask;
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -817,6 +903,71 @@ internal static class LinuxKeystrokeTyper
             ulong[] clear = [0UL, 0UL];
             XChangeKeyboardMapping(display, scratch, 2, clear, 1);
             XSync(display, false);
+        }
+        finally
+        {
+            XCloseDisplay(display);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    // X11 keysyms for Return and Control_L.
+    private const ulong XK_Return    = 0xFF0D;
+    private const ulong XK_Control_L = 0xFFE3;
+
+    internal static Task SendKeyAsync(AutoSubmitKey key, CancellationToken cancellationToken)
+    {
+        if (key == AutoSubmitKey.None) return Task.CompletedTask;
+
+        nint display = XOpenDisplay(null);
+        if (display == 0)
+            throw new InvalidOperationException(
+                "Cannot connect to X11 display. Ensure the DISPLAY environment variable is set.");
+
+        try
+        {
+            XDisplayKeycodes(display, out _, out int maxKeycode);
+            int scratch = maxKeycode;
+
+            if (key == AutoSubmitKey.CtrlEnter)
+            {
+                // Map scratch-1 to Control_L if available, else use scratch.
+                int ctrlSlot = Math.Max(scratch - 1, 8);
+                ulong[] ctrlMapping = [XK_Control_L, XK_Control_L];
+                XChangeKeyboardMapping(display, ctrlSlot, 2, ctrlMapping, 1);
+                XSync(display, false);
+                XTestFakeKeyEvent(display, (uint)ctrlSlot, true, 0);
+
+                ulong[] retMapping = [XK_Return, XK_Return];
+                XChangeKeyboardMapping(display, scratch, 2, retMapping, 1);
+                XSync(display, false);
+                XTestFakeKeyEvent(display, (uint)scratch, true, 0);
+                XTestFakeKeyEvent(display, (uint)scratch, false, 0);
+                XFlush(display);
+
+                XTestFakeKeyEvent(display, (uint)ctrlSlot, false, 0);
+                XFlush(display);
+
+                ulong[] clear = [0UL, 0UL];
+                XChangeKeyboardMapping(display, ctrlSlot, 2, clear, 1);
+                XChangeKeyboardMapping(display, scratch, 2, clear, 1);
+                XSync(display, false);
+            }
+            else // AutoSubmitKey.Enter
+            {
+                ulong[] retMapping = [XK_Return, XK_Return];
+                XChangeKeyboardMapping(display, scratch, 2, retMapping, 1);
+                XSync(display, false);
+                XTestFakeKeyEvent(display, (uint)scratch, true, 0);
+                XTestFakeKeyEvent(display, (uint)scratch, false, 0);
+                XFlush(display);
+                XSync(display, false);
+
+                ulong[] clear = [0UL, 0UL];
+                XChangeKeyboardMapping(display, scratch, 2, clear, 1);
+                XSync(display, false);
+            }
         }
         finally
         {

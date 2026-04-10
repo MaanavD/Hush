@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
 using Hush.Core.Audio;
+using Hush.Core.Configuration;
 using Hush.Core.Output;
+using Hush.Core.PostProcessing;
 using Hush.Core.Session;
 using Hush.Core.Transcription;
 using Moq;
@@ -233,9 +235,126 @@ public sealed class DictationSessionTests
 
         await session.StopAsync();
     }
-}
+    [Fact]
+    public async Task StartAsync_WithAutoSubmitKey_SendsKeyOnStop()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
 
-// Minimal async enumerable helpers for tests without System.Linq.Async
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(AsyncEnumerable.Empty<TranscriptionResult>());
+        outputMock
+            .Setup(o => o.SendKeyAsync(It.IsAny<AutoSubmitKey>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
+        await session.StartAsync(autoSubmitKey: AutoSubmitKey.Enter);
+        await session.StopAsync();
+
+        outputMock.Verify(o => o.SendKeyAsync(AutoSubmitKey.Enter, It.IsAny<CancellationToken>()), Times.Once);
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StopAsync_PushesTranscriptToBuffer()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var bufferMock = new Mock<ITranscriptBuffer>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[] { new TranscriptionResult("hello", "hello", IsFinal: true) }.ToAsyncEnumerable());
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(
+            engineMock.Object, captureMock.Object, outputMock.Object,
+            transcriptBuffer: bufferMock.Object);
+
+        await session.StartAsync();
+        await session.StopAsync();
+
+        bufferMock.Verify(b => b.Push(It.IsAny<string>()), Times.Once);
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StreamingMode_AppliesSubstitutionsBeforeTyping()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var typedTexts = new List<string>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[] { new TranscriptionResult("gonna", "gonna", IsFinal: true) }.ToAsyncEnumerable());
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) => { typedTexts.Add(text); return Task.CompletedTask; });
+
+        var substitutions = new[] { new TextSubstitution { Match = "gonna", Replace = "going to" } };
+        var session = new DictationSession(
+            engineMock.Object, captureMock.Object, outputMock.Object,
+            substitutions: substitutions);
+
+        await session.StartAsync();
+        await session.StopAsync();
+
+        Assert.Contains("going to", typedTexts);
+        Assert.DoesNotContain("gonna", typedTexts);
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task SpinnerMode_AppliesSubstitutionsBeforeTyping()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var typedTexts = new List<string>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[] { new TranscriptionResult("wanna", "wanna", IsFinal: true) }.ToAsyncEnumerable());
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) => { typedTexts.Add(text); return Task.CompletedTask; });
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        var substitutions = new[] { new TextSubstitution { Match = "wanna", Replace = "want to" } };
+        var session = new DictationSession(
+            engineMock.Object, captureMock.Object, outputMock.Object,
+            substitutions: substitutions);
+
+        await session.StartAsync(showSpinner: true);
+        await session.StopAsync();
+
+        // The final typed text (spinner flush) should use the substituted form.
+        Assert.Contains(typedTexts, t => t.Contains("want to"));
+        Assert.DoesNotContain(typedTexts, t => t == "wanna");
+        await session.DisposeAsync();
+    }
+}
 file static class AsyncEnumerable
 {
     public static IAsyncEnumerable<T> Empty<T>() => EmptyAsyncEnumerable<T>.Instance;

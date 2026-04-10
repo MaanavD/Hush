@@ -61,7 +61,9 @@ public sealed class App : Application
             var settingsService = new SettingsService(_loggerFactory.CreateLogger<SettingsService>());
             var settings = await settingsService.LoadAsync();
 
-            _transcriptionEngine = new TranscriptionEngine(_loggerFactory.CreateLogger<TranscriptionEngine>());
+            var transcriptionEngine = new TranscriptionEngine(_loggerFactory.CreateLogger<TranscriptionEngine>());
+            transcriptionEngine.UnloadTimeout = settings.ModelUnloadTimeout;
+            _transcriptionEngine = transcriptionEngine;
             _audioCapture = new AudioCaptureService(_loggerFactory.CreateLogger<AudioCaptureService>())
             {
                 DeviceIndex = settings.MicrophoneDeviceIndex
@@ -69,9 +71,12 @@ public sealed class App : Application
             var textOutput = new KeystrokeTypingService(
                 _loggerFactory.CreateLogger<KeystrokeTypingService>(),
                 useClipboardFallback: settings.ClipboardFallback);
+            var transcriptBuffer = new TranscriptBuffer();
             _dictationSession = new DictationSession(
                 _transcriptionEngine, _audioCapture, textOutput,
-                _loggerFactory.CreateLogger<DictationSession>());
+                _loggerFactory.CreateLogger<DictationSession>(),
+                substitutions: settings.CustomSubstitutions,
+                transcriptBuffer: transcriptBuffer);
 
             var platformHotkeyProvider = CreatePlatformHotkeyProvider();
             _hotkeyService = new GlobalHotkeyService(platformHotkeyProvider, _loggerFactory.CreateLogger<GlobalHotkeyService>());
@@ -87,7 +92,7 @@ public sealed class App : Application
             _overlayWindow = new OverlayWindow { DataContext = overlayVm };
             _overlayWindow.Show();   // Show once so visibility changes never re-activate the window.
 
-            _trayIcon = new TrayIcon(_mainVm, desktop);
+            _trayIcon = new TrayIcon(_mainVm, desktop, transcriptBuffer);
 
             try
             {

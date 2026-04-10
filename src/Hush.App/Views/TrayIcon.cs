@@ -5,6 +5,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media.Imaging;
 using Hush.App.ViewModels;
 using Hush.App.Views;
+using Hush.Core.Session;
 
 namespace Hush.App;
 
@@ -15,16 +16,19 @@ public sealed class TrayIcon : IDisposable
 {
     private readonly MainViewModel _mainVm;
     private readonly IClassicDesktopStyleApplicationLifetime _desktop;
+    private readonly ITranscriptBuffer _transcriptBuffer;
     private readonly global::Avalonia.Controls.TrayIcon _tray;
     private NativeMenuItem? _statusItem;
     private SettingsWindow? _settingsWindow;
 
     public TrayIcon(
         MainViewModel mainVm,
-        IClassicDesktopStyleApplicationLifetime desktop)
+        IClassicDesktopStyleApplicationLifetime desktop,
+        ITranscriptBuffer transcriptBuffer)
     {
         _mainVm = mainVm;
         _desktop = desktop;
+        _transcriptBuffer = transcriptBuffer;
 
         _tray = new global::Avalonia.Controls.TrayIcon
         {
@@ -69,6 +73,19 @@ public sealed class TrayIcon : IDisposable
         _statusItem = new NativeMenuItem("Starting…") { IsEnabled = false };
         menu.Add(_statusItem);
         menu.Add(new NativeMenuItemSeparator());
+
+        var copyLastItem = new NativeMenuItem("Copy last dictation");
+        copyLastItem.Click += (_, _) =>
+        {
+            var text = _transcriptBuffer.GetLatest();
+            if (!string.IsNullOrEmpty(text))
+            {
+                var win = _desktop.Windows.FirstOrDefault();
+                if (win is not null)
+                    _ = TopLevel.GetTopLevel(win)?.Clipboard?.SetTextAsync(text);
+            }
+        };
+        menu.Add(copyLastItem);
 
         var settingsItem = new NativeMenuItem("Settings…");
         settingsItem.Click += (_, _) => OpenSettings();

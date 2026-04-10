@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using Hush.Core.Configuration;
+
 namespace Hush.Core.Session;
 
 /// <summary>
@@ -47,8 +49,19 @@ public interface IDictationSession : IAsyncDisposable
     /// in the focused application while dictation is active. All committed text
     /// is buffered and typed in one shot after the session ends.
     /// </param>
+    /// <param name="postProcessingPrompt">
+    /// Optional LLM post-processing prompt. Reserved for <c>feature/llm-postprocessing</c>;
+    /// pass <see langword="null"/> to skip LLM post-processing.
+    /// </param>
+    /// <param name="autoSubmitKey">Key combination to send after dictation ends.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task StartAsync(string language = "en", bool streamingCommit = true, bool showSpinner = false, CancellationToken cancellationToken = default);
+    Task StartAsync(
+        string language = "en",
+        bool streamingCommit = true,
+        bool showSpinner = false,
+        string? postProcessingPrompt = null,
+        AutoSubmitKey autoSubmitKey = AutoSubmitKey.None,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Stops microphone capture, signals the transcription session to finalise,

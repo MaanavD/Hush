@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Hush.Core.Configuration;
 
 namespace Hush.Core.Transcription;
 
@@ -17,10 +18,16 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     private readonly ILiveAudioSessionFactory _liveSessionFactory;
 
     private OpenAIAudioClient? _audioClient;
+    private IModel? _model;
     private string? _modelId;
     private Channel<TranscriptionResult>? _resultChannel;
     private ILiveAudioSession? _liveSession;
     private Task? _resultPumpTask;
+    private bool _modelLoaded;
+    private CancellationTokenSource? _unloadTimerCts;
+
+    /// <summary>How long after the last session ends before the model is unloaded to free RAM.</summary>
+    public ModelUnloadTimeout UnloadTimeout { get; set; } = ModelUnloadTimeout.Min5;
     // Exact text that has been irrevocably committed (typed into the target app).
     private string _committedText = string.Empty;
     // When true, words are committed progressively as they stabilise.
@@ -222,8 +229,10 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         _logger.LogInformation("Loading model '{ModelAlias}' into runtime.", modelAlias);
         await model.LoadAsync();
 
+        _model = model;
         _audioClient = await model.GetAudioClientAsync();
         _modelId = model.Id;
+        _modelLoaded = true;
         _logger.LogInformation("TranscriptionEngine ready.");
     }
 
@@ -238,6 +247,18 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (string.IsNullOrWhiteSpace(_modelId))
             throw new InvalidOperationException(
                 "Call InitializeAsync before starting a session.");
+
+        // Cancel any pending idle-unload timer so the model stays loaded.
+        _unloadTimerCts?.Cancel();
+
+        // Reload model if the idle-unload timer already fired (only when _model was set via InitializeAsync).
+        if (!_modelLoaded && _model is not null)
+        {
+            _logger.LogInformation("Reloading model after idle timeout.");
+            await _model.LoadAsync();
+            _audioClient = await _model.GetAudioClientAsync();
+            _modelLoaded = true;
+        }
 
         _liveSession = _liveSessionFactory.Create(_modelId!, _logger, _audioClient);
         _resultChannel = Channel.CreateUnbounded<TranscriptionResult>(
@@ -339,6 +360,54 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         await _liveSession.DisposeAsync().ConfigureAwait(false);
         _liveSession = null;
         _logger.LogInformation("Transcription session stopped.");
+
+        // Schedule model unload after idle period if configured.
+        if (UnloadTimeout != ModelUnloadTimeout.Never)
+        {
+            _unloadTimerCts?.Cancel();
+            _unloadTimerCts?.Dispose();
+            var cts = new CancellationTokenSource();
+            _unloadTimerCts = cts;
+            _ = Task.Run(() => UnloadAfterDelayAsync(cts.Token));
+        }
+    }
+
+    private async Task UnloadAfterDelayAsync(CancellationToken cancellationToken)
+    {
+        var delay = UnloadTimeout switch
+        {
+            ModelUnloadTimeout.Min2  => TimeSpan.FromMinutes(2),
+            ModelUnloadTimeout.Min5  => TimeSpan.FromMinutes(5),
+            ModelUnloadTimeout.Min15 => TimeSpan.FromMinutes(15),
+            _                        => Timeout.InfiniteTimeSpan
+        };
+
+        try
+        {
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+            return;
+
+        if (_model is not null)
+        {
+            try
+            {
+                await _model.UnloadAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to call UnloadAsync on model; marking as unloaded anyway.");
+            }
+        }
+
+        _modelLoaded = false;
+        _logger.LogInformation("Model unloaded after idle timeout.");
     }
 
     /// <inheritdoc/>
@@ -361,6 +430,8 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             return;
 
         _disposed = true;
+        _unloadTimerCts?.Cancel();
+        _unloadTimerCts?.Dispose();
         await StopSessionAsync();
         if (FoundryLocalManager.IsInitialized)
             FoundryLocalManager.Instance.Dispose();

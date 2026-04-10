@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using Hush.Core.PostProcessing;
+
 namespace Hush.Core.Configuration;
+
+public enum AutoSubmitKey { None, Enter, CtrlEnter }
+
+public enum ModelUnloadTimeout { Never, Min2, Min5, Min15 }
 
 /// <summary>
 /// Persisted user preferences for Hush.
@@ -46,8 +52,16 @@ public sealed class HushSettings
     /// <summary>Whether Hush should launch at OS login.</summary>
     public bool AutoStart { get; set; } = false;
 
-    /// <summary>
-    /// Audio input device index. <c>-1</c> means system default.
+    /// <summary>Audio input device index. <c>-1</c> means system default.
     /// </summary>
     public int MicrophoneDeviceIndex { get; set; } = -1;
+
+    /// <summary>User-defined word substitutions applied to committed dictation output.</summary>
+    public List<TextSubstitution> CustomSubstitutions { get; set; } = new();
+
+    /// <summary>Key combination sent to the focused app after dictation ends. Default is None.</summary>
+    public AutoSubmitKey AutoSubmitKey { get; set; } = AutoSubmitKey.None;
+
+    /// <summary>How long after the last session before the transcription model is unloaded to free RAM.</summary>
+    public ModelUnloadTimeout ModelUnloadTimeout { get; set; } = ModelUnloadTimeout.Min5;
 }
