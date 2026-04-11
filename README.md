@@ -45,27 +45,46 @@ Progress is shown in the overlay and tray icon tooltip.
 
 1. Launch Hush — a tray icon appears.
 2. Focus the app and text field where you want to type.
-3. Hold **Ctrl+Shift+H** → the overlay shows "Listening…"
+3. Hold **Ctrl+H** → the overlay shows "Listening…"
 4. Speak — words appear live in the overlay and are typed into your active field.
 5. Release the hotkey — recording stops and the overlay disappears.
+
+For **clean mode** (spinner, no live streaming — LLM rewrite coming soon):
+- Hold **Alt+H** instead. Audio is recorded with a spinner overlay, and the full transcript is committed on release.
 
 Right-click the tray icon to open **Settings** or **Quit**.
 
 > **Note:** Hush cannot type into elevated (administrator) windows unless it is also run as administrator. If typing doesn't appear, check the overlay for an error message.
 
+## CLI Remote Control
+
+While Hush is running you can send commands to it from a terminal or script:
+
+```bash
+hush --toggle        # start/stop raw dictation (same as Ctrl+H)
+hush --toggle-clean  # start/stop clean-mode dictation (same as Alt+H)
+hush --cancel        # stop the active session without committing
+hush --copy-last     # copy the last transcript to the clipboard
+```
+
+These flags are useful for Wayland environments (where global hotkeys may not work), stream decks, and automation scripts. They communicate with the running instance over a named pipe (Windows) or Unix socket (macOS/Linux). If Hush is not running, the command prints a message and exits with code 1.
+
 ## Configuration
 
 Settings are stored in `~/.hush/settings.json`.
 
-| Key                  | Default          | Description                                                    |
-| -------------------- | ---------------- | -------------------------------------------------------------- |
-| `hotkey`             | `"Ctrl+Shift+H"` | Global push-to-talk hotkey                                     |
-| `language`           | `"en"`           | BCP-47 transcription language                                  |
-| `transcriptionModel` | `"whisper-tiny"` | Foundry Local model alias                                      |
-| `overlayOpacity`     | `0.85`           | Overlay background opacity                                     |
-| `soundEffects`       | `true`           | Start/stop audio cues                                          |
-| `autoStart`          | `false`          | Launch at OS login                                             |
-| `clipboardFallback`  | `false`          | Use clipboard paste instead of Unicode input (for legacy apps) |
+| Key                     | Default          | Description                                                    |
+| ----------------------- | ---------------- | -------------------------------------------------------------- |
+| `hotkey`                | `"Ctrl+H"`       | Global push-to-talk hotkey (raw mode)                          |
+| `cleanHotkey`           | `"Alt+H"`        | Global push-to-talk hotkey (clean mode)                        |
+| `postProcessingEnabled` | `true`           | Enable LLM rewrite on clean-mode sessions (coming soon)        |
+| `postProcessingModel`   | `"qwen3-0.6b"`   | Foundry Local model alias for post-processing (coming soon)    |
+| `language`              | `"en"`           | BCP-47 transcription language                                  |
+| `transcriptionModel`    | `"whisper-tiny"` | Foundry Local model alias                                      |
+| `overlayOpacity`        | `0.85`           | Overlay background opacity                                     |
+| `soundEffects`          | `true`           | Start/stop audio cues                                          |
+| `autoStart`             | `false`          | Launch at OS login                                             |
+| `clipboardFallback`     | `false`          | Use clipboard paste instead of Unicode input (for legacy apps) |
 
 ## Build Prerequisites
 

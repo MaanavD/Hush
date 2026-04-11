@@ -13,8 +13,6 @@ internal static class Program
 {
     private const string MutexName = "Global\\Hush_SingleInstance_B8F2A1D0";
 
-    private static readonly string[] KnownFlags = ["--toggle", "--toggle-clean", "--cancel", "--copy-last"];
-
     // Avalonia configuration; don't remove or modify.
     [STAThread]
     public static void Main(string[] args)

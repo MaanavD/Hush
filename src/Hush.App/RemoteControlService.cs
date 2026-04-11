@@ -20,8 +20,27 @@ public sealed class RemoteControlService : IAsyncDisposable
     /// <summary>Pipe name used on Windows (<c>\\.\pipe\HushRemoteControl</c>).</summary>
     internal const string WindowsPipeName = "HushRemoteControl";
 
-    /// <summary>Unix socket path used on macOS/Linux.</summary>
-    internal const string UnixSocketPath = "/tmp/hush-remote.sock";
+    /// <summary>
+    /// Unix socket path used on macOS/Linux.
+    /// Prefers <c>$XDG_RUNTIME_DIR</c> (per-user, managed by systemd-logind on Linux)
+    /// so that other users on the same machine cannot send commands to this instance.
+    /// Falls back to <c>~/.local/share/hush/</c> on systems without XDG_RUNTIME_DIR.
+    /// </summary>
+    internal static string UnixSocketPath => GetUnixSocketPath();
+
+    private static string GetUnixSocketPath()
+    {
+        var xdgRuntime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+        if (!string.IsNullOrEmpty(xdgRuntime))
+            return Path.Combine(xdgRuntime, "hush-remote.sock");
+
+        // Fallback: per-user directory under home (still safer than /tmp).
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".local", "share", "hush");
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, "hush-remote.sock");
+    }
 
     private readonly MainViewModel _mainVm;
     private CancellationTokenSource? _cts;
@@ -83,12 +102,26 @@ public sealed class RemoteControlService : IAsyncDisposable
 
     private async Task ListenUnixAsync(CancellationToken ct)
     {
-        // Clean up any stale socket file from a previous crash.
-        if (File.Exists(UnixSocketPath))
-            File.Delete(UnixSocketPath);
+        var socketPath = UnixSocketPath;
+
+        // Remove a stale socket from a previous crash.
+        // Using a per-user directory (XDG_RUNTIME_DIR or ~/.local/share/hush)
+        // means we own any file there, so deletion is safe.
+        if (File.Exists(socketPath))
+            File.Delete(socketPath);
 
         using var serverSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        serverSocket.Bind(new UnixDomainSocketEndPoint(UnixSocketPath));
+        serverSocket.Bind(new UnixDomainSocketEndPoint(socketPath));
+
+        // Restrict access to the current user only (rwx------).
+        // Supported on Linux and macOS; no-op on other platforms.
+        try
+        {
+            File.SetUnixFileMode(socketPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        catch { /* best effort — not all file systems support Unix permissions */ }
+
         serverSocket.Listen(8);
 
         ct.Register(() => serverSocket.Close());
@@ -191,6 +224,5 @@ public sealed class RemoteControlService : IAsyncDisposable
         {
             try { File.Delete(UnixSocketPath); }
             catch { /* best effort */ }
-        }
-    }
+        }    }
 }

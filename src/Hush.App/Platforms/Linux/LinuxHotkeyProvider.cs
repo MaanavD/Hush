@@ -98,6 +98,7 @@ public sealed class LinuxHotkeyProvider : IGlobalHotkeyService
     private int _cleanKeycode;
     private uint _cleanModMask;
     private Thread? _cleanThread;
+    private CancellationTokenSource? _cleanCts;
 
     public event EventHandler? HotkeyPressed;
     public event EventHandler? HotkeyReleased;
@@ -195,15 +196,18 @@ public sealed class LinuxHotkeyProvider : IGlobalHotkeyService
 
         XFlush(_cleanDisplay);
 
-        _cleanThread = new Thread(CleanPollLoop) { IsBackground = true, Name = "Hush.X11CleanHotkeyPoll" };
+        _cleanCts?.Cancel();
+        _cleanCts = new CancellationTokenSource();
+        var cleanCt = _cleanCts.Token;
+        _cleanThread = new Thread(() => CleanPollLoop(cleanCt)) { IsBackground = true, Name = "Hush.X11CleanHotkeyPoll" };
         _cleanThread.Start();
         _logger.LogInformation("Linux clean hotkey '{Hotkey}' grabbed (keycode={Kc}, mods=0x{M:X}).",
             hotkey, _cleanKeycode, _cleanModMask);
     }
 
-    private void CleanPollLoop()
+    private void CleanPollLoop(CancellationToken ct)
     {
-        while (!_disposed)
+        while (!ct.IsCancellationRequested)
         {
             if (XPending(_cleanDisplay) > 0)
             {
@@ -226,6 +230,12 @@ public sealed class LinuxHotkeyProvider : IGlobalHotkeyService
     public void UnregisterClean()
     {
         if (_cleanDisplay == 0) return;
+
+        // Signal the poll thread to stop and wait for it to exit before closing
+        // the display — avoids XPending/XNextEvent calls on an invalid handle.
+        _cleanCts?.Cancel();
+        _cleanThread?.Join(1000); // loop wakes every 8 ms; 1 s is more than enough
+        _cleanThread = null;
 
         foreach (uint extra in LockVariants())
             XUngrabKey(_cleanDisplay, _cleanKeycode, _cleanModMask | extra, _cleanRootWindow);
