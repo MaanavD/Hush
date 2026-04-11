@@ -35,6 +35,8 @@ launchSettings.json
 *.nupkg.metadata
 *.snupkg
 .nuget/
+# Allow pre-release packages vendored for CI (not on nuget.org)
+!packages/*.nupkg
 
 # Local history for Visual Studio
 .localhistory/
