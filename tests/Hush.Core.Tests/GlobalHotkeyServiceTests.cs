@@ -85,7 +85,7 @@ public sealed class GlobalHotkeyServiceTests
     // ── Clean hotkey event forwarding ────────────────────────────────────
 
     [Fact]
-    public void RegisterClean_ForwardsPressed()
+    public void CleanHotkeyPressed_ForwardsFromInner()
     {
         var innerMock = new Mock<IGlobalHotkeyService>();
         var service = new GlobalHotkeyService(innerMock.Object);
@@ -100,7 +100,7 @@ public sealed class GlobalHotkeyServiceTests
     }
 
     [Fact]
-    public void RegisterClean_ForwardsReleased()
+    public void CleanHotkeyReleased_ForwardsFromInner()
     {
         var innerMock = new Mock<IGlobalHotkeyService>();
         var service = new GlobalHotkeyService(innerMock.Object);

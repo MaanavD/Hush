@@ -13,8 +13,6 @@ internal static class Program
 {
     private const string MutexName = "Global\\Hush_SingleInstance_B8F2A1D0";
 
-    private static readonly string[] KnownFlags = ["--toggle", "--toggle-clean", "--cancel", "--copy-last"];
-
     // Avalonia configuration; don't remove or modify.
     [STAThread]
     public static void Main(string[] args)
@@ -184,19 +182,29 @@ internal static class Program
             }
         }
 
-        // Also register a DLL import resolver for assemblies that P/Invoke "onnxruntime"
-        // so that late-bound loads also resolve from our directory.
-        NativeLibrary.SetDllImportResolver(
-            typeof(Microsoft.ML.OnnxRuntime.OrtEnv).Assembly,
-            (libraryName, assembly, searchPath) =>
-            {
-                foreach (string dir in searchDirs)
+        // Also register a DLL import resolver for the OnnxRuntime managed assembly so
+        // that late-bound P/Invoke calls also resolve from our directory.
+        // Resolve the assembly by name at runtime to avoid a compile-time package
+        // reference on Microsoft.ML.OnnxRuntime in Hush.App.csproj.
+        try
+        {
+            var ort = System.Reflection.Assembly.Load("Microsoft.ML.OnnxRuntime");
+            NativeLibrary.SetDllImportResolver(
+                ort,
+                (libraryName, assembly, searchPath) =>
                 {
-                    string candidate = Path.Combine(dir, $"{libraryName}.dll");
-                    if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out var handle))
-                        return handle;
-                }
-                return IntPtr.Zero;
-            });
+                    foreach (string dir in searchDirs)
+                    {
+                        string candidate = Path.Combine(dir, $"{libraryName}.dll");
+                        if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out var handle))
+                            return handle;
+                    }
+                    return IntPtr.Zero;
+                });
+        }
+        catch (Exception)
+        {
+            // OnnxRuntime assembly not loaded yet — the eager pre-load above is sufficient.
+        }
     }
 }

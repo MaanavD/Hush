@@ -31,6 +31,7 @@ public sealed class App : Application
     private ITranscriptionEngine? _transcriptionEngine;
     private IAudioCaptureService? _audioCapture;
     private ILogger<App>? _logger;
+    private RemoteControlService? _remoteControl;
 
     public override void Initialize()
     {
@@ -118,8 +119,8 @@ public sealed class App : Application
             }
 
             // Start named-pipe remote control listener for CLI flags and Wayland daemons.
-            var remoteControl = new RemoteControlService(_mainVm);
-            _ = remoteControl.StartListeningAsync();
+            _remoteControl = new RemoteControlService(_mainVm);
+            _ = _remoteControl.StartListeningAsync();
 
             // Wire cleanup on shutdown.
             desktop.ShutdownRequested += OnShutdownRequested;
@@ -213,6 +214,9 @@ public sealed class App : Application
             _hotkeyService?.Unregister();
             _hotkeyService?.UnregisterClean();
             _hotkeyService?.Dispose();
+
+            if (_remoteControl is not null)
+                await _remoteControl.DisposeAsync();
 
             if (_dictationSession is not null)
                 await _dictationSession.DisposeAsync();

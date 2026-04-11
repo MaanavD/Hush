@@ -132,7 +132,7 @@
                 <!-- Post-processing toggle -->
                 <Grid ColumnDefinitions="160,*" Margin="0 0 0 10">
                     <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                        <TextBlock Text="LLM rewrite"
+                        <TextBlock Text="LLM rewrite (coming soon)"
                                    FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
                         <TextBlock Text="On clean-mode sessions"
                                    FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
@@ -141,13 +141,14 @@
                                   IsChecked="{Binding PostProcessingEnabled}"
                                   HorizontalAlignment="Left"
                                   VerticalAlignment="Center"
-                                  OffContent="" OnContent="" />
+                                  OffContent="" OnContent=""
+                                  ToolTip.Tip="LLM rewrite will be active once the post-processing feature ships. Saving this setting now means it will take effect automatically." />
                 </Grid>
 
                 <!-- LLM model -->
                 <Grid ColumnDefinitions="160,*" Margin="0 0 0 6">
                     <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                        <TextBlock Text="LLM model"
+                        <TextBlock Text="LLM model (coming soon)"
                                    FontSize="13" Foreground="{StaticResource Hush.Text.Primary.Brush}" />
                         <TextBlock Text="Foundry Local alias"
                                    FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
@@ -156,7 +157,7 @@
                              Text="{Binding PostProcessingModel}"
                              Watermark="qwen3-0.6b"
                              IsEnabled="{Binding PostProcessingEnabled}"
-                             ToolTip.Tip="Foundry Local model alias used for LLM rewriting. Must be a small chat model." />
+                             ToolTip.Tip="Foundry Local model alias for LLM rewriting. Must be a small chat model (~400 MB)." />
                 </Grid>
                 <TextBlock Text="Model loads on first clean-mode use. Requires ~400 MB disk space."
                            FontSize="10" Foreground="{StaticResource Hush.Text.Muted.Brush}"
@@ -434,4 +435,3 @@
 
     </Grid>
 </Window>
-
