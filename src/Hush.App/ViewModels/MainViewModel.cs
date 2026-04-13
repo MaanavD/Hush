@@ -5,6 +5,7 @@ using Hush.Core.Audio;
 using Hush.Core.Configuration;
 using Hush.Core.Input;
 using Hush.Core.Output;
+using Hush.Core.PostProcessing;
 using Hush.Core.Session;
 using Hush.Core.Transcription;
 using Microsoft.Extensions.Logging;
@@ -28,6 +29,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IAudioCaptureService _audioCapture;
     private readonly OverlayViewModel _overlayVm;
     private readonly ILogger<MainViewModel> _logger;
+    private readonly IPostProcessingService? _postProcessor;
 
     [ObservableProperty]
     private bool _isModelReady;
@@ -54,7 +56,8 @@ public sealed partial class MainViewModel : ObservableObject
         IAutoStartService autoStart,
         IAudioCaptureService audioCapture,
         OverlayViewModel overlayVm,
-        ILogger<MainViewModel>? logger = null)
+        ILogger<MainViewModel>? logger = null,
+        IPostProcessingService? postProcessor = null)
     {
         _settings = settings;
         _settingsService = settingsService;
@@ -66,6 +69,7 @@ public sealed partial class MainViewModel : ObservableObject
         _audioCapture = audioCapture;
         _overlayVm = overlayVm;
         _logger = logger ?? NullLogger<MainViewModel>.Instance;
+        _postProcessor = postProcessor;
 
         _overlayVm.OverlayPosition = settings.OverlayPosition;
         _overlayVm.OverlayOpacity = settings.OverlayOpacity;
@@ -131,6 +135,23 @@ public sealed partial class MainViewModel : ObservableObject
             StatusMessage = BuildReadyStatusMessage();
             _logger.LogInformation("Hush is ready.");
 
+            // If PostProcessingEnabled, warm up the LLM rewrite model in the background.
+            if (_settings.PostProcessingEnabled && _postProcessor is not null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _postProcessor.InitializeAsync(_settings.PostProcessingModel, cancellationToken);
+                        _logger.LogInformation("Post-processing model '{Model}' ready.", _settings.PostProcessingModel);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Post-processing model init failed; clean mode will use plain transcript.");
+                    }
+                });
+            }
+
             // Warm up first-press code paths so the JIT doesn't stall the
             // initial hotkey press. A quick start/stop also validates that the
             // default microphone path is actually usable before the first dictation.
@@ -174,6 +195,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var previousHotkey = _settings.Hotkey;
         var previousCleanHotkey = _settings.CleanHotkey;
+        var previousPostProcessingModel = _settings.PostProcessingModel;
         SettingsViewModel.Apply();
 
         string? hotkeyError = null;
@@ -215,6 +237,25 @@ public sealed partial class MainViewModel : ObservableObject
         _overlayVm.OverlayPosition = _settings.OverlayPosition;
         _overlayVm.OverlayOpacity = _settings.OverlayOpacity;
         _audioCapture.DeviceIndex = _settings.MicrophoneDeviceIndex;
+
+        // Re-initialize post-processor if the model alias changed.
+        if (_settings.PostProcessingEnabled
+            && _postProcessor is not null
+            && !string.Equals(previousPostProcessingModel, _settings.PostProcessingModel, StringComparison.Ordinal))
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _postProcessor.InitializeAsync(_settings.PostProcessingModel, cancellationToken);
+                    _logger.LogInformation("Post-processing model updated to '{Model}'.", _settings.PostProcessingModel);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Post-processing model re-init failed.");
+                }
+            });
+        }
 
         if (hotkeyError is not null)
         {
@@ -322,14 +363,15 @@ public sealed partial class MainViewModel : ObservableObject
             if (_settings.SoundEffects)
                 _ = _soundEffects.PlayStartAsync();
 
-            // postProcessingPrompt will be wired once feature/llm-postprocessing merges.
-            // _settings.PostProcessingEnabled and _settings.PostProcessingModel are already
-            // persisted and ready to pass once IDictationSession.StartAsync gains the parameter.
-            // TODO: pass postProcessingPrompt: _settings.PostProcessingEnabled ? GetActivePrompt() : null
+            var prompt = (_settings.PostProcessingEnabled && _postProcessor?.IsReady == true)
+                ? _settings.GetActivePrompt().Prompt
+                : null;
+
             await _dictationSession.StartAsync(
                 _settings.Language,
                 streamingCommit: false,
-                showSpinner: true);
+                showSpinner: true,
+                postProcessingPrompt: prompt);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

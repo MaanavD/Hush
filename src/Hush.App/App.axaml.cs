@@ -11,6 +11,7 @@ using Hush.Core.Audio;
 using Hush.Core.Configuration;
 using Hush.Core.Input;
 using Hush.Core.Output;
+using Hush.Core.PostProcessing;
 using Hush.Core.Session;
 using Hush.Core.Transcription;
 using Microsoft.Extensions.Logging;
@@ -32,6 +33,7 @@ public sealed class App : Application
     private IAudioCaptureService? _audioCapture;
     private ILogger<App>? _logger;
     private RemoteControlService? _remoteControl;
+    private FoundryPostProcessingService? _postProcessor;
 
     public override void Initialize()
     {
@@ -73,11 +75,14 @@ public sealed class App : Application
                 _loggerFactory.CreateLogger<KeystrokeTypingService>(),
                 useClipboardFallback: settings.ClipboardFallback);
             var transcriptBuffer = new TranscriptBuffer();
+            _postProcessor = new FoundryPostProcessingService(
+                _loggerFactory.CreateLogger<FoundryPostProcessingService>());
             _dictationSession = new DictationSession(
                 _transcriptionEngine, _audioCapture, textOutput,
                 _loggerFactory.CreateLogger<DictationSession>(),
                 substitutions: settings.CustomSubstitutions,
-                transcriptBuffer: transcriptBuffer);
+                transcriptBuffer: transcriptBuffer,
+                postProcessor: _postProcessor);
 
             var platformHotkeyProvider = CreatePlatformHotkeyProvider();
             _hotkeyService = new GlobalHotkeyService(platformHotkeyProvider, _loggerFactory.CreateLogger<GlobalHotkeyService>());
@@ -88,7 +93,8 @@ public sealed class App : Application
             _mainVm = new MainViewModel(
                 settings, settingsService, _transcriptionEngine,
                 _dictationSession, _hotkeyService, soundEffects, autoStart, _audioCapture, overlayVm,
-                _loggerFactory.CreateLogger<MainViewModel>());
+                _loggerFactory.CreateLogger<MainViewModel>(),
+                postProcessor: _postProcessor);
 
             _overlayWindow = new OverlayWindow { DataContext = overlayVm };
             _overlayWindow.Show();   // Show once so visibility changes never re-activate the window.
@@ -220,6 +226,9 @@ public sealed class App : Application
 
             if (_dictationSession is not null)
                 await _dictationSession.DisposeAsync();
+
+            if (_postProcessor is not null)
+                await _postProcessor.DisposeAsync();
 
             if (_transcriptionEngine is not null)
                 await _transcriptionEngine.DisposeAsync();
