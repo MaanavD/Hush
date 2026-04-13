@@ -284,7 +284,7 @@ public sealed partial class MainViewModel : ObservableObject
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
             {
                 IsListening = true;
-                _overlayVm.BeginSession(_settings.PartialsInOverlay);
+                _overlayVm.BeginSession(_settings.PartialsInOverlay, isCleanMode: false);
                 _overlayVm.IsListening = true;
                 _overlayVm.ErrorMessage = null;   // Clear previous error on new attempt.
             });
@@ -355,7 +355,7 @@ public sealed partial class MainViewModel : ObservableObject
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
             {
                 IsListening = true;
-                _overlayVm.BeginSession(_settings.PartialsInOverlay);
+                _overlayVm.BeginSession(_settings.PartialsInOverlay, isCleanMode: true);
                 _overlayVm.IsListening = true;
                 _overlayVm.ErrorMessage = null;
             });

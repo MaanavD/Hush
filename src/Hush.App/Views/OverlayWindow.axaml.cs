@@ -41,6 +41,7 @@ public sealed partial class OverlayWindow : Window
         double Freq3, double Speed3, double Weight3,
         double ResponseAttack, double ResponseDecay, double PhaseOffset);
 
+    // Purple wave configs for raw mode.
     private static readonly WaveConfig[] WaveConfigs =
     [
         // Line 1: Purple — primary, clean sinusoidal, one full cycle (peak + trough)
@@ -65,9 +66,37 @@ public sealed partial class OverlayWindow : Window
             ResponseAttack: 0.45, ResponseDecay: 0.08, PhaseOffset: 2.2),
     ];
 
+    // Teal wave configs for clean mode.
+    private static readonly WaveConfig[] CleanWaveConfigs =
+    [
+        // Line 1: Teal — primary
+        new(Color.FromRgb(100, 197, 179), 1.8, 1.0,
+            Freq1: 5.0, Speed1: 3.2, Weight1: 0.90,
+            Freq2: 10.0, Speed2: -1.5, Weight2: 0.07,
+            Freq3: 15.0, Speed3: 2.0, Weight3: 0.03,
+            ResponseAttack: 0.65, ResponseDecay: 0.15, PhaseOffset: 0.0),
+
+        // Line 2: Cyan — secondary
+        new(Color.FromRgb(103, 232, 249), 1.2, 0.45,
+            Freq1: 7.5, Speed1: 5.2, Weight1: 0.40,
+            Freq2: 14.0, Speed2: -3.8, Weight2: 0.35,
+            Freq3: 20.0, Speed3: 7.5, Weight3: 0.25,
+            ResponseAttack: 0.60, ResponseDecay: 0.12, PhaseOffset: 1.0),
+
+        // Line 3: Sea-green — tertiary, trailing echo
+        new(Color.FromRgb(52, 211, 153), 1.0, 0.35,
+            Freq1: 4.0, Speed1: 2.8, Weight1: 0.55,
+            Freq2: 7.0, Speed2: -2.0, Weight2: 0.28,
+            Freq3: 12.0, Speed3: 4.5, Weight3: 0.17,
+            ResponseAttack: 0.45, ResponseDecay: 0.08, PhaseOffset: 2.2),
+    ];
+
     private Canvas? _canvas;
+    private Canvas? _canvasClean;
     private Polyline[]? _waveLines;
+    private Polyline[]? _waveLinesClean;
     private readonly double[] _displayLevels = new double[3];
+    private readonly double[] _displayLevelsClean = new double[3];
     private DispatcherTimer? _animTimer;
     private float _targetLevel;
     private double _animTime;
@@ -85,19 +114,13 @@ public sealed partial class OverlayWindow : Window
         _canvas = this.FindControl<Canvas>("WaveCanvas");
         if (_canvas is not null)
         {
-            _waveLines = new Polyline[WaveConfigs.Length];
-            for (int i = 0; i < WaveConfigs.Length; i++)
-            {
-                var cfg = WaveConfigs[i];
-                _waveLines[i] = new Polyline
-                {
-                    Stroke = new SolidColorBrush(cfg.Color),
-                    StrokeThickness = cfg.Thickness,
-                    StrokeLineCap = PenLineCap.Round,
-                    Opacity = 0,
-                };
-                _canvas.Children.Add(_waveLines[i]);
-            }
+            _waveLines = InitWaveLines(_canvas, WaveConfigs);
+        }
+
+        _canvasClean = this.FindControl<Canvas>("WaveCanvasClean");
+        if (_canvasClean is not null)
+        {
+            _waveLinesClean = InitWaveLines(_canvasClean, CleanWaveConfigs);
         }
 
         if (DataContext is OverlayViewModel vm)
@@ -135,30 +158,56 @@ public sealed partial class OverlayWindow : Window
 
     private void OnAnimTick(object? sender, EventArgs e)
     {
-        if (_waveLines is null || _canvas is null) return;
-
         const double dt = 0.016;
         _animTime += dt;
 
         bool isListening = _viewModel?.IsListening ?? false;
-        double target = isListening ? _targetLevel : 0.0;
+        bool isClean = _viewModel?.IsCleanMode ?? false;
 
-        double w = _canvas.Bounds.Width;
-        double h = _canvas.Bounds.Height;
+        AnimateCanvas(_canvas, _waveLines, WaveConfigs, _displayLevels, isListening && !isClean, dt);
+        AnimateCanvas(_canvasClean, _waveLinesClean, CleanWaveConfigs, _displayLevelsClean, isListening && isClean, dt);
+    }
+
+    private static Polyline[] InitWaveLines(Canvas canvas, WaveConfig[] configs)
+    {
+        var lines = new Polyline[configs.Length];
+        for (int i = 0; i < configs.Length; i++)
+        {
+            var cfg = configs[i];
+            lines[i] = new Polyline
+            {
+                Stroke = new SolidColorBrush(cfg.Color),
+                StrokeThickness = cfg.Thickness,
+                StrokeLineCap = PenLineCap.Round,
+                Opacity = 0,
+            };
+            canvas.Children.Add(lines[i]);
+        }
+        return lines;
+    }
+
+    private void AnimateCanvas(Canvas? canvas, Polyline[]? waveLines, WaveConfig[] configs,
+        double[] displayLevels, bool active, double dt)
+    {
+        if (waveLines is null || canvas is null) return;
+
+        double target = active ? _targetLevel : 0.0;
+
+        double w = canvas.Bounds.Width;
+        double h = canvas.Bounds.Height;
         if (w < 1 || h < 1) return;
 
         double midY = h / 2.0;
         double drawWidth = w - WavePadX * 2;
         double maxAmp = (h / 2.0) - WavePadY;
 
-        for (int li = 0; li < WaveConfigs.Length; li++)
+        for (int li = 0; li < configs.Length; li++)
         {
-            var cfg = WaveConfigs[li];
+            var cfg = configs[li];
 
-            // Each line has its own smoothed audio level (different attack/decay)
-            double response = target > _displayLevels[li] ? cfg.ResponseAttack : cfg.ResponseDecay;
-            _displayLevels[li] += (target - _displayLevels[li]) * response;
-            double level = _displayLevels[li];
+            double response = target > displayLevels[li] ? cfg.ResponseAttack : cfg.ResponseDecay;
+            displayLevels[li] += (target - displayLevels[li]) * response;
+            double level = displayLevels[li];
 
             var points = new Points();
 
@@ -167,18 +216,13 @@ public sealed partial class OverlayWindow : Window
                 double t = i / (double)(PointCount - 1);
                 double x = WavePadX + t * drawWidth;
 
-                // Flattened bell envelope — stays near full amplitude from ~25% to ~75%,
-                // tapers at edges. This pushes peaks/troughs outward from center.
                 double envelope = Math.Pow(Math.Sin(Math.PI * t), 0.7);
 
-                // Composite wave — use tanh to soft-clip peaks for a rounder shape
-                // instead of raw sine stacking which looks too mechanical.
                 double raw =
                     Math.Sin(t * cfg.Freq1 + _animTime * cfg.Speed1 + cfg.PhaseOffset) * cfg.Weight1 +
                     Math.Sin(t * cfg.Freq2 + _animTime * cfg.Speed2 + cfg.PhaseOffset * 0.7) * cfg.Weight2 +
                     Math.Sin(t * cfg.Freq3 + _animTime * cfg.Speed3 + cfg.PhaseOffset * 1.3) * cfg.Weight3;
 
-                // Soft-clip for more natural peaks (less spiky, more rounded)
                 double wave = Math.Tanh(raw * 1.4);
 
                 double idle = IdleAmplitude * Math.Sin(t * 3.0 + _animTime * 1.2 + cfg.PhaseOffset) * envelope;
@@ -187,13 +231,12 @@ public sealed partial class OverlayWindow : Window
                 points.Add(new Point(x, midY + amp));
             }
 
-            _waveLines[li].Points = points;
+            waveLines[li].Points = points;
 
-            // Opacity: base from config, scaled by audio level
-            double opacity = isListening
+            double opacity = active
                 ? cfg.Opacity * Math.Max(0.5, level)
-                : Math.Max(0, _waveLines[li].Opacity - 0.04);
-            _waveLines[li].Opacity = opacity;
+                : Math.Max(0, waveLines[li].Opacity - 0.04);
+            waveLines[li].Opacity = opacity;
         }
     }
 

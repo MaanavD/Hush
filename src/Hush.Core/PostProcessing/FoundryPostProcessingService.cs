@@ -67,18 +67,33 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
         {
             var messages = new[]
             {
-                ChatMessage.FromSystem(systemPrompt),
+                // /no_thinking disables Qwen3's chain-of-thought mode via the soft switch.
+                ChatMessage.FromSystem("/no_thinking\n" + systemPrompt),
                 ChatMessage.FromUser(rawTranscript)
             };
 
             var response = await _chatClient.CompleteChatAsync(messages, ct);
-            return response?.Choices?[0]?.Message?.Content?.Trim();
+            var raw = response?.Choices?[0]?.Message?.Content?.Trim();
+            return raw is null ? null : StripThinking(raw);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Post-processing rewrite failed — returning null.");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Removes Qwen3 chain-of-thought content. Thinking models wrap reasoning in
+    /// &lt;think&gt;…&lt;/think&gt; before the final answer; strip that block.
+    /// If no closing tag is found the text is returned as-is.
+    /// </summary>
+    private static string StripThinking(string text)
+    {
+        var closeIdx = text.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+        if (closeIdx >= 0)
+            return text[(closeIdx + "</think>".Length)..].Trim();
+        return text;
     }
 
     /// <inheritdoc/>

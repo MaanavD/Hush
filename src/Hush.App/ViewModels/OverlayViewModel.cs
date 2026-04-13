@@ -11,7 +11,15 @@ public sealed partial class OverlayViewModel : ObservableObject
 {
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowListeningHint))]
+    [NotifyPropertyChangedFor(nameof(IsListeningRaw))]
+    [NotifyPropertyChangedFor(nameof(IsListeningClean))]
     private bool _isListening;
+
+    /// <summary>True when a clean-mode (LLM rewrite) session is active; drives teal overlay colour.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsListeningRaw))]
+    [NotifyPropertyChangedFor(nameof(IsListeningClean))]
+    private bool _isCleanMode;
 
     /// <summary>Model download progress 0–1. Shown before the model is ready.</summary>
     [ObservableProperty]
@@ -68,14 +76,21 @@ public sealed partial class OverlayViewModel : ObservableObject
 
     public bool IsPreparing => !IsModelReady && !HasError;
 
+    /// <summary>Listening in raw (purple) mode.</summary>
+    public bool IsListeningRaw => IsListening && !IsCleanMode;
+
+    /// <summary>Listening in clean (teal) mode.</summary>
+    public bool IsListeningClean => IsListening && IsCleanMode;
+
     /// <summary>
     /// Prepares the overlay transcript state for a new dictation session.
     /// </summary>
-    public void BeginSession(bool showPartialTranscript)
+    public void BeginSession(bool showPartialTranscript, bool isCleanMode = false)
     {
         _showPartialTranscript = showPartialTranscript;
         _committedTranscript = string.Empty;
         TranscriptText = string.Empty;
+        IsCleanMode = isCleanMode;
     }
 
     /// <summary>
