@@ -66,25 +66,25 @@ public sealed partial class OverlayWindow : Window
             ResponseAttack: 0.45, ResponseDecay: 0.08, PhaseOffset: 2.2),
     ];
 
-    // Teal wave configs for clean mode.
+    // Amber/orange wave configs for clean mode.
     private static readonly WaveConfig[] CleanWaveConfigs =
     [
-        // Line 1: Teal — primary
-        new(Color.FromRgb(100, 197, 179), 1.8, 1.0,
+        // Line 1: Amber — primary
+        new(Color.FromRgb(245, 158, 11), 1.8, 1.0,
             Freq1: 5.0, Speed1: 3.2, Weight1: 0.90,
             Freq2: 10.0, Speed2: -1.5, Weight2: 0.07,
             Freq3: 15.0, Speed3: 2.0, Weight3: 0.03,
             ResponseAttack: 0.65, ResponseDecay: 0.15, PhaseOffset: 0.0),
 
-        // Line 2: Cyan — secondary
-        new(Color.FromRgb(103, 232, 249), 1.2, 0.45,
+        // Line 2: Orange — secondary
+        new(Color.FromRgb(251, 146, 60), 1.2, 0.45,
             Freq1: 7.5, Speed1: 5.2, Weight1: 0.40,
             Freq2: 14.0, Speed2: -3.8, Weight2: 0.35,
             Freq3: 20.0, Speed3: 7.5, Weight3: 0.25,
             ResponseAttack: 0.60, ResponseDecay: 0.12, PhaseOffset: 1.0),
 
-        // Line 3: Sea-green — tertiary, trailing echo
-        new(Color.FromRgb(52, 211, 153), 1.0, 0.35,
+        // Line 3: Yellow — tertiary, trailing echo
+        new(Color.FromRgb(250, 204, 21), 1.0, 0.35,
             Freq1: 4.0, Speed1: 2.8, Weight1: 0.55,
             Freq2: 7.0, Speed2: -2.0, Weight2: 0.28,
             Freq3: 12.0, Speed3: 4.5, Weight3: 0.17,

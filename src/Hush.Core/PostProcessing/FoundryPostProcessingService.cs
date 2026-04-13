@@ -65,11 +65,17 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
 
         try
         {
+            // Set recommended non-thinking parameters for Qwen3.
+            // These must be applied before each call because Settings is shared state.
+            _chatClient.Settings.Temperature = 0.7f;
+            _chatClient.Settings.TopP = 0.8f;
+
             var messages = new[]
             {
-                // /no_thinking disables Qwen3's chain-of-thought mode via the soft switch.
-                ChatMessage.FromSystem("/no_thinking\n" + systemPrompt),
-                ChatMessage.FromUser(rawTranscript)
+                ChatMessage.FromSystem(systemPrompt),
+                // /no_think is Qwen3's soft switch to disable chain-of-thought.
+                // It must appear in the user message; prepend it before the transcript.
+                ChatMessage.FromUser("/no_think\n" + rawTranscript)
             };
 
             var response = await _chatClient.CompleteChatAsync(messages, ct);
@@ -84,15 +90,33 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
     }
 
     /// <summary>
-    /// Removes Qwen3 chain-of-thought content. Thinking models wrap reasoning in
-    /// &lt;think&gt;…&lt;/think&gt; before the final answer; strip that block.
-    /// If no closing tag is found the text is returned as-is.
+    /// Removes Qwen3 reasoning content from the output.
+    /// <list type="bullet">
+    ///   <item>If the response contains a &lt;/think&gt; closing tag, everything up to and
+    ///         including that tag is discarded (standard thinking-mode output).</item>
+    ///   <item>Otherwise, if the response is multi-paragraph, only the <b>last non-empty
+    ///         paragraph</b> is returned — Qwen3 without proper tag stripping tends to
+    ///         repeat the final answer as the last paragraph after its reasoning prose.</item>
+    /// </list>
     /// </summary>
     private static string StripThinking(string text)
     {
+        // Case 1: model emitted <think>...</think> tags — keep only what follows.
         var closeIdx = text.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
         if (closeIdx >= 0)
             return text[(closeIdx + "</think>".Length)..].Trim();
+
+        // Case 2: backend stripped tags but left reasoning as leading paragraphs.
+        // The actual answer is the last non-empty paragraph.
+        var paragraphs = text
+            .Split(["\n\n", "\r\n\r\n"], StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim())
+            .Where(p => p.Length > 0)
+            .ToArray();
+
+        if (paragraphs.Length > 1)
+            return paragraphs[^1];
+
         return text;
     }
 

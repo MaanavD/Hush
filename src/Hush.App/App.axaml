@@ -28,8 +28,8 @@
             <Color x:Key="Hush.Accent">#9B7FEB</Color>
             <Color x:Key="Hush.Accent.Dim">#4B3E8A</Color>
             <!-- Clean mode: teal -->
-            <Color x:Key="Hush.CleanMode">#64C5B3</Color>
-            <Color x:Key="Hush.CleanMode.Dim">#2D6B63</Color>
+            <Color x:Key="Hush.CleanMode">#F59E0B</Color>
+            <Color x:Key="Hush.CleanMode.Dim">#B45309</Color>
             <Color x:Key="Hush.Recording">#E05757</Color>
             <Color x:Key="Hush.Error">#C94040</Color>
 

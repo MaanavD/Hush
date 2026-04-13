@@ -54,10 +54,10 @@
             <Canvas x:Name="WaveCanvas" />
         </Border>
 
-        <!-- ── Listening state: clean mode (teal) ── -->
+        <!-- ── Listening state: clean mode (amber) ── -->
         <Border CornerRadius="16"
                 Background="#F0FFFFFF"
-                BorderBrush="#3064C5B3"
+                BorderBrush="#30F59E0B"
                 BorderThickness="1"
                 Padding="14 8"
                 IsVisible="{Binding IsListeningClean}"
