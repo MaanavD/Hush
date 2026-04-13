@@ -115,12 +115,15 @@ public sealed class RemoteControlService : IAsyncDisposable
 
         // Restrict access to the current user only (rwx------).
         // Supported on Linux and macOS; no-op on other platforms.
-        try
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
-            File.SetUnixFileMode(socketPath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            try
+            {
+                File.SetUnixFileMode(socketPath,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            catch { /* best effort — not all file systems support Unix permissions */ }
         }
-        catch { /* best effort — not all file systems support Unix permissions */ }
 
         serverSocket.Listen(8);
 

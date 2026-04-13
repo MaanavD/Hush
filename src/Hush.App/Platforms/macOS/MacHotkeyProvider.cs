@@ -78,8 +78,6 @@ public sealed class MacHotkeyProvider : IGlobalHotkeyService
     };
 
     // ── State ────────────────────────────────────────────────────────────────
-    [ThreadStatic] private static MacHotkeyProvider? t_current;
-
     private readonly ILogger<MacHotkeyProvider> _logger;
     private GCHandle _selfHandle;
     private nint _machPort;
