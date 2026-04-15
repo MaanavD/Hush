@@ -81,6 +81,12 @@ public sealed class KeystrokeTypingServiceTests
             // SendInput may fail if test runner is in a restricted context
             // (e.g., service mode, no desktop session). That's okay.
         }
+        catch (DllNotFoundException)
+        {
+            // Native libraries (e.g. libX11 on Linux) may be absent in headless
+            // CI environments. That's acceptable — the service is not expected to
+            // work without the underlying display server.
+        }
     }
 
     // ── Cancellation ─────────────────────────────────────────────────────
