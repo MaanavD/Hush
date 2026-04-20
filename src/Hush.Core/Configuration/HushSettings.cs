@@ -19,13 +19,11 @@ public sealed class HushSettings
     /// as well as modifier-only gestures such as plain <c>"Alt"</c> — in
     /// that case dictation begins after a brief hold (~250 ms) so ordinary
     /// Alt+Tab / Alt+F4 / menu-access interactions are unaffected.
-    /// Modifier-only hotkeys are Windows-only; other platforms default to
-    /// <c>"Ctrl+H"</c>.
+    /// Default is <c>"Ctrl+H"</c> on every platform.
     /// </summary>
     public string Hotkey { get; set; } = DefaultRawHotkey();
 
-    public static string DefaultRawHotkey() =>
-        OperatingSystem.IsWindows() ? "Alt" : "Ctrl+H";
+    public static string DefaultRawHotkey() => "Ctrl+H";
 
     /// <summary>Language hint passed to Foundry Local. Accepts ISO 639-1 codes like <c>"en"</c> and locale tags like <c>"en-US"</c>.</summary>
     public string Language { get; set; } = "en";
@@ -75,8 +73,11 @@ public sealed class HushSettings
     public ModelUnloadTimeout ModelUnloadTimeout { get; set; } = ModelUnloadTimeout.Min5;
 
     // ── Clean Mode ────────────────────────────────────────────────────────
-    /// <summary>Hotkey combination for clean-mode (LLM-rewritten) dictation.</summary>
-    public string CleanHotkey { get; set; } = "Ctrl+H";
+    /// <summary>Hotkey combination for clean-mode (LLM-rewritten) dictation.
+    /// Default <c>"Ctrl+Alt+H"</c> is intentionally distinct from the raw
+    /// <c>Ctrl+H</c> hotkey and avoids common OS / Office chords such as
+    /// Alt+Tab, Alt+Shift (layout switch), or bare Alt menu activation.</summary>
+    public string CleanHotkey { get; set; } = "Ctrl+Alt+H";
 
     /// <summary>Whether to run an LLM rewrite pass in clean-mode sessions.</summary>
     public bool PostProcessingEnabled { get; set; } = true;

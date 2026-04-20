@@ -110,7 +110,7 @@ public sealed class HushSettingsEdgeCaseTests
     {
         var loaded = JsonSerializer.Deserialize<HushSettings>("{}", JsonOptions);
         Assert.NotNull(loaded);
-        var expectedHotkey = OperatingSystem.IsWindows() ? "Alt" : "Ctrl+H";
+        var expectedHotkey = "Ctrl+H";
         Assert.Equal(expectedHotkey, loaded!.Hotkey);
     }
 
@@ -168,3 +168,4 @@ public sealed class HushSettingsEdgeCaseTests
         Assert.StartsWith(home, expectedDir);
     }
 }
+

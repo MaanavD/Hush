@@ -11,7 +11,7 @@ public sealed class HushSettingsTests
     {
         var settings = new HushSettings();
 
-        var expectedHotkey = OperatingSystem.IsWindows() ? "Alt" : "Ctrl+H";
+        var expectedHotkey = "Ctrl+H";
         Assert.Equal(expectedHotkey, settings.Hotkey);
         Assert.Equal("en", settings.Language);
         Assert.Equal("nemotron-speech-streaming-en-0.6b", settings.TranscriptionModel);

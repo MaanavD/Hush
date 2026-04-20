@@ -16,19 +16,19 @@ public sealed class CleanHotkeySettingsTests
     {
         var settings = new HushSettings();
 
-        Assert.Equal("Ctrl+H", settings.CleanHotkey);
+        Assert.Equal("Ctrl+Alt+H", settings.CleanHotkey);
     }
 
     [Fact]
     public void CleanHotkey_RoundTripsInJson()
     {
-        var settings = new HushSettings { CleanHotkey = "Ctrl+Alt+H" };
+        var settings = new HushSettings { CleanHotkey = "Ctrl+Shift+H" };
 
         var json = JsonSerializer.Serialize(settings);
         var restored = JsonSerializer.Deserialize<HushSettings>(json);
 
         Assert.NotNull(restored);
-        Assert.Equal("Ctrl+Alt+H", restored!.CleanHotkey);
+        Assert.Equal("Ctrl+Shift+H", restored!.CleanHotkey);
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public sealed class CleanHotkeySettingsTests
         var restored = JsonSerializer.Deserialize<HushSettings>(json);
 
         Assert.NotNull(restored);
-        Assert.Equal("Ctrl+H", restored!.CleanHotkey);
+        Assert.Equal("Ctrl+Alt+H", restored!.CleanHotkey);
     }
 
     [Fact]
@@ -48,19 +48,10 @@ public sealed class CleanHotkeySettingsTests
     {
         var settings = new HushSettings();
 
-        // On Windows the raw hotkey defaults to a modifier-only ("Alt") while
-        // clean defaults to Ctrl+H. On other platforms the raw default falls
-        // back to Ctrl+H, so the two strings can match there.
-        Assert.Equal("Ctrl+H", settings.CleanHotkey);
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.Equal("Alt", settings.Hotkey);
-            Assert.NotEqual(settings.Hotkey, settings.CleanHotkey);
-        }
-        else
-        {
-            Assert.Equal("Ctrl+H", settings.Hotkey);
-        }
+        // Raw defaults to Ctrl+H, clean to Ctrl+Alt+H on every platform.
+        Assert.Equal("Ctrl+H", settings.Hotkey);
+        Assert.Equal("Ctrl+Alt+H", settings.CleanHotkey);
+        Assert.NotEqual(settings.Hotkey, settings.CleanHotkey);
     }
 
     [Fact]

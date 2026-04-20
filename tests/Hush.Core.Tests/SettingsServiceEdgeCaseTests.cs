@@ -44,7 +44,7 @@ public sealed class SettingsServiceEdgeCaseTests
             }
 
             Assert.NotNull(loaded);
-            var expectedHotkey = OperatingSystem.IsWindows() ? "Alt" : "Ctrl+H";
+            var expectedHotkey = "Ctrl+H";
             Assert.Equal(expectedHotkey, loaded!.Hotkey);
         }
         finally
@@ -76,7 +76,7 @@ public sealed class SettingsServiceEdgeCaseTests
 
             // Empty file may deserialize to null
             loaded ??= new HushSettings();
-            var expectedHotkey = OperatingSystem.IsWindows() ? "Alt" : "Ctrl+H";
+            var expectedHotkey = "Ctrl+H";
             Assert.Equal(expectedHotkey, loaded.Hotkey);
         }
         finally
@@ -206,3 +206,4 @@ public sealed class SettingsServiceEdgeCaseTests
         return dir;
     }
 }
+
