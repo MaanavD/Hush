@@ -37,6 +37,13 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _isListening;
 
+    // Re-entrancy guards: a spurious or duplicate hotkey press (e.g. Alt auto-
+    // repeat edge cases, or menu-activation swallowing a keyup) must not
+    // trigger a second StartAsync while the first session is still live —
+    // the underlying Foundry Local streaming handle cannot be started twice.
+    private int _rawSessionBusy;
+    private int _cleanSessionBusy;
+
     [ObservableProperty]
     private double _modelDownloadProgress;
 
@@ -285,6 +292,13 @@ public sealed partial class MainViewModel : ObservableObject
         if (!IsModelReady)
             return;
 
+        // Drop duplicate presses while a session is already starting or live.
+        if (System.Threading.Interlocked.CompareExchange(ref _rawSessionBusy, 1, 0) != 0)
+        {
+            _logger.LogDebug("Ignoring duplicate raw hotkey press; session already active.");
+            return;
+        }
+
         try
         {
             // Hotkey events arrive on the hotkey STA thread — marshal UI mutations.
@@ -314,6 +328,12 @@ public sealed partial class MainViewModel : ObservableObject
         {
             _logger.LogError(ex, "Failed to start dictation session.");
 
+            // Self-heal: Foundry Local's native streaming session can leak if a
+            // duplicate start raced against a stop. Force a stop so the next
+            // press lands on a clean slate.
+            try { await _dictationSession.StopAsync(); }
+            catch (Exception stopEx) { _logger.LogWarning(stopEx, "Recovery StopAsync failed."); }
+
             try
             {
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
@@ -325,6 +345,10 @@ public sealed partial class MainViewModel : ObservableObject
                 });
             }
             catch { /* app may be shutting down */ }
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _rawSessionBusy, 0);
         }
     }
 
@@ -357,6 +381,13 @@ public sealed partial class MainViewModel : ObservableObject
         if (!IsModelReady)
             return;
 
+        // Drop duplicate presses while a clean session is already starting or live.
+        if (System.Threading.Interlocked.CompareExchange(ref _cleanSessionBusy, 1, 0) != 0)
+        {
+            _logger.LogDebug("Ignoring duplicate clean hotkey press; session already active.");
+            return;
+        }
+
         try
         {
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
@@ -384,6 +415,10 @@ public sealed partial class MainViewModel : ObservableObject
         {
             _logger.LogError(ex, "Failed to start clean dictation session.");
 
+            // Self-heal: clear any leaked native streaming session.
+            try { await _dictationSession.StopAsync(); }
+            catch (Exception stopEx) { _logger.LogWarning(stopEx, "Recovery StopAsync failed."); }
+
             try
             {
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
@@ -395,6 +430,10 @@ public sealed partial class MainViewModel : ObservableObject
                 });
             }
             catch { /* app may be shutting down */ }
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _cleanSessionBusy, 0);
         }
     }
 

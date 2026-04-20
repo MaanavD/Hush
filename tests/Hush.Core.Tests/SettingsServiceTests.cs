@@ -15,7 +15,7 @@ public sealed class SettingsServiceTests
         // this is unlikely to exist in CI. A full test would use a temp directory.
         var settings = await svc.LoadAsync();
         Assert.NotNull(settings);
-        Assert.Equal("Ctrl+H", settings.Hotkey);
+        Assert.Equal(HushSettings.DefaultRawHotkey(), settings.Hotkey);
     }
 
     [Fact]

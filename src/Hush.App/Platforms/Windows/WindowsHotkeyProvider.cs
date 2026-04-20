@@ -590,6 +590,24 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
         return true;
     }
 
+    /// <summary>
+    /// Returns <see langword="true"/> if any target modifier VK — other than
+    /// <paramref name="releasingVk"/> — is still physically held. Used by the
+    /// modifier-only hook path where <paramref name="releasingVk"/> is the
+    /// key currently going up. This bypasses the GetAsyncKeyState race that
+    /// can briefly still report the releasing key as held.
+    /// </summary>
+    private static bool AnyOtherTargetModifierHeld(ushort[] targetVks, ushort releasingVk)
+    {
+        for (int i = 0; i < targetVks.Length; i++)
+        {
+            ushort vk = targetVks[i];
+            if (vk == releasingVk) continue;
+            if ((GetAsyncKeyState(vk) & 0x8000) != 0) return true;
+        }
+        return false;
+    }
+
     private void ModifierOnlyMessageLoop(uint modifiers, bool isClean, TaskCompletionSource ready)
     {
         var targetModifierVks = ExpandModifierVks(modifiers);
@@ -691,7 +709,14 @@ public sealed class WindowsHotkeyProvider : IGlobalHotkeyService
             // ── Dictation is live: act like the keyed-hotkey suppression hook.
 
             // Any required modifier released → end the gesture.
-            if (isUp && isTargetModifier && !AllRequiredModifiersHeld(modifiers))
+            // NOTE: We cannot rely on AllRequiredModifiersHeld(modifiers) here
+            // because GetAsyncKeyState races with the keyup event — it often
+            // still reports the key as held while the hook is running,
+            // causing the Released event to silently get dropped and the
+            // next HotkeyPressed to collide with a still-live session.
+            // Treat the specific vkCode going up as released and evaluate
+            // the remaining target modifiers directly.
+            if (isUp && isTargetModifier && !AnyOtherTargetModifierHeld(targetVks, vkCode))
             {
                 if (isClean) _cleanKeyDown = false;
                 else         _keyDown = false;

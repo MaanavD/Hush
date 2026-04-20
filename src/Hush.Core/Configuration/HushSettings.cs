@@ -24,7 +24,7 @@ public sealed class HushSettings
     /// </summary>
     public string Hotkey { get; set; } = DefaultRawHotkey();
 
-    private static string DefaultRawHotkey() =>
+    public static string DefaultRawHotkey() =>
         OperatingSystem.IsWindows() ? "Alt" : "Ctrl+H";
 
     /// <summary>Language hint passed to Foundry Local. Accepts ISO 639-1 codes like <c>"en"</c> and locale tags like <c>"en-US"</c>.</summary>
