@@ -128,21 +128,38 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        StatusMessage = "Checking model…";
+        StatusMessage = "Starting Hush…";
+        _overlayVm.PreparingDetail = "Starting Hush…";
+
         var progress = new Progress<double>(p =>
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
                 ModelDownloadProgress = p;
                 _overlayVm.ModelDownloadProgress = p;
-                StatusMessage = $"Downloading… {p:P0}";
+                if (p > 0.0 && p < 1.0)
+                    StatusMessage = $"Downloading… {p:P0}";
+            });
+        });
+
+        var statusProgress = new Progress<string>(s =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.PreparingDetail = s;
+                // Only overwrite the status line when we're not showing a
+                // more specific "Downloading… xx%" message.
+                if (ModelDownloadProgress <= 0.0 || ModelDownloadProgress >= 1.0)
+                    StatusMessage = s;
             });
         });
 
         try
         {
             await _engine.InitializeAsync(
-                _settings.TranscriptionModel, progress, cancellationToken: cancellationToken);
+                _settings.TranscriptionModel, progress,
+                statusProgress: statusProgress,
+                cancellationToken: cancellationToken);
 
             IsModelReady = true;
             _overlayVm.IsModelReady = true;

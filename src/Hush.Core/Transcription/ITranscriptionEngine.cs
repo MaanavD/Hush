@@ -11,11 +11,15 @@ public interface ITranscriptionEngine : IAsyncDisposable
     /// <summary>
     /// Downloads (if required) and loads the specified model alias into Foundry Local.
     /// Progress events are raised so the UI can show a download bar.
+    /// <paramref name="statusProgress"/> receives short human-readable strings
+    /// describing the current initialisation stage (connecting, resolving,
+    /// downloading, loading, ready).
     /// </summary>
     Task InitializeAsync(
         string modelAlias = "nemotron-speech-streaming-en-0.6b",
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
+        IProgress<string>? statusProgress = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

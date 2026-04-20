@@ -172,9 +172,11 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         string modelAlias = "whisper-tiny",
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
+        IProgress<string>? statusProgress = null,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Initializing Foundry Local for model '{ModelAlias}'.", modelAlias);
+        statusProgress?.Report("Connecting to Foundry Local…");
 
         try
         {
@@ -197,9 +199,11 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (OperatingSystem.IsWindows() && downloadHardwareEPs)
         {
             _logger.LogInformation("Downloading hardware acceleration EPs (Windows).");
+            statusProgress?.Report("Downloading hardware acceleration…");
             await manager.DownloadAndRegisterEpsAsync();
         }
 
+        statusProgress?.Report($"Resolving model '{modelAlias}'…");
         var catalog = await manager.GetCatalogAsync(cancellationToken);
         var model = await catalog.GetModelAsync(modelAlias, cancellationToken)
             ?? throw new InvalidOperationException(
@@ -207,21 +211,33 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
                 "Ensure Foundry Local is installed and the alias is correct.");
 
         _logger.LogInformation("Downloading model '{ModelAlias}' (no-op if already cached).", modelAlias);
+        statusProgress?.Report($"Checking cache for '{modelAlias}'…");
 
         // SDK 0.9.0: DownloadAsync takes Action<float>? progress (0–100).
-        Action<float>? sdkProgress = downloadProgress is null
-            ? null
-            : p => downloadProgress.Report(p / 100.0);
+        // Switch status text to "Downloading" the first time a non-zero progress
+        // arrives — a zero progress means we hit the cached-model fast path.
+        bool announcedDownload = false;
+        Action<float>? sdkProgress = p =>
+        {
+            if (!announcedDownload && p > 0.01f)
+            {
+                announcedDownload = true;
+                statusProgress?.Report($"Downloading '{modelAlias}'…");
+            }
+            downloadProgress?.Report(p / 100.0);
+        };
 
         await model.DownloadAsync(sdkProgress);
 
         _logger.LogInformation("Loading model '{ModelAlias}' into runtime.", modelAlias);
+        statusProgress?.Report("Loading model into runtime…");
         await model.LoadAsync();
 
         _model = model;
         _audioClient = await model.GetAudioClientAsync();
         _modelId = model.Id;
         _modelLoaded = true;
+        statusProgress?.Report("Ready");
         _logger.LogInformation("TranscriptionEngine ready.");
     }
 

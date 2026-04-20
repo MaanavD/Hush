@@ -35,7 +35,19 @@ public sealed partial class OverlayViewModel : ObservableObject
 
     /// <summary>Model download progress 0–1. Shown before the model is ready.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowPreparingProgress))]
     private double _modelDownloadProgress;
+
+    /// <summary>
+    /// Human-readable sub-stage text displayed beneath "Preparing…" so the
+    /// user can see what the startup is actually doing (connecting to
+    /// Foundry Local, resolving the model, downloading, loading into the
+    /// runtime, warming up post-processing, etc.).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPreparingDetail))]
+    [NotifyPropertyChangedFor(nameof(ShowPreparingProgress))]
+    private string _preparingDetail = "Starting…";
 
     /// <summary>True once the model is loaded and dictation is possible.</summary>
     [ObservableProperty]
@@ -87,6 +99,15 @@ public sealed partial class OverlayViewModel : ObservableObject
     public bool ShowListeningHint => IsListening && !HasTranscript;
 
     public bool IsPreparing => !IsModelReady && !HasError;
+
+    /// <summary>True when <see cref="PreparingDetail"/> carries useful text.</summary>
+    public bool HasPreparingDetail => !string.IsNullOrWhiteSpace(PreparingDetail);
+
+    /// <summary>
+    /// Only show the download % pill when we're actually downloading; during
+    /// "Connecting" / "Loading" phases the value is 0 and would be misleading.
+    /// </summary>
+    public bool ShowPreparingProgress => ModelDownloadProgress > 0.0 && ModelDownloadProgress < 1.0;
 
     /// <summary>Listening in raw (purple) mode.</summary>
     public bool IsListeningRaw => IsListening && !IsCleanMode;
