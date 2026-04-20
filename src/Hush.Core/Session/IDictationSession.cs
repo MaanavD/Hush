@@ -37,6 +37,15 @@ public interface IDictationSession : IAsyncDisposable
     /// <summary>Raised when the session encounters a runtime error after it has already started.</summary>
     event Action<Exception>? OnSessionError;
 
+    /// <summary>
+    /// Raised when the LLM post-processing (cleanse) pass starts and finishes.
+    /// <see langword="true"/> means the rewrite is in progress and the target
+    /// window should not be interacted with; <see langword="false"/> means the
+    /// rewrite is complete (the final typing pass may still be in flight).
+    /// Only fires for spinner-mode sessions that have a post-processing prompt.
+    /// </summary>
+    event Action<bool>? OnPostProcessingStateChanged;
+
     /// <summary>Starts microphone capture and the transcription loop.</summary>
     /// <param name="language">BCP-47 language tag for the transcription model.</param>
     /// <param name="streamingCommit">

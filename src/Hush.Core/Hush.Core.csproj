@@ -1,15 +1,32 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- New managed SDK targets net9.0 on all platforms -->
-    <TargetFramework Condition="$([MSBuild]::IsOSPlatform('Windows'))">net9.0-windows10.0.26100</TargetFramework>
-    <TargetFramework Condition="!$([MSBuild]::IsOSPlatform('Windows'))">net9.0</TargetFramework>
-    <!-- RuntimeIdentifier required so NuGet resolves native assets from Foundry Local Core on all platforms.
-         Use portable RIDs so restore avoids distro-specific host package gaps.
-         Note: osx-x64 is not shipped by Foundry Local Core — only osx-arm64 (Apple Silicon). -->
-    <RuntimeIdentifier Condition="$([MSBuild]::IsOSPlatform('Windows'))">win-x64</RuntimeIdentifier>
-    <RuntimeIdentifier Condition="$([MSBuild]::IsOSPlatform('Linux'))">linux-x64</RuntimeIdentifier>
-    <RuntimeIdentifier Condition="$([MSBuild]::IsOSPlatform('OSX'))">osx-arm64</RuntimeIdentifier>
+    <!--
+      Always target plain `net9.0` — we use P/Invoke for all Win32 work and
+      gate Windows-specific managed code with the HUSH_WINDOWS constant below,
+      so there is no reason to pull in `net9.0-windows*` (which would force a
+      Microsoft.WindowsDesktop.App framework reference that has no macOS /
+      Linux runtime pack and would break cross-publish).
+    -->
+    <TargetFramework>net9.0</TargetFramework>
+
+    <!--
+      Derive "target is Windows" from the runtime identifier supplied by the
+      publish invocation (`-r win-x64`, `-r osx-arm64`, …) or fall back to the
+      host OS when no RID is given. Drives the HUSH_WINDOWS define and the
+      NAudio reference below.
+    -->
+    <_IsWindowsTarget Condition="'$(RuntimeIdentifier)' == '' AND $([MSBuild]::IsOSPlatform('Windows'))">true</_IsWindowsTarget>
+    <_IsWindowsTarget Condition="$(RuntimeIdentifier.StartsWith('win'))">true</_IsWindowsTarget>
+    <_IsWindowsTarget Condition="'$(_IsWindowsTarget)' == ''">false</_IsWindowsTarget>
+
+    <DefineConstants Condition="'$(_IsWindowsTarget)' == 'true'">$(DefineConstants);HUSH_WINDOWS</DefineConstants>
+
+    <!-- Default RID when none supplied. Foundry Local Core does not ship osx-x64,
+         only osx-arm64 (Apple Silicon). -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' AND $([MSBuild]::IsOSPlatform('Windows'))">win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' AND $([MSBuild]::IsOSPlatform('Linux'))">linux-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' AND $([MSBuild]::IsOSPlatform('OSX'))">osx-arm64</RuntimeIdentifier>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -22,13 +39,22 @@
   <ItemGroup>
     <!-- Foundry Local managed SDK (unified, replaces WinML + old cross-platform variants) -->
     <PackageReference Include="Microsoft.AI.Foundry.Local" Version="1.0.0-dev.202604071256" />
-    <!-- Explicit Core pin: SDK nuspec declares an older transitive dep; override with local build -->
-    <PackageReference Include="Microsoft.AI.Foundry.Local.Core" Version="1.0.0-dev-202604071256-f3a8039f" />
+    <!-- Explicit Core pin: SDK nuspec declares an older transitive dep; override with local build.
+         April 18 Core build adds Nemotron (nemotron-speech-streaming-en-0.6b) to the catalog. -->
+    <PackageReference Include="Microsoft.AI.Foundry.Local.Core" Version="1.0.0-dev-202604180056-cdbd18ba" />
+    <!-- Pin ORT Managed to the higher version resolved by the transitive chain to avoid NU1605 downgrade. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.25.0-dev-20260402-2205-14d1d14e36" />
 
-    <!-- Audio capture — NAudio on Windows; macOS/Linux backend TBD after validation spike -->
+    <!-- Audio capture — PortAudio is the cross-platform backend (Windows / macOS / Linux).
+         Pre-compiled native libs (portaudio.dll, libportaudio.dylib, libportaudio.so)
+         ship inside the NuGet package and are extracted by the host on first use. -->
+    <PackageReference Include="PortAudioSharp2" Version="1.0.6" />
+
+    <!-- Audio playback — NAudio (Windows-only). Used by SoundEffectService for the
+         start/stop dictation chimes; macOS/Linux playback is a future improvement. -->
     <PackageReference Include="NAudio"
                       Version="2.3.0"
-                      Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+                      Condition="'$(_IsWindowsTarget)' == 'true'" />
 
     <!-- Logging -->
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.14" />

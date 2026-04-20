@@ -9,6 +9,7 @@ using Hush.App.ViewModels;
 using Hush.App.Views;
 using Hush.Core.Audio;
 using Hush.Core.Configuration;
+using Hush.Core.Diagnostics;
 using Hush.Core.Input;
 using Hush.Core.Output;
 using Hush.Core.PostProcessing;
@@ -44,6 +45,9 @@ public sealed class App : Application
     {
         if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
             return;
+
+        // Enable performance profiler if HUSH_PROFILE=1 is set.
+        PerformanceProfiler.TryAutoEnable();
 
         // Prevent the app from exiting when all windows are closed — it lives in the tray.
         desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
@@ -235,6 +239,7 @@ public sealed class App : Application
 
             _audioCapture?.Dispose();
             _trayIcon?.Dispose();
+            PerformanceProfiler.Shutdown();
             _loggerFactory?.Dispose();
         }
         catch

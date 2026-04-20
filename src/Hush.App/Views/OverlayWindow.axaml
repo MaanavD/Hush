@@ -66,6 +66,35 @@
             <Canvas x:Name="WaveCanvasClean" />
         </Border>
 
+        <!-- ── Finalizing state: LLM rewrite in progress (amber, "Finishing…") ──
+             Warns the user not to click into another window while the cleanse
+             pass is running. If focus moves away the final text is dropped to
+             avoid leaking into the wrong application. -->
+        <Border CornerRadius="16"
+                Background="#F0FFFFFF"
+                BorderBrush="#40F59E0B"
+                BorderThickness="1"
+                Padding="14 8"
+                IsVisible="{Binding ShowFinalizingHint}"
+                BoxShadow="0 1 8 0 #14000000">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
+                <Ellipse Width="7" Height="7"
+                         Fill="#F59E0B"
+                         VerticalAlignment="Center">
+                    <Ellipse.Transitions>
+                        <Transitions>
+                            <DoubleTransition Property="Opacity" Duration="0:0:0.6" />
+                        </Transitions>
+                    </Ellipse.Transitions>
+                </Ellipse>
+                <TextBlock Text="Finishing…  keep this window focused"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="#92400E"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
+
         <!-- ── Error state ── -->
         <Border CornerRadius="16"
                 Background="#F0FFFFFF"

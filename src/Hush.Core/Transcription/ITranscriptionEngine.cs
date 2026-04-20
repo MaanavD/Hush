@@ -13,7 +13,7 @@ public interface ITranscriptionEngine : IAsyncDisposable
     /// Progress events are raised so the UI can show a download bar.
     /// </summary>
     Task InitializeAsync(
-        string modelAlias = "whisper-tiny",
+        string modelAlias = "nemotron-speech-streaming-en-0.6b",
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
         CancellationToken cancellationToken = default);

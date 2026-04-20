@@ -62,11 +62,11 @@ Use the [Feature Request](https://github.com/maanavdalal/hush/issues/new?templat
 
 ### Prerequisites
 
-| Tool | Version |
-|------|---------|
-| [.NET SDK](https://dotnet.microsoft.com/download) | 9.0 or later |
-| [Foundry Local](https://github.com/microsoft/foundry-local) | Latest |
-| Pre-release NuGet packages | See [README § Build Prerequisites](README.md#build-prerequisites) |
+| Tool                                                        | Version                                                           |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- |
+| [.NET SDK](https://dotnet.microsoft.com/download)           | 9.0 or later                                                      |
+| [Foundry Local](https://github.com/microsoft/foundry-local) | Latest                                                            |
+| Pre-release NuGet packages                                  | See [README § Build Prerequisites](README.md#build-prerequisites) |
 
 ### Build
 
@@ -99,9 +99,6 @@ src/
 tests/
   Hush.Core.Tests/ # xUnit unit tests for Hush.Core
   Hush.App.Tests/  # xUnit tests for app-level logic
-
-dist/
-  setup.ps1        # End-user setup script (model download + launch)
 ```
 
 For a deeper explanation of every component see [SPEC.md](SPEC.md).

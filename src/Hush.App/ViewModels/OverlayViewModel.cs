@@ -21,6 +21,18 @@ public sealed partial class OverlayViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsListeningClean))]
     private bool _isCleanMode;
 
+    /// <summary>
+    /// True while the cleanse-mode LLM rewrite is running. The overlay surfaces
+    /// this as a "Finishing…" hint so users know not to click into another app
+    /// — during this window, focus changes cause the final text to be dropped
+    /// (the guard in <c>DictationSession</c> refuses to type into a different
+    /// window than the one active at session start).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowFinalizingHint))]
+    [NotifyPropertyChangedFor(nameof(IsListeningClean))]
+    private bool _isFinalizing;
+
     /// <summary>Model download progress 0–1. Shown before the model is ready.</summary>
     [ObservableProperty]
     private double _modelDownloadProgress;
@@ -79,8 +91,11 @@ public sealed partial class OverlayViewModel : ObservableObject
     /// <summary>Listening in raw (purple) mode.</summary>
     public bool IsListeningRaw => IsListening && !IsCleanMode;
 
-    /// <summary>Listening in clean (teal) mode.</summary>
-    public bool IsListeningClean => IsListening && IsCleanMode;
+    /// <summary>Listening in clean (teal) mode — shown only while still recording speech.</summary>
+    public bool IsListeningClean => IsListening && IsCleanMode && !IsFinalizing;
+
+    /// <summary>True when the overlay should show the "Finishing…" hint.</summary>
+    public bool ShowFinalizingHint => IsFinalizing;
 
     /// <summary>
     /// Prepares the overlay transcript state for a new dictation session.
@@ -91,6 +106,7 @@ public sealed partial class OverlayViewModel : ObservableObject
         _committedTranscript = string.Empty;
         TranscriptText = string.Empty;
         IsCleanMode = isCleanMode;
+        IsFinalizing = false;
     }
 
     /// <summary>

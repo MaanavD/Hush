@@ -5,6 +5,7 @@ using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Hush.Core.Configuration;
+using Hush.Core.Diagnostics;
 
 namespace Hush.Core.Transcription;
 
@@ -214,18 +215,6 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
         await model.DownloadAsync(sdkProgress);
 
-        // Hush ships Nemotron CPU int4 instead of whisper-tiny for better quality.
-        // The setup script (dist/setup.ps1) downloads Nemotron files from HuggingFace
-        // into the SDK's model cache slot. After DownloadAsync ensures the cache dir
-        // exists, we check whether Nemotron files have been installed. If so, the
-        // remaining whisper-specific files need to be cleaned out so the GenAI runtime
-        // loads cleanly as nemotron_speech.
-        var modelPath = await model.GetPathAsync(cancellationToken);
-        if (modelPath is not null)
-        {
-            await EnsureNemotronSwapAsync(modelPath, cancellationToken);
-        }
-
         _logger.LogInformation("Loading model '{ModelAlias}' into runtime.", modelAlias);
         await model.LoadAsync();
 
@@ -289,6 +278,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (_liveSession is null)
             return ValueTask.CompletedTask;
 
+        using var _ = PerformanceProfiler.Measure("Engine.AppendAudio");
         return _liveSession.AppendAsync(pcmData, cancellationToken);
     }
 
@@ -304,7 +294,16 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
                     "SDK chunk #{Index}: IsFinal={IsFinal} text=\"{Text}\" start={Start} end={End}",
                     chunkIndex, chunk.IsFinal, chunk.Text, chunk.StartTime, chunk.EndTime);
 
-                if (TryNormalizeChunk(chunk, out var result))
+                // Track the growing committed text length — key metric for O(n) growth diagnosis.
+                PerformanceProfiler.Gauge("Engine.CommittedTextLen", _committedText.Length);
+                PerformanceProfiler.Gauge("Engine.SegmentBaseLen", _segmentBase.Length);
+
+                bool emitted;
+                TranscriptionResult result;
+                using (PerformanceProfiler.MeasureWithContext("Engine.TryNormalizeChunk", _committedText.Length))
+                    emitted = TryNormalizeChunk(chunk, out result);
+
+                if (emitted)
                 {
                     _logger.LogDebug(
                         "Emitting result #{Index}: display=\"{Display}\" delta=\"{Delta}\" bs={BS} segBase=\"{SegBase}\"",
@@ -473,7 +472,8 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
             // Compose the complete text by prepending any prior segment base.
             displayText = BuildFullText(cleanedText);
-            (backspaceCount, committedDelta) = ComputeCommitDelta(displayText);
+            using (PerformanceProfiler.MeasureWithContext("Engine.ComputeCommitDelta", _committedText.Length))
+                (backspaceCount, committedDelta) = ComputeCommitDelta(displayText);
             _committedText = displayText;
             _lastCommittedEndTime = chunk.EndTime ?? _lastCommittedEndTime;
             _lastFullText = string.Empty;
@@ -518,7 +518,8 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             // Store the accumulated segment text so we can flush it on stop.
             var cleanedSegment = string.Join(' ', segmentWords);
             _lastFullText = cleanedSegment;
-            displayText = BuildFullText(cleanedSegment);
+            using (PerformanceProfiler.MeasureWithContext("Engine.BuildFullText", _segmentBase.Length))
+                displayText = BuildFullText(cleanedSegment);
 
             // ── Stability-based commit ──────────────────────────────────────
             // Compare the previous accumulated hypothesis with the new one.
@@ -565,7 +566,8 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
                 // the target app mid-sentence.
                 if (fullSafeText.StartsWith(_committedText, StringComparison.Ordinal))
                 {
-                    (backspaceCount, committedDelta) = ComputeCommitDelta(fullSafeText);
+                    using (PerformanceProfiler.MeasureWithContext("Engine.ComputeCommitDelta", _committedText.Length))
+                        (backspaceCount, committedDelta) = ComputeCommitDelta(fullSafeText);
                     _committedText = fullSafeText;
                     _lastCommittedEndTime = chunk.EndTime ?? _lastCommittedEndTime;
 
@@ -856,6 +858,9 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
     private static int LargestTextSuffixPrefixOverlap(string previousText, string currentText)
     {
+        using var _ = PerformanceProfiler.MeasureWithContext(
+            "Engine.SuffixPrefixOverlap", previousText.Length + currentText.Length);
+
         int maxOverlap = Math.Min(previousText.Length, currentText.Length);
         for (int overlap = maxOverlap; overlap > 0; overlap--)
         {
@@ -877,137 +882,4 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
     private static string NormalizeText(string text)
         => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-
-    // ── Nemotron model swap ──────────────────────────────────────────────────
-    //
-    // The Foundry Local catalog ships whisper-tiny (encoder-decoder ASR) but
-    // Hush uses NVIDIA's Nemotron CPU int4 (RNN-T) for better streaming quality.
-    // After the SDK downloads whisper-tiny into the cache, this method replaces
-    // those files with Nemotron from HuggingFace.
-
-    private const string HuggingFaceBase = "https://huggingface.co/jiafatom/nemotron-cpu-int4/resolve/main";
-
-    private static readonly string[] NemotronFiles =
-    [
-        "audio_processor_config.json",
-        "decoder.onnx",
-        "decoder.onnx.data",
-        "encoder.onnx",
-        "encoder.onnx.data",
-        "genai_config.json",
-        "joint.onnx",
-        "joint.onnx.data",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "vocab.txt"
-    ];
-
-    // Whisper files that must be removed so the GenAI runtime doesn't see
-    // a model_type mismatch ("Got: whisper" vs nemotron_speech genai_config).
-    private static readonly string[] WhisperLeftovers =
-    [
-        "config.json",
-        "preprocessor_config.json",
-        "added_tokens.json",
-        "merges.txt",
-        "normalizer.json",
-        "special_tokens_map.json",
-        "vocab.json",
-        "whisper-tiny_decoder_fp32.onnx",
-        "whisper-tiny_decoder_fp32.onnx.data",
-        "whisper-tiny_encoder_fp32.onnx",
-        "whisper-tiny_encoder_fp32.onnx.data",
-        "whisper-tiny_jump_times_fp32.onnx"
-    ];
-
-    private async Task EnsureNemotronSwapAsync(string modelCacheDir, CancellationToken ct)
-    {
-        // Already swapped?
-        var genaiPath = Path.Combine(modelCacheDir, "genai_config.json");
-        if (File.Exists(genaiPath))
-        {
-            var content = await File.ReadAllTextAsync(genaiPath, ct);
-            if (content.Contains("nemotron_speech", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("Nemotron model files already present in cache.");
-                CleanWhisperLeftovers(modelCacheDir);
-                return;
-            }
-        }
-
-        // Check the legacy ~/.aitk cache (setup.ps1 may have put files there)
-        var legacyDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".aitk", "Microsoft", "openai-whisper-tiny-generic-cpu-2", "cpu-fp32");
-
-        if (Directory.Exists(legacyDir))
-        {
-            var legacyConfig = Path.Combine(legacyDir, "genai_config.json");
-            if (File.Exists(legacyConfig))
-            {
-                var legContent = await File.ReadAllTextAsync(legacyConfig, ct);
-                if (legContent.Contains("nemotron_speech", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogInformation("Copying Nemotron files from legacy cache -> SDK cache.");
-                    foreach (var f in NemotronFiles)
-                    {
-                        var src = Path.Combine(legacyDir, f);
-                        if (File.Exists(src))
-                            File.Copy(src, Path.Combine(modelCacheDir, f), overwrite: true);
-                    }
-                    CleanWhisperLeftovers(modelCacheDir);
-                    return;
-                }
-            }
-        }
-
-        // Download from HuggingFace directly
-        _logger.LogInformation("Downloading Nemotron CPU int4 model from HuggingFace (~700 MB)...");
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
-
-        foreach (var file in NemotronFiles)
-        {
-            var destPath = Path.Combine(modelCacheDir, file);
-            if (File.Exists(destPath) && new FileInfo(destPath).Length > 0)
-            {
-                // Could be a nemotron file from a partial previous download. Check.
-                if (file == "genai_config.json")
-                {
-                    var c = await File.ReadAllTextAsync(destPath, ct);
-                    if (c.Contains("nemotron_speech", StringComparison.OrdinalIgnoreCase))
-                        continue;
-                }
-                else
-                {
-                    // Only skip if the nemotron genai_config was already placed
-                    continue;
-                }
-            }
-
-            _logger.LogInformation("Downloading {File}...", file);
-            var url = $"{HuggingFaceBase}/{file}";
-            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
-            response.EnsureSuccessStatusCode();
-
-            await using var stream = await response.Content.ReadAsStreamAsync(ct);
-            await using var fs = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None);
-            await stream.CopyToAsync(fs, ct);
-        }
-
-        CleanWhisperLeftovers(modelCacheDir);
-        _logger.LogInformation("Nemotron model swap complete.");
-    }
-
-    private void CleanWhisperLeftovers(string modelCacheDir)
-    {
-        foreach (var file in WhisperLeftovers)
-        {
-            var path = Path.Combine(modelCacheDir, file);
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-                _logger.LogDebug("Removed whisper leftover: {File}", file);
-            }
-        }
-    }
 }

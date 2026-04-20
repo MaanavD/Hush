@@ -1,33 +1,52 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using System.Runtime.InteropServices;
+using Hush.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using PortAudioSharp;
+using PaStream = PortAudioSharp.Stream;
 
 namespace Hush.Core.Audio;
 
 /// <summary>
-/// Captures microphone audio via a platform-appropriate backend.
-/// On Windows, NAudio's <c>WaveInEvent</c> is used. On macOS/Linux, a
-/// compatible backend will be selected during the validation spike
-/// (see SPEC §14 open question 2).
+/// Captures microphone audio via PortAudio. Single backend across Windows
+/// (WASAPI/MME), macOS (CoreAudio), and Linux (ALSA/PulseAudio).
+/// Delivers 16 kHz / 16-bit / mono PCM chunks to the supplied callback.
 /// </summary>
 public sealed class AudioCaptureService : IAudioCaptureService
 {
-    private const int SystemDefaultDeviceNumber = -1;
+    public const int SystemDefaultDeviceNumber = -1;
+    private const int SampleRate = 16000;
+    private const int Channels = 1;
+    // ~50 ms at 16 kHz — matches the chunk size used by the previous NAudio
+    // backend so downstream timing assumptions in the transcription engine
+    // continue to hold.
+    private const uint FramesPerBuffer = 800;
+    private const int BytesPerFrame = 2 * Channels;
 
     private readonly ILogger<AudioCaptureService> _logger;
+    private readonly Lock _stateLock = new();
     private Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>? _audioAvailable;
+    private PaStream? _stream;
+    // Holding a strong reference prevents the JIT-emitted thunk from being
+    // collected while PortAudio's audio thread is calling it. PortAudioSharp2
+    // also pins it internally, but we keep our own reference for clarity.
+    private PaStream.Callback? _callback;
     private bool _disposed;
+
+    // Process-wide one-time init. Pa_Terminate followed by another
+    // Pa_Initialize within the same process is fragile on the Windows MME
+    // host (CLR fatal in test runners), so we initialize lazily and leave
+    // PortAudio running until the process exits.
+    private static int s_portAudioInitialized;  // 0 = not, 1 = yes
+    private static readonly Lock s_initLock = new();
 
     /// <inheritdoc/>
     public int DeviceIndex { get; set; } = SystemDefaultDeviceNumber;
 
     /// <inheritdoc/>
     public event Action<float>? AudioLevelChanged;
-
-#if WINDOWS
-    private NAudio.Wave.WaveInEvent? _waveIn;
-#endif
 
     public AudioCaptureService(ILogger<AudioCaptureService>? logger = null)
     {
@@ -40,60 +59,102 @@ public sealed class AudioCaptureService : IAudioCaptureService
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(audioAvailable);
 
-#if WINDOWS
-        if (NAudio.Wave.WaveIn.DeviceCount <= 0)
-            throw new InvalidOperationException(
-                "No microphone was found. Connect or enable a recording device, then try again.");
-
-        _audioAvailable = audioAvailable;
-
-        try
+        lock (_stateLock)
         {
-            _waveIn = new NAudio.Wave.WaveInEvent
+            if (_stream is not null)
+                throw new InvalidOperationException("Audio capture is already running.");
+
+            try
             {
-                DeviceNumber = DeviceIndex,
-                WaveFormat = new NAudio.Wave.WaveFormat(rate: 16000, bits: 16, channels: 1),
-                BufferMilliseconds = 50
-            };
+                EnsurePortAudioInitialized();
 
-            _waveIn.DataAvailable += OnDataAvailable;
-            _waveIn.StartRecording();
-            _logger.LogInformation(
-                "Audio capture started (NAudio/WaveInEvent, device={DeviceIndex} '{DeviceName}', deviceCount={DeviceCount}).",
-                DeviceIndex,
-                GetDeviceLabel(DeviceIndex),
-                NAudio.Wave.WaveIn.DeviceCount);
+                int device = ResolveInputDevice();
+                var deviceInfo = PortAudio.GetDeviceInfo(device);
+
+                if (deviceInfo.maxInputChannels <= 0)
+                    throw new InvalidOperationException(
+                        "The selected audio device has no input channels. Choose a different microphone in Settings.");
+
+                _audioAvailable = audioAvailable;
+                _callback = StreamCallback;
+
+                var inputParams = new StreamParameters
+                {
+                    device = device,
+                    channelCount = Channels,
+                    sampleFormat = SampleFormat.Int16,
+                    // defaultLowInputLatency favors low-latency push-to-talk
+                    // over rock-solid throughput; matches the previous 50 ms
+                    // NAudio buffer profile.
+                    suggestedLatency = deviceInfo.defaultLowInputLatency,
+                    hostApiSpecificStreamInfo = IntPtr.Zero,
+                };
+
+                _stream = new PaStream(
+                    inParams: inputParams,
+                    outParams: null,
+                    sampleRate: SampleRate,
+                    framesPerBuffer: FramesPerBuffer,
+                    streamFlags: StreamFlags.ClipOff,
+                    callback: _callback,
+                    userData: this);
+
+                _stream.Start();
+
+                _logger.LogInformation(
+                    "Audio capture started (PortAudio, device={DeviceIndex} '{DeviceName}', hostApi={HostApi}, sampleRate={SampleRate}).",
+                    device,
+                    deviceInfo.name,
+                    deviceInfo.hostApi,
+                    SampleRate);
+            }
+            catch (Exception ex)
+            {
+                CleanupStream();
+                _audioAvailable = null;
+                _callback = null;
+                throw BuildStartupException(ex);
+            }
         }
-        catch (Exception ex)
-        {
-            CleanupWaveIn();
-            _audioAvailable = null;
-            throw BuildStartupException(ex);
-        }
-#else
-        _logger.LogError("Audio capture is only supported on Windows in this version.");
-        throw new PlatformNotSupportedException(
-            "Microphone capture is not yet available on this platform in the current Hush build. "
-            + "The default dictation path is currently supported on Windows; "
-            + "macOS and Linux capture backends are still pending.");
-#endif
     }
 
-#if WINDOWS
-    private void OnDataAvailable(object? sender, NAudio.Wave.WaveInEventArgs e)
+    private StreamCallbackResult StreamCallback(
+        IntPtr input,
+        IntPtr output,
+        uint frameCount,
+        ref StreamCallbackTimeInfo timeInfo,
+        StreamCallbackFlags statusFlags,
+        IntPtr userDataPtr)
     {
-        if (_audioAvailable is null || e.BytesRecorded <= 0)
-            return;
+        // The PortAudio callback runs on a real-time audio thread. Anything
+        // that throws here will tear the host process down, so we *must*
+        // swallow exceptions and return Continue.
+        try
+        {
+            var sink = _audioAvailable;
+            if (sink is null || input == IntPtr.Zero || frameCount == 0)
+                return StreamCallbackResult.Continue;
 
-        // Copy buffer because NAudio reuses it after this callback returns.
-        var copy = new byte[e.BytesRecorded];
-        Buffer.BlockCopy(e.Buffer, 0, copy, 0, e.BytesRecorded);
+            using var _prof = PerformanceProfiler.Measure("Audio.OnDataAvailable");
 
-        // Compute RMS from signed 16-bit PCM and fire for visualisation.
-        AudioLevelChanged?.Invoke(ComputeRms(e.Buffer, e.BytesRecorded));
+            int byteCount = checked((int)(frameCount * BytesPerFrame));
+            var buffer = new byte[byteCount];
+            Marshal.Copy(input, buffer, 0, byteCount);
 
-        // Fire-and-forget; transcription SDK handles backpressure internally.
-        _ = _audioAvailable(copy, CancellationToken.None);
+            float rms;
+            using (PerformanceProfiler.Measure("Audio.ComputeRms"))
+                rms = ComputeRms(buffer, byteCount);
+            try { AudioLevelChanged?.Invoke(rms); }
+            catch { /* visualisation must never break capture */ }
+
+            // Fire-and-forget; transcription SDK handles backpressure.
+            _ = sink(buffer, CancellationToken.None);
+        }
+        catch
+        {
+            // Don't log on the audio thread (allocator/IO); just swallow.
+        }
+        return StreamCallbackResult.Continue;
     }
 
     private static float ComputeRms(byte[] buffer, int byteCount)
@@ -116,15 +177,16 @@ public sealed class AudioCaptureService : IAudioCaptureService
         double boosted = Math.Max(rms * 7.5, peak * 2.6);
         return (float)Math.Clamp(Math.Pow(boosted, 0.8), 0.0, 1.0);
     }
-#endif
 
     /// <inheritdoc/>
     public void Stop()
     {
-#if WINDOWS
-        CleanupWaveIn();
-#endif
-        _audioAvailable = null;
+        lock (_stateLock)
+        {
+            CleanupStream();
+            _audioAvailable = null;
+            _callback = null;
+        }
         _logger.LogInformation("Audio capture stopped.");
     }
 
@@ -136,6 +198,54 @@ public sealed class AudioCaptureService : IAudioCaptureService
 
         Stop();
         _disposed = true;
+    }
+
+    private void CleanupStream()
+    {
+        if (_stream is null)
+            return;
+
+        try { _stream.Stop(); }
+        catch { /* best-effort */ }
+
+        try { _stream.Close(); }
+        catch { /* best-effort */ }
+
+        try { _stream.Dispose(); }
+        catch { /* best-effort */ }
+
+        _stream = null;
+    }
+
+    private static void EnsurePortAudioInitialized()
+    {
+        if (s_portAudioInitialized != 0) return;
+        lock (s_initLock)
+        {
+            if (s_portAudioInitialized != 0) return;
+            PortAudio.LoadNativeLibrary();
+            PortAudio.Initialize();
+            s_portAudioInitialized = 1;
+        }
+    }
+
+    private int ResolveInputDevice()
+    {
+        if (DeviceIndex == SystemDefaultDeviceNumber)
+        {
+            int defaultDevice = PortAudio.DefaultInputDevice;
+            if (defaultDevice == PortAudio.NoDevice)
+                throw new InvalidOperationException(
+                    "No microphone was found. Connect or enable a recording device, then try again.");
+            return defaultDevice;
+        }
+
+        int deviceCount = PortAudio.DeviceCount;
+        if (DeviceIndex < 0 || DeviceIndex >= deviceCount)
+            throw new InvalidOperationException(
+                $"The selected microphone is no longer available. Choose another in Settings (got index {DeviceIndex}, {deviceCount} devices present).");
+
+        return DeviceIndex;
     }
 
     internal static Exception BuildStartupException(Exception exception)
@@ -179,61 +289,38 @@ public sealed class AudioCaptureService : IAudioCaptureService
             exception);
     }
 
-#if WINDOWS
-    private void CleanupWaveIn()
-    {
-        if (_waveIn is null)
-            return;
-
-        _waveIn.DataAvailable -= OnDataAvailable;
-
-        try
-        {
-            _waveIn.StopRecording();
-        }
-        catch
-        {
-            // Best-effort cleanup only.
-        }
-
-        _waveIn.Dispose();
-        _waveIn = null;
-    }
-
-    private static string GetDeviceLabel(int deviceIndex)
-    {
-        try
-        {
-            return NAudio.Wave.WaveIn.GetCapabilities(deviceIndex).ProductName;
-        }
-        catch
-        {
-            return "system default";
-        }
-    }
-
     /// <summary>
-    /// Returns a list of available audio input devices as (index, name) pairs.
-    /// Index <c>-1</c> is the system default.
+    /// Returns a list of available input devices as (index, name) pairs.
+    /// Index <c>-1</c> is the system default. PortAudio is initialized once
+    /// and kept alive for the process lifetime; calls here are cheap.
     /// </summary>
     public static List<(int Index, string Name)> GetAvailableDevices()
     {
-        var devices = new List<(int, string)>();
-        devices.Add((-1, "System Default"));
+        var devices = new List<(int, string)> { (SystemDefaultDeviceNumber, "System Default") };
+
         try
         {
-            int count = NAudio.Wave.WaveIn.DeviceCount;
+            EnsurePortAudioInitialized();
+
+            int count = PortAudio.DeviceCount;
             for (int i = 0; i < count; i++)
             {
-                var caps = NAudio.Wave.WaveIn.GetCapabilities(i);
-                devices.Add((i, caps.ProductName));
+                DeviceInfo info;
+                try { info = PortAudio.GetDeviceInfo(i); }
+                catch { continue; }
+
+                if (info.maxInputChannels <= 0)
+                    continue;
+
+                string name = string.IsNullOrWhiteSpace(info.name) ? $"Input device {i}" : info.name;
+                devices.Add((i, name));
             }
         }
         catch
         {
-            // Best-effort — return at least the default entry.
+            // Best-effort enumeration; settings UI should still show "System Default".
         }
+
         return devices;
     }
-#endif
 }

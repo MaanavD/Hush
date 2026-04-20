@@ -4,6 +4,7 @@
         x:Class="Hush.App.Views.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
         Title="Hush — Settings"
+        Icon="avares://Hush.App/Assets/hush-icon.png"
         Width="460" Height="860"
         MinHeight="610" MaxHeight="1100"
         WindowStartupLocation="CenterScreen"

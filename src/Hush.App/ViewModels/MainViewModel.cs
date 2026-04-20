@@ -105,7 +105,14 @@ public sealed partial class MainViewModel : ObservableObject
                 _overlayVm.IsListening = false;
                 _overlayVm.AudioLevel = 0f;
                 _overlayVm.ClearSessionTranscript();
+                _overlayVm.IsFinalizing = false;
                 IsListening = false;
+            });
+
+        _dictationSession.OnPostProcessingStateChanged += active =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.IsFinalizing = active;
             });
     }
 

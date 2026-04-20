@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 // ───────────────────────────────────────────────────────────────────────────
 
 bool listOnly = args.Contains("--list");
-string modelAlias = "whisper-tiny";
+string modelAlias = "nemotron-speech-streaming-en-0.6b";
 int modelIdx = Array.IndexOf(args, "--model");
 if (modelIdx >= 0 && modelIdx + 1 < args.Length)
     modelAlias = args[modelIdx + 1];

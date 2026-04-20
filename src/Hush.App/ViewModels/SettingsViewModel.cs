@@ -33,7 +33,7 @@ namespace Hush.App.ViewModels
         [ObservableProperty] private bool _autoStart;
 
         // Clean Mode
-        [ObservableProperty] private string _cleanHotkey = "Alt+H";
+        [ObservableProperty] private string _cleanHotkey = "Ctrl+H";
         [ObservableProperty] private bool _postProcessingEnabled = true;
         [ObservableProperty] private string _postProcessingModel = "qwen3-0.6b";
         [ObservableProperty] private string? _activePostProcessingPromptId;
@@ -183,19 +183,18 @@ namespace Hush.App.ViewModels
                 if (r is not null) CustomSubstitutions.Remove(r);
             });
 
-            RefreshMicrophones();
+            // Seed with System Default only; full enumeration happens lazily
+            // when the settings dialog opens (TrayIcon calls RefreshMicrophones).
+            // This keeps unit tests from invoking PortAudio native code.
+            AvailableMicrophones.Add(new MicrophoneDevice(AudioCaptureService.SystemDefaultDeviceNumber, "System Default"));
             _selectedMicrophoneIndex = FindMicIndex(settings.MicrophoneDeviceIndex);
         }
 
         public void RefreshMicrophones()
         {
             AvailableMicrophones.Clear();
-#if WINDOWS
             foreach (var (index, name) in AudioCaptureService.GetAvailableDevices())
                 AvailableMicrophones.Add(new MicrophoneDevice(index, name));
-#else
-            AvailableMicrophones.Add(new MicrophoneDevice(-1, "System Default"));
-#endif
         }
 
         private int FindMicIndex(int deviceIndex)

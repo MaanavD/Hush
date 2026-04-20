@@ -8,7 +8,7 @@
 - **Private** — all inference runs on-device. No audio or text ever leaves your machine.
 - **Offline** — works without an internet connection after the initial model download.
 - **Free & open-source** — MIT-licensed. No per-token costs, no subscriptions.
-- **Cross-platform** — Windows today; macOS (Apple Silicon) and Linux desktop (X11) hotkey + text output implemented, audio capture coming soon.
+- **Cross-platform** — Windows, macOS (Apple Silicon), and Linux desktop (X11). Hotkey, microphone capture, and text output all work natively on every supported OS.
 - **Push-to-talk** — hold `Ctrl+Shift+H`, speak, release. Text appears in whatever field is active.
 - **Live overlay** — floating window shows the current transcript while you dictate.
 - **Clipboard-safe** — text is typed via `KEYEVENTF_UNICODE` / `SendInput`; your clipboard is never touched.
@@ -37,9 +37,9 @@ Progress is shown in the overlay and tray icon tooltip.
 
 | Platform | Minimum                            | Audio Capture |
 | -------- | ---------------------------------- | ------------- |
-| Windows  | Windows 10 22H2 or later, 8 GB RAM | ✅ NAudio     |
-| macOS    | Apple Silicon, macOS 13+, 8 GB RAM | 🔲 Planned    |
-| Linux    | X11 desktop, 8 GB RAM              | 🔲 Planned    |
+| Windows  | Windows 10 22H2 or later, 8 GB RAM | ✅ PortAudio  |
+| macOS    | Apple Silicon, macOS 13+, 8 GB RAM | ✅ PortAudio  |
+| Linux    | X11 desktop, 8 GB RAM              | ✅ PortAudio  |
 
 ## Usage
 
@@ -50,6 +50,7 @@ Progress is shown in the overlay and tray icon tooltip.
 5. Release the hotkey — recording stops and the overlay disappears.
 
 For **clean mode** (spinner, no live streaming — LLM rewrite coming soon):
+
 - Hold **Alt+H** instead. Audio is recorded with a spinner overlay, and the full transcript is committed on release.
 
 Right-click the tray icon to open **Settings** or **Quit**.
@@ -73,18 +74,18 @@ These flags are useful for Wayland environments (where global hotkeys may not wo
 
 Settings are stored in `~/.hush/settings.json`.
 
-| Key                     | Default          | Description                                                    |
-| ----------------------- | ---------------- | -------------------------------------------------------------- |
-| `hotkey`                | `"Ctrl+H"`       | Global push-to-talk hotkey (raw mode)                          |
-| `cleanHotkey`           | `"Alt+H"`        | Global push-to-talk hotkey (clean mode)                        |
-| `postProcessingEnabled` | `true`           | Enable LLM rewrite on clean-mode sessions (coming soon)        |
-| `postProcessingModel`   | `"qwen3-0.6b"`   | Foundry Local model alias for post-processing (coming soon)    |
-| `language`              | `"en"`           | BCP-47 transcription language                                  |
-| `transcriptionModel`    | `"whisper-tiny"` | Foundry Local model alias                                      |
-| `overlayOpacity`        | `0.85`           | Overlay background opacity                                     |
-| `soundEffects`          | `true`           | Start/stop audio cues                                          |
-| `autoStart`             | `false`          | Launch at OS login                                             |
-| `clipboardFallback`     | `false`          | Use clipboard paste instead of Unicode input (for legacy apps) |
+| Key                     | Default                               | Description                                                    |
+| ----------------------- | ------------------------------------- | -------------------------------------------------------------- |
+| `hotkey`                | `"Ctrl+H"`                            | Global push-to-talk hotkey (raw mode)                          |
+| `cleanHotkey`           | `"Alt+H"`                             | Global push-to-talk hotkey (clean mode)                        |
+| `postProcessingEnabled` | `true`                                | Enable LLM rewrite on clean-mode sessions (coming soon)        |
+| `postProcessingModel`   | `"qwen3-0.6b"`                        | Foundry Local model alias for post-processing (coming soon)    |
+| `language`              | `"en"`                                | BCP-47 transcription language                                  |
+| `transcriptionModel`    | `"nemotron-speech-streaming-en-0.6b"` | Foundry Local model alias                                      |
+| `overlayOpacity`        | `0.85`                                | Overlay background opacity                                     |
+| `soundEffects`          | `true`                                | Start/stop audio cues                                          |
+| `autoStart`             | `false`                               | Launch at OS login                                             |
+| `clipboardFallback`     | `false`                               | Use clipboard paste instead of Unicode input (for legacy apps) |
 
 ## Build Prerequisites
 
@@ -127,16 +128,16 @@ The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifyi
 
 ## Milestones
 
-| #   | Milestone                           | Status                                             |
-| --- | ----------------------------------- | -------------------------------------------------- |
-| 0   | Project skeleton                    | ✅ Done                                            |
-| 1   | Console transcription proof-of-life | ✅ Done                                            |
-| 2   | Global hotkey + live typing         | ✅ Done                                            |
-| 3   | System tray + overlay UI            | ✅ Done                                            |
-| 4   | Settings & polish                   | ✅ Done                                            |
-| 5   | Cross-platform (macOS + Linux)      | ✅ Done (hotkeys + text output; audio capture TBD) |
-| 6   | Packaging & distribution            | ✅ Done (publish profiles, single-exe)             |
-| 7   | Streaming defaults + overlay refresh| ✅ Done (managed live audio via SDK 1.0.0-dev) |
+| #   | Milestone                            | Status                                             |
+| --- | ------------------------------------ | -------------------------------------------------- |
+| 0   | Project skeleton                     | ✅ Done                                            |
+| 1   | Console transcription proof-of-life  | ✅ Done                                            |
+| 2   | Global hotkey + live typing          | ✅ Done                                            |
+| 3   | System tray + overlay UI             | ✅ Done                                            |
+| 4   | Settings & polish                    | ✅ Done                                            |
+| 5   | Cross-platform (macOS + Linux)       | ✅ Done (hotkeys, mic capture via PortAudio, and text output) |
+| 6   | Packaging & distribution             | ✅ Done (publish profiles, single-exe)             |
+| 7   | Streaming defaults + overlay refresh | ✅ Done (managed live audio via SDK 1.0.0-dev)     |
 
 ## Privacy
 
@@ -146,7 +147,7 @@ The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifyi
 
 ## Known Limitations
 
-- **macOS / Linux audio capture** is not yet implemented. Hotkeys and text output work, but microphone capture requires a platform-specific backend (planned).
+- **macOS / Linux** require microphone permission on first launch. macOS will surface the standard system prompt (declared in `Info.plist` via `NSMicrophoneUsageDescription`); Linux uses ALSA via PortAudio and inherits whatever permission model your distro applies to `/dev/snd/*`.
 - **Linux hotkeys require X11.** Wayland-only sessions are guarded with a startup error instead of silently failing.
 - **macOS hotkeys require Accessibility permission.** Hush now reports that requirement immediately when hotkey registration fails.
 - **Elevated windows** on Windows: `SendInput` is blocked by UIPI when the target app runs as administrator. Run Hush as admin to type into admin windows.

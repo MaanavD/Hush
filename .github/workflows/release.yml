@@ -1,0 +1,269 @@
+name: Release
+
+# Builds self-contained bundles for Windows, macOS (Apple Silicon), and Linux
+# whenever a `v*` tag is pushed (e.g. `git tag v1.0.0 && git push --tags`).
+#
+# Each platform job builds NATIVELY on its own GitHub-hosted runner — cross-
+# compiling from one host to another is brittle (.NET 9 doesn't auto-propagate
+# RuntimeIdentifier to project refs, and the Windows-only NAudio playback path
+# in SoundEffectService is gated by an MSBuild OS condition).
+#
+# Audio capture is cross-platform via PortAudioSharp2 (PortAudio ships pre-
+# built native libs for win-x64, osx-arm64/x64, linux-x64/arm64 inside the
+# NuGet). Hotkey registration and text output are also implemented on all
+# three OSes.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v1.0.0). Leave empty to use HEAD."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    name: Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $ref = "${{ github.ref }}"
+          if ($ref -like "refs/tags/v*") {
+            $version = $ref.Substring("refs/tags/v".Length)
+          } elseif ("${{ github.event.inputs.tag }}" -like "v*") {
+            $version = "${{ github.event.inputs.tag }}".Substring(1)
+          } else {
+            $version = "0.0.0-dev"
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Version: $version"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Publish (win-x64, single-exe, self-contained)
+        run: >
+          dotnet publish src/Hush.App/Hush.App.csproj
+          -c Release
+          -p:PublishProfile=win-x64
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.version }}.0
+          -p:FileVersion=${{ steps.version.outputs.version }}.0
+          -p:InformationalVersion=${{ steps.version.outputs.version }}
+
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $publishDir = "src/Hush.App/bin/publish/win-x64"
+          $zipName = "Hush-$version-win-x64.zip"
+          Compress-Archive -Path "$publishDir/*" -DestinationPath $zipName -Force
+          $hash = (Get-FileHash $zipName -Algorithm SHA256).Hash
+          "$hash  $zipName" | Out-File -FilePath "$zipName.sha256" -Encoding ascii
+          "zip=$zipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sha256=$zipName.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Packaged $zipName ($hash)"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hush-win-x64
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.sha256 }}
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.sha256 }}
+
+  release-macos:
+    name: macOS arm64
+    runs-on: macos-14   # Apple Silicon
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          ref="${{ github.ref }}"
+          if [[ "$ref" == refs/tags/v* ]]; then
+            version="${ref#refs/tags/v}"
+          elif [[ "${{ github.event.inputs.tag }}" == v* ]]; then
+            version="${{ github.event.inputs.tag }}"
+            version="${version#v}"
+          else
+            version="0.0.0-dev"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Publish (osx-arm64, single-exe, self-contained)
+        run: >
+          dotnet publish src/Hush.App/Hush.App.csproj
+          -c Release
+          -p:PublishProfile=osx-arm64
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.version }}.0
+          -p:FileVersion=${{ steps.version.outputs.version }}.0
+          -p:InformationalVersion=${{ steps.version.outputs.version }}
+
+      - name: Build .app bundle
+        id: package
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          publish="src/Hush.App/bin/publish/osx-arm64"
+          app="Hush.app"
+          rm -rf "$app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp src/Hush.App/Assets/Info.plist "$app/Contents/Info.plist"
+          cp -R "$publish"/* "$app/Contents/MacOS/"
+          chmod +x "$app/Contents/MacOS/Hush.App"
+
+          # Bundle the icon (sips converts the PNG to a .icns).
+          sips -s format icns src/Hush.App/Assets/hush-icon.png \
+               --out "$app/Contents/Resources/hush-icon.icns" || true
+
+          # Ad-hoc sign so the binary launches on the build machine. Real
+          # distribution requires Apple Developer ID signing + notarization
+          # (see CONTRIBUTING for the manual steps).
+          codesign --force --deep --sign - "$app" || true
+
+          # Tarball preserves the +x bit and bundle structure.
+          tar="Hush-$version-osx-arm64.tar.gz"
+          tar -czf "$tar" "$app"
+          shasum -a 256 "$tar" > "$tar.sha256"
+          echo "tar=$tar" >> "$GITHUB_OUTPUT"
+          echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hush-osx-arm64
+          path: |
+            ${{ steps.package.outputs.tar }}
+            ${{ steps.package.outputs.sha256 }}
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: false
+          files: |
+            ${{ steps.package.outputs.tar }}
+            ${{ steps.package.outputs.sha256 }}
+
+  release-linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          ref="${{ github.ref }}"
+          if [[ "$ref" == refs/tags/v* ]]; then
+            version="${ref#refs/tags/v}"
+          elif [[ "${{ github.event.inputs.tag }}" == v* ]]; then
+            version="${{ github.event.inputs.tag }}"
+            version="${version#v}"
+          else
+            version="0.0.0-dev"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Publish (linux-x64, single-exe, self-contained)
+        run: >
+          dotnet publish src/Hush.App/Hush.App.csproj
+          -c Release
+          -p:PublishProfile=linux-x64
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.version }}.0
+          -p:FileVersion=${{ steps.version.outputs.version }}.0
+          -p:InformationalVersion=${{ steps.version.outputs.version }}
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          publish="src/Hush.App/bin/publish/linux-x64"
+          chmod +x "$publish"/Hush.App || true
+          tar="Hush-$version-linux-x64.tar.gz"
+          tar -C "$publish" -czf "$tar" .
+          sha256sum "$tar" > "$tar.sha256"
+          echo "tar=$tar" >> "$GITHUB_OUTPUT"
+          echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hush-linux-x64
+          path: |
+            ${{ steps.package.outputs.tar }}
+            ${{ steps.package.outputs.sha256 }}
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: false
+          files: |
+            ${{ steps.package.outputs.tar }}
+            ${{ steps.package.outputs.sha256 }}

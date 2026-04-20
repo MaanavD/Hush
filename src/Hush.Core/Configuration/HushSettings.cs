@@ -14,14 +14,24 @@ public enum ModelUnloadTimeout { Never, Min2, Min5, Min15 }
 /// </summary>
 public sealed class HushSettings
 {
-    /// <summary>Global hotkey combination, e.g. <c>"Ctrl+Shift+H"</c>.</summary>
-    public string Hotkey { get; set; } = "Ctrl+H";
+    /// <summary>
+    /// Global push-to-talk hotkey. Supports combos like <c>"Ctrl+Shift+H"</c>
+    /// as well as modifier-only gestures such as plain <c>"Alt"</c> — in
+    /// that case dictation begins after a brief hold (~250 ms) so ordinary
+    /// Alt+Tab / Alt+F4 / menu-access interactions are unaffected.
+    /// Modifier-only hotkeys are Windows-only; other platforms default to
+    /// <c>"Ctrl+H"</c>.
+    /// </summary>
+    public string Hotkey { get; set; } = DefaultRawHotkey();
+
+    private static string DefaultRawHotkey() =>
+        OperatingSystem.IsWindows() ? "Alt" : "Ctrl+H";
 
     /// <summary>Language hint passed to Foundry Local. Accepts ISO 639-1 codes like <c>"en"</c> and locale tags like <c>"en-US"</c>.</summary>
     public string Language { get; set; } = "en";
 
     /// <summary>Foundry Local model alias to use for transcription.</summary>
-    public string TranscriptionModel { get; set; } = "whisper-tiny";
+    public string TranscriptionModel { get; set; } = "nemotron-speech-streaming-en-0.6b";
 
     /// <summary>Whether to show unstable interim transcription text in the overlay.</summary>
     public bool PartialsInOverlay { get; set; } = true;
@@ -66,7 +76,7 @@ public sealed class HushSettings
 
     // ── Clean Mode ────────────────────────────────────────────────────────
     /// <summary>Hotkey combination for clean-mode (LLM-rewritten) dictation.</summary>
-    public string CleanHotkey { get; set; } = "Alt+H";
+    public string CleanHotkey { get; set; } = "Ctrl+H";
 
     /// <summary>Whether to run an LLM rewrite pass in clean-mode sessions.</summary>
     public bool PostProcessingEnabled { get; set; } = true;

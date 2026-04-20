@@ -3,6 +3,7 @@
 using System.Text;
 using Hush.Core.Audio;
 using Hush.Core.Configuration;
+using Hush.Core.Diagnostics;
 using Hush.Core.Output;
 using Hush.Core.PostProcessing;
 using Hush.Core.Transcription;
@@ -77,7 +78,8 @@ public sealed class DictationSession : IDictationSession
 
     /// <inheritdoc/>
     public event Action<Exception>? OnSessionError;
-
+    /// <inheritdoc/>
+    public event Action<bool>? OnPostProcessingStateChanged;
     /// <inheritdoc/>
     public async Task StartAsync(
         string language = "en",
@@ -169,11 +171,16 @@ public sealed class DictationSession : IDictationSession
 
                 if (!string.IsNullOrEmpty(result.CommittedDelta))
                 {
-                    var delta = _substitutions?.Count > 0
-                        ? SubstitutionProcessor.Apply(result.CommittedDelta, _substitutions)
-                        : result.CommittedDelta;
+                    string delta;
+                    using (PerformanceProfiler.Measure("Session.Substitution"))
+                    {
+                        delta = _substitutions?.Count > 0
+                            ? SubstitutionProcessor.Apply(result.CommittedDelta, _substitutions)
+                            : result.CommittedDelta;
+                    }
                     _sessionAccumulated.Append(delta);
-                    await _output.TypeTextAsync(delta, cancellationToken, skipModifierRestore: true);
+                    using (PerformanceProfiler.Measure("Session.TypeText"))
+                        await _output.TypeTextAsync(delta, cancellationToken, skipModifierRestore: true);
                     OnCommittedChunk?.Invoke(delta);
                 }
             }
@@ -205,6 +212,13 @@ public sealed class DictationSession : IDictationSession
         Task? spinnerTask = null;
         bool spinnerStarted = false;
 
+        // Pin the window that had focus when the session began. All spinner
+        // animations and the final (optionally LLM-rewritten) typing pass are
+        // gated on this window still being foreground, so the cleaned text
+        // never leaks into whichever window the user clicked into while the
+        // LLM was rewriting.
+        var targetWindow = TargetWindowGuard.Capture();
+
         try
         {
             await foreach (var result in _engine.GetResultStreamAsync(cancellationToken))
@@ -219,7 +233,8 @@ public sealed class DictationSession : IDictationSession
                     {
                         spinnerStarted = true;
                         spinnerCts = new CancellationTokenSource();
-                        spinnerTask = Task.Run(() => RunSpinnerAsync(spinnerCts.Token));
+                        var spinnerToken = spinnerCts.Token;
+                        spinnerTask = Task.Run(() => RunSpinnerAsync(targetWindow, spinnerToken));
                     }
                 }
 
@@ -268,15 +283,39 @@ public sealed class DictationSession : IDictationSession
             // Optional LLM post-processing pass (spinner mode only).
             if (_postProcessor is not null && !string.IsNullOrEmpty(_postProcessingPrompt))
             {
-                var rewritten = await _postProcessor.RewriteAsync(finalText, _postProcessingPrompt, CancellationToken.None);
-                if (!string.IsNullOrEmpty(rewritten))
-                    finalText = rewritten;
+                OnPostProcessingStateChanged?.Invoke(true);
+                try
+                {
+                    var rewritten = await _postProcessor.RewriteAsync(finalText, _postProcessingPrompt, CancellationToken.None);
+                    if (!string.IsNullOrEmpty(rewritten))
+                        finalText = rewritten;
+                }
+                finally
+                {
+                    OnPostProcessingStateChanged?.Invoke(false);
+                }
             }
 
             try
             {
-                await _output.TypeTextAsync(finalText, CancellationToken.None);
-                _logger.LogDebug("Typed buffered text ({Length} chars) after spinner session.", finalText.Length);
+                // Re-focus the captured window before typing. If the user
+                // clicked into a different app while we were transcribing /
+                // rewriting, restoration usually succeeds because Hush is on
+                // the foreground input queue (the hotkey release was the most
+                // recent user-initiated foreground event). If restoration
+                // fails we refuse to type rather than dump the cleaned text
+                // into whichever window happens to be focused.
+                if (!TargetWindowGuard.TryEnsureForeground(targetWindow))
+                {
+                    _logger.LogWarning(
+                        "Dropping {Length}-char cleanse-mode output because the target window lost focus and could not be restored.",
+                        finalText.Length);
+                }
+                else
+                {
+                    await _output.TypeTextAsync(finalText, CancellationToken.None);
+                    _logger.LogDebug("Typed buffered text ({Length} chars) after spinner session.", finalText.Length);
+                }
             }
             catch (Exception ex)
             {
@@ -285,7 +324,7 @@ public sealed class DictationSession : IDictationSession
         }
     }
 
-    private async Task RunSpinnerAsync(CancellationToken cancellationToken)
+    private async Task RunSpinnerAsync(TargetWindowGuard.Handle targetWindow, CancellationToken cancellationToken)
     {
         int frameIndex = 0;
         bool hasChar = false;
@@ -294,6 +333,19 @@ public sealed class DictationSession : IDictationSession
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                // If the user has clicked away from the original window, stop
+                // animating. We deliberately do NOT try to restore focus
+                // mid-spinner — the spinner is a continuous visual affordance,
+                // and yanking focus back every 120 ms while the user is
+                // interacting with another app would be worse than just
+                // pausing. The final typing pass still attempts a restore.
+                if (!TargetWindowGuard.IsStillForeground(targetWindow))
+                {
+                    _logger.LogDebug("Target window lost focus during spinner; pausing animation.");
+                    hasChar = false;   // do not backspace — focus is elsewhere
+                    return;
+                }
+
                 // Remove the previous frame character.
                 if (hasChar)
                 {
@@ -302,6 +354,15 @@ public sealed class DictationSession : IDictationSession
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
+
+                // Re-check focus between the backspace and the next frame —
+                // SendInput is async at the OS layer and focus can change
+                // within a single tick.
+                if (!TargetWindowGuard.IsStillForeground(targetWindow))
+                {
+                    _logger.LogDebug("Target window lost focus during spinner; pausing animation.");
+                    return;
+                }
 
                 // Type the next frame character.
                 char frame = SpinnerFrames[frameIndex % SpinnerFrames.Length];
@@ -315,8 +376,10 @@ public sealed class DictationSession : IDictationSession
         catch (OperationCanceledException) { }
 
         // Clean up: erase the last spinner character so the caret is clean
-        // before the accumulated text is typed.
-        if (hasChar)
+        // before the accumulated text is typed — but only if we are still
+        // over the original window. Otherwise the backspace would delete a
+        // real character in whatever window the user clicked into.
+        if (hasChar && TargetWindowGuard.IsStillForeground(targetWindow))
         {
             try
             {

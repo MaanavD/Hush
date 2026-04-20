@@ -2,7 +2,7 @@
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-#if WINDOWS
+#if HUSH_WINDOWS
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 #endif
@@ -29,7 +29,7 @@ public sealed class SoundEffectService : ISoundEffectService
     /// <inheritdoc/>
     public Task PlayStartAsync(CancellationToken cancellationToken = default)
     {
-#if WINDOWS
+#if HUSH_WINDOWS
         return PlayChimeAsync([880.0, 1109.0], [90, 70]);
 #else
         return Task.CompletedTask;
@@ -39,7 +39,7 @@ public sealed class SoundEffectService : ISoundEffectService
     /// <inheritdoc/>
     public Task PlayStopAsync(CancellationToken cancellationToken = default)
     {
-#if WINDOWS
+#if HUSH_WINDOWS
         return PlayChimeAsync([660.0, 523.0], [90, 70]);
 #else
         return Task.CompletedTask;
@@ -49,7 +49,7 @@ public sealed class SoundEffectService : ISoundEffectService
     /// <inheritdoc/>
     public Task PlayProcessingCompleteAsync(CancellationToken cancellationToken = default)
     {
-#if WINDOWS
+#if HUSH_WINDOWS
         // Ascending two-note chime: 880 Hz (60 ms) → 1320 Hz (80 ms).
         // Distinct from start (880→1109) and stop (660→523).
         return PlayChimeAsync([880.0, 1320.0], [60, 80]);
@@ -58,7 +58,7 @@ public sealed class SoundEffectService : ISoundEffectService
 #endif
     }
 
-#if WINDOWS
+#if HUSH_WINDOWS
     /// <summary>
     /// Plays a multi-note chime by concatenating sine-wave segments and awaiting
     /// playback completion asynchronously so callers are not blocked.

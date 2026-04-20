@@ -100,7 +100,7 @@ public sealed class HushSettingsEdgeCaseTests
         Assert.Equal("F5", loaded!.Hotkey);
         // All other properties should be defaults
         Assert.Equal("en", loaded.Language);
-        Assert.Equal("whisper-tiny", loaded.TranscriptionModel);
+        Assert.Equal("nemotron-speech-streaming-en-0.6b", loaded.TranscriptionModel);
         Assert.True(loaded.PartialsInOverlay);
         Assert.True(loaded.SoundEffects);
     }
@@ -110,7 +110,8 @@ public sealed class HushSettingsEdgeCaseTests
     {
         var loaded = JsonSerializer.Deserialize<HushSettings>("{}", JsonOptions);
         Assert.NotNull(loaded);
-        Assert.Equal("Ctrl+H", loaded!.Hotkey);
+        var expectedHotkey = OperatingSystem.IsWindows() ? "Alt" : "Ctrl+H";
+        Assert.Equal(expectedHotkey, loaded!.Hotkey);
     }
 
     // ── Boundary values ──────────────────────────────────────────────────
