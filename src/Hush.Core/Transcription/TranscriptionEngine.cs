@@ -169,7 +169,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
     /// <inheritdoc/>
     public async Task InitializeAsync(
-        string modelAlias = "whisper-tiny",
+        string modelAlias = "nemotron-speech-streaming-en-0.6b",
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
         IProgress<string>? statusProgress = null,
