@@ -53,6 +53,8 @@
                 BorderBrush="#309333EA"
                 BorderThickness="1"
                 Padding="14 8"
+                Width="180" Height="48"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
                 IsVisible="{Binding IsListeningRaw}"
                 BoxShadow="0 1 8 0 #14000000"
                 ClipToBounds="True">
@@ -65,6 +67,8 @@
                 BorderBrush="#30F59E0B"
                 BorderThickness="1"
                 Padding="14 8"
+                Width="180" Height="48"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
                 IsVisible="{Binding IsListeningClean}"
                 BoxShadow="0 1 8 0 #14000000"
                 ClipToBounds="True">
@@ -80,6 +84,7 @@
                 BorderBrush="#40F59E0B"
                 BorderThickness="1"
                 Padding="14 8"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
                 IsVisible="{Binding ShowFinalizingHint}"
                 BoxShadow="0 1 8 0 #14000000">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
