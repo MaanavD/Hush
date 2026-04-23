@@ -45,7 +45,7 @@ public sealed class HushSettingsEdgeCaseTests
         {
             Hotkey = "Alt+Space",
             Language = "ja",
-            TranscriptionModel = "whisper-large-v3",
+            TranscriptionModel = "nemotron-speech-streaming-en-0.6b",
             PartialsInOverlay = false,
             ClipboardFallback = true,
             AutoStart = true,
@@ -59,7 +59,7 @@ public sealed class HushSettingsEdgeCaseTests
 
         Assert.Equal("Alt+Space", loaded.Hotkey);
         Assert.Equal("ja", loaded.Language);
-        Assert.Equal("whisper-large-v3", loaded.TranscriptionModel);
+        Assert.Equal("nemotron-speech-streaming-en-0.6b", loaded.TranscriptionModel);
         Assert.False(loaded.PartialsInOverlay);
         Assert.True(loaded.ClipboardFallback);
         Assert.True(loaded.AutoStart);

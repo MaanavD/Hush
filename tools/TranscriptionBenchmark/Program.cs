@@ -1,6 +1,6 @@
 // Standalone Foundry Local transcription benchmark.
 // Records from the default microphone in chunks and transcribes each one.
-// Usage:  dotnet run [--seconds 30] [--model whisper-tiny] [--language en] [--chunk-seconds 5]
+// Usage:  dotnet run [--seconds 30] [--model nemotron-speech-streaming-en-0.6b] [--language en] [--chunk-seconds 5]
 
 using System.Diagnostics;
 using Microsoft.AI.Foundry.Local;
@@ -10,7 +10,7 @@ using NAudio.Wave;
 
 // ── CLI args ────────────────────────────────────────────────────────────────
 int durationSeconds = ArgInt(args, "--seconds", 30);
-string modelAlias = ArgString(args, "--model", "whisper-tiny");
+string modelAlias = ArgString(args, "--model", "nemotron-speech-streaming-en-0.6b");
 string language = ArgString(args, "--language", "en");
 int chunkSeconds = ArgInt(args, "--chunk-seconds", 5);
 

@@ -49,12 +49,12 @@ public sealed class PostProcessingServiceTests
     {
         var settings = new Configuration.HushSettings
         {
-            ActivePostProcessingPromptId = "formal-prose"
+            ActivePostProcessingPromptId = "email-reply"
         };
 
         var prompt = settings.GetActivePrompt();
 
-        Assert.Equal("formal-prose", prompt.Id);
+        Assert.Equal("email-reply", prompt.Id);
     }
 
     [Fact]
@@ -70,10 +70,10 @@ public sealed class PostProcessingServiceTests
 
         var all = settings.AllPrompts;
 
-        // Built-ins come first.
-        Assert.Equal(Configuration.HushSettings.BuiltInPrompts[0].Id, all[0].Id);
-        Assert.Equal(Configuration.HushSettings.BuiltInPrompts[1].Id, all[1].Id);
-        Assert.Equal(Configuration.HushSettings.BuiltInPrompts[2].Id, all[2].Id);
-        Assert.Equal("custom-1", all[3].Id);
+        // Built-ins come first, in order.
+        var builtInCount = Configuration.HushSettings.BuiltInPrompts.Count;
+        for (int i = 0; i < builtInCount; i++)
+            Assert.Equal(Configuration.HushSettings.BuiltInPrompts[i].Id, all[i].Id);
+        Assert.Equal("custom-1", all[builtInCount].Id);
     }
 }

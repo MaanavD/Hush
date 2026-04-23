@@ -759,8 +759,7 @@ These are NOT in the MVP scope but inform architectural decisions:
 - Hush pins pre-release `Microsoft.AI.Foundry.Local` NuGet packages (see `NuGet.config` for the local package source).
 - The managed Foundry Local SDK handles native-asset resolution and DLL path wiring. Hush supplies an `AppName` via `FoundryRuntimeConfiguration`.
 - macOS and Linux do not yet have validated microphone capture backends. Hotkey and text-output paths work, but audio capture on those platforms is pending.
-- The Nemotron CPU int4 model is used in place of Whisper Tiny for better streaming quality. See `dist/setup.ps1` for the model swap workflow.
-- **Whisper fallback** — option to use `whisper-tiny` for lower resource usage on constrained hardware.
+- The Nemotron CPU int4 model is the sole supported transcription backend. See `dist/setup.ps1` for the model bootstrap workflow.
 - **Clipboard-paste fallback** — optional mode for apps that block simulated keystrokes.
 - **Notification integration** — toast notifications instead of overlay (future).
 - **Plugin system** — extensible output targets (future).
@@ -769,7 +768,7 @@ These are NOT in the MVP scope but inform architectural decisions:
 
 ## 15  Open Questions
 
-1. **Foundry Local stream semantics** — Need to confirm the exact C# event contract for live transcription: interim-only, final-only, or both, and whether the model alias is exactly `"nemotron"` in the catalog.
+1. **Foundry Local stream semantics** — Confirmed for Nemotron: the SDK exposes interim and final chunks via the C# live-audio API; the alias `nemotron-speech-streaming-en-0.6b` is what Hush pins.
 2. **Cross-platform capture backend** — Need to confirm the most reliable macOS/Linux audio backend and whether NAudio is sufficient anywhere beyond Windows.
 3. **Bundled native helpers** — Need to decide which Linux/macOS native libraries or helper binaries can be legally and practically bundled for self-contained distribution.
 4. **Wayland promotion criteria** — Define the demand threshold and test matrix that would move Wayland from best-effort to fully supported.
@@ -801,31 +800,18 @@ dotnet test
 
 ## 17  Beta Testing Notes
 
-> **Note for contributors:** This section describes a temporary model-swap workaround. It may become unnecessary as the Foundry Local SDK evolves.
+### 17.1  Nemotron CPU Model
 
-### 17.1  Nemotron CPU Model (No GPU Required)
-
-The default Foundry Local catalog only includes **Whisper** (all variants require CUDA GPU).
-For testers without a GPU, a CPU-quantized int4 Nemotron model is available as a workaround.
+Hush uses the CPU-quantized int4 Nemotron streaming model exclusively for transcription. It runs on-device with no GPU requirement and is pinned to the Foundry Local alias `nemotron-speech-streaming-en-0.6b`.
 
 **Model source:** https://huggingface.co/jiafatom/nemotron-cpu-int4/tree/main
 
-**Steps:**
+The model is downloaded automatically on first launch via the Foundry Local SDK. Manual staging is only needed if the catalog cannot be reached; in that case drop the following files into the Foundry Local model cache at `%USERPROFILE%\.aitk\Microsoft\` (Windows) under the Nemotron alias directory:
 
-1. Find the Foundry Local model cache directory — it is `%USERPROFILE%\.aitk\Microsoft\` on Windows.
-   The whisper-tiny CPU slot is: `openai-whisper-tiny-generic-cpu-2\cpu-fp32\`.
+- `encoder.onnx` + `encoder.onnx.data`
+- `decoder.onnx` + `decoder.onnx.data`
+- `joint.onnx` + `joint.onnx.data`
+- `genai_config.json`, `audio_processor_config.json`, `tokenizer.json`, `tokenizer_config.json`, `vocab.txt`
 
-2. Download all files from the HuggingFace repo above into that folder, replacing the existing Whisper files:
-   - `encoder.onnx` + `encoder.onnx.data`
-   - `decoder.onnx` + `decoder.onnx.data`
-   - `joint.onnx` + `joint.onnx.data`
-   - `genai_config.json`, `audio_processor_config.json`, `tokenizer.json`, `tokenizer_config.json`, `vocab.txt`
-
-3. In `~/.hush/settings.json`, set:
-   ```json
-   { "transcriptionModel": "whisper-tiny" }
-   ```
-   Hush will load the Nemotron weights under the `whisper-tiny` alias via the SDK.
-
-> **Warning:** This is an unsupported workaround. The model format must be compatible with the Foundry Local ONNX runtime. Accuracy and latency will differ from Whisper. Not recommended for standard setups. GPU users should use `whisper-base` or larger.
+Legacy `~/.hush/settings.json` files that still reference a `whisper-*` alias are migrated automatically at startup to the Nemotron default — no manual edit is required.
 

@@ -52,7 +52,7 @@ public sealed class HushSettingsTests
         Assert.NotNull(settings.PostProcessingPrompts);
         Assert.Empty(settings.PostProcessingPrompts);
         Assert.Null(settings.ActivePostProcessingPromptId);
-        Assert.Equal(3, HushSettings.BuiltInPrompts.Count);
+        Assert.Equal(7, HushSettings.BuiltInPrompts.Count);
     }
 
     [Fact]

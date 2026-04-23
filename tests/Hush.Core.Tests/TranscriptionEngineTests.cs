@@ -77,7 +77,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "fr");
         factory.Session.Emit(new LiveAudioSessionChunk("bonjour", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.4)));
@@ -117,7 +117,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: false);
         factory.Session.Emit(new LiveAudioSessionChunk("bonjour", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.4)));
@@ -157,7 +157,7 @@ public sealed class TranscriptionEngineTests
         // stabilise progressively, then a final chunk commits the rest.
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -204,7 +204,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -246,7 +246,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -287,7 +287,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -322,7 +322,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -355,7 +355,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync();
         factory.Session.Emit(new LiveAudioSessionChunk("[silence]", true, null, null));
@@ -383,7 +383,7 @@ public sealed class TranscriptionEngineTests
         };
 
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en");
         await engine.StopSessionAsync();
@@ -401,7 +401,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -435,7 +435,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -463,7 +463,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -496,7 +496,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -530,7 +530,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -579,7 +579,7 @@ public sealed class TranscriptionEngineTests
         // the old Math.Max logic would commit it — typing "wor" mid-word.
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -617,7 +617,7 @@ public sealed class TranscriptionEngineTests
         // already committed, the word-level diff should avoid erasing and retyping them.
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync(language: "en", streamingCommit: true);
 
@@ -649,7 +649,7 @@ public sealed class TranscriptionEngineTests
     {
         var factory = new FakeLiveAudioSessionFactory();
         var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
-        SetModelId(engine, "whisper-test");
+        SetModelId(engine, "nemotron-test");
 
         await engine.StartSessionAsync();
         await engine.AppendAudioAsync(new byte[] { 1, 2, 3, 4 });

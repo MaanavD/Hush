@@ -9,4 +9,10 @@ public sealed record LlmPrompt
     /// <summary>System message sent to the LLM. Raw transcript is the user message.</summary>
     public required string Prompt { get; init; }
     public bool IsBuiltIn { get; init; }
+
+    /// <summary>Optional emoji shown in the prompt picker. Built-ins only.</summary>
+    public string Icon { get; init; } = string.Empty;
+
+    /// <summary>Short one-line use-case description shown under the name. Built-ins only.</summary>
+    public string Description { get; init; } = string.Empty;
 }

@@ -41,13 +41,49 @@ public sealed class SettingsService
                 stream,
                 SettingsJsonContext.Default.HushSettings,
                 cancellationToken);
-            return settings ?? new HushSettings();
+            settings ??= new HushSettings();
+            MigrateLegacyTranscriptionModel(settings);
+            return settings;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to load settings from '{Path}'; using defaults.", SettingsPath);
             return new HushSettings();
         }
+    }
+
+    /// <summary>
+    /// Earlier Hush builds shipped with Whisper as the transcription backend.
+    /// Hush now uses Nemotron exclusively, so any stale whisper-* alias on disk
+    /// is silently upgraded to the current Nemotron default. The Foundry Local
+    /// NemotronStreamingProcessor rejects whisper model types outright, so
+    /// leaving a legacy alias in place would cause startup warmup to fail.
+    /// </summary>
+    private void MigrateLegacyTranscriptionModel(HushSettings settings)
+    {
+        if (TryMigrateLegacyTranscriptionModel(settings, out var oldAlias, out var newAlias))
+        {
+            _logger.LogInformation(
+                "Migrating legacy transcription model alias '{Old}' to '{New}'.",
+                oldAlias, newAlias);
+        }
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> and rewrites <see cref="HushSettings.TranscriptionModel"/>
+    /// to the current default when the saved alias references Whisper (which Foundry
+    /// Local's Nemotron streaming processor no longer accepts). Public for testing.
+    /// </summary>
+    internal static bool TryMigrateLegacyTranscriptionModel(HushSettings settings, out string oldAlias, out string newAlias)
+    {
+        oldAlias = settings.TranscriptionModel ?? string.Empty;
+        newAlias = oldAlias;
+        if (string.IsNullOrWhiteSpace(oldAlias)) return false;
+        if (!oldAlias.Contains("whisper", StringComparison.OrdinalIgnoreCase)) return false;
+
+        newAlias = new HushSettings().TranscriptionModel;
+        settings.TranscriptionModel = newAlias;
+        return true;
     }
 
     /// <summary>

@@ -61,7 +61,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     // later chunk can still be treated as additive speech instead of a rewrite.
     private static readonly TimeSpan DetachedChunkOverlapTolerance = TimeSpan.FromMilliseconds(150);
 
-    // Whisper hallucination tokens that should never be typed or shown.
+    // ASR hallucination / silence tokens that should never be typed or shown.
     private static readonly HashSet<string> NoiseTokens =
         new(StringComparer.OrdinalIgnoreCase)
         {

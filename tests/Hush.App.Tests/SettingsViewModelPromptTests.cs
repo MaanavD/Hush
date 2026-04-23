@@ -132,7 +132,7 @@ public sealed class SettingsViewModelPromptTests
 
         Assert.NotNull(vm.SelectedPrompt);
         Assert.True(vm.SelectedPrompt!.IsBuiltIn);
-        // First built-in stub is "fix-punctuation"
-        Assert.Equal("fix-punctuation", vm.SelectedPrompt.Id);
+        // First built-in is the default cleanup prompt.
+        Assert.Equal("clean-dictation", vm.SelectedPrompt.Id);
     }
 }

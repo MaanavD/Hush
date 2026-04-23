@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 // ── Hush — Milestone 1: Proof of Life ──────────────────────────────────────
 // Run this console app to verify mic → Foundry Local → text on Windows.
 //   dotnet run -- --list       list available catalog models and exit
-//   dotnet run -- --model <alias>   use a specific model alias (default: whisper-base)
+//   dotnet run -- --model <alias>   use a specific model alias (default: nemotron-speech-streaming-en-0.6b)
 //   Press Ctrl+C to stop recording.
 // ───────────────────────────────────────────────────────────────────────────
 
