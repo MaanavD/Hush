@@ -37,13 +37,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Foundry Local managed SDK (unified, replaces WinML + old cross-platform variants) -->
-    <PackageReference Include="Microsoft.AI.Foundry.Local" Version="1.0.0-dev.202604071256" />
-    <!-- Explicit Core pin: SDK nuspec declares an older transitive dep; override with local build.
-         April 18 Core build adds Nemotron (nemotron-speech-streaming-en-0.6b) to the catalog. -->
-    <PackageReference Include="Microsoft.AI.Foundry.Local.Core" Version="1.0.0-dev-202604180056-cdbd18ba" />
-    <!-- Pin ORT Managed to the higher version resolved by the transitive chain to avoid NU1605 downgrade. -->
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.25.0-dev-20260402-2205-14d1d14e36" />
+    <!-- Foundry Local managed SDK -->
+    <PackageReference Include="Microsoft.AI.Foundry.Local" Version="1.0.0-dev.202604220646" />
+    <!-- Explicit Core pin: ensures osx-arm64 dylib is present (ships win-x64/win-arm64/linux-x64/osx-arm64).
+         April 23 build is the first that includes the osx-arm64 native library. -->
+    <PackageReference Include="Microsoft.AI.Foundry.Local.Core" Version="1.1.0-dev-202604232055-59185419" />
 
     <!-- Audio capture — PortAudio is the cross-platform backend (Windows / macOS / Linux).
          Pre-compiled native libs (portaudio.dll, libportaudio.dylib, libportaudio.so)
