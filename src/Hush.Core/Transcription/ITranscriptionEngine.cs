@@ -16,7 +16,7 @@ public interface ITranscriptionEngine : IAsyncDisposable
     /// downloading, loading, ready).
     /// </summary>
     Task InitializeAsync(
-        string modelAlias = "nemotron-speech-streaming-en-0.6b",
+        string modelAlias = "nemotron-speech-streaming-en-0.6b-generic-cpu",
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
         IProgress<string>? statusProgress = null,

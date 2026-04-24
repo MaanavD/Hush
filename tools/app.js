@@ -21,7 +21,7 @@ const manager = FoundryLocalManager.create({
 console.log("✓ SDK initialized");
 
 // Get and load the nemotron model
-const modelAlias = "nemotron-speech-streaming-en-0.6b";
+const modelAlias = "nemotron-speech-streaming-en-0.6b-generic-cpu";
 let model = await manager.catalog.getModel(modelAlias);
 if (!model) {
   console.error(`ERROR: Model "${modelAlias}" not found in catalog.`);

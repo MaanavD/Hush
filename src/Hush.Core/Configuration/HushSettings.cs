@@ -14,6 +14,8 @@ public enum ModelUnloadTimeout { Never, Min2, Min5, Min15 }
 /// </summary>
 public sealed class HushSettings
 {
+    public const string DefaultTranscriptionModel = "nemotron-speech-streaming-en-0.6b-generic-cpu";
+
     /// <summary>
     /// Global push-to-talk hotkey. Supports combos like <c>"Ctrl+Shift+H"</c>
     /// as well as modifier-only gestures such as plain <c>"Alt"</c> — in
@@ -29,7 +31,7 @@ public sealed class HushSettings
     public string Language { get; set; } = "en";
 
     /// <summary>Foundry Local model alias to use for transcription.</summary>
-    public string TranscriptionModel { get; set; } = "nemotron-speech-streaming-en-0.6b";
+    public string TranscriptionModel { get; set; } = DefaultTranscriptionModel;
 
     /// <summary>Whether to show unstable interim transcription text in the overlay.</summary>
     public bool PartialsInOverlay { get; set; } = true;

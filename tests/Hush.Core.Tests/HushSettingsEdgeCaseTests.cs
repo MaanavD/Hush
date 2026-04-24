@@ -45,7 +45,7 @@ public sealed class HushSettingsEdgeCaseTests
         {
             Hotkey = "Alt+Space",
             Language = "ja",
-            TranscriptionModel = "nemotron-speech-streaming-en-0.6b",
+            TranscriptionModel = "nemotron-speech-streaming-en-0.6b-generic-cpu",
             PartialsInOverlay = false,
             ClipboardFallback = true,
             AutoStart = true,
@@ -59,7 +59,7 @@ public sealed class HushSettingsEdgeCaseTests
 
         Assert.Equal("Alt+Space", loaded.Hotkey);
         Assert.Equal("ja", loaded.Language);
-        Assert.Equal("nemotron-speech-streaming-en-0.6b", loaded.TranscriptionModel);
+        Assert.Equal("nemotron-speech-streaming-en-0.6b-generic-cpu", loaded.TranscriptionModel);
         Assert.False(loaded.PartialsInOverlay);
         Assert.True(loaded.ClipboardFallback);
         Assert.True(loaded.AutoStart);
@@ -100,7 +100,7 @@ public sealed class HushSettingsEdgeCaseTests
         Assert.Equal("F5", loaded!.Hotkey);
         // All other properties should be defaults
         Assert.Equal("en", loaded.Language);
-        Assert.Equal("nemotron-speech-streaming-en-0.6b", loaded.TranscriptionModel);
+        Assert.Equal("nemotron-speech-streaming-en-0.6b-generic-cpu", loaded.TranscriptionModel);
         Assert.True(loaded.PartialsInOverlay);
         Assert.True(loaded.SoundEffects);
     }
@@ -168,4 +168,3 @@ public sealed class HushSettingsEdgeCaseTests
         Assert.StartsWith(home, expectedDir);
     }
 }
-

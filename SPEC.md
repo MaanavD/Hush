@@ -768,7 +768,7 @@ These are NOT in the MVP scope but inform architectural decisions:
 
 ## 15  Open Questions
 
-1. **Foundry Local stream semantics** — Confirmed for Nemotron: the SDK exposes interim and final chunks via the C# live-audio API; the alias `nemotron-speech-streaming-en-0.6b` is what Hush pins.
+1. **Foundry Local stream semantics** — Confirmed for Nemotron: the SDK exposes interim and final chunks via the C# live-audio API; the alias `nemotron-speech-streaming-en-0.6b-generic-cpu` is what Hush pins.
 2. **Cross-platform capture backend** — Need to confirm the most reliable macOS/Linux audio backend and whether NAudio is sufficient anywhere beyond Windows.
 3. **Bundled native helpers** — Need to decide which Linux/macOS native libraries or helper binaries can be legally and practically bundled for self-contained distribution.
 4. **Wayland promotion criteria** — Define the demand threshold and test matrix that would move Wayland from best-effort to fully supported.
@@ -802,7 +802,7 @@ dotnet test
 
 ### 17.1  Nemotron CPU Model
 
-Hush uses the CPU-quantized int4 Nemotron streaming model exclusively for transcription. It runs on-device with no GPU requirement and is pinned to the Foundry Local alias `nemotron-speech-streaming-en-0.6b`.
+Hush uses the CPU-quantized int4 Nemotron streaming model exclusively for transcription. It runs on-device with no GPU requirement and is pinned to the Foundry Local alias `nemotron-speech-streaming-en-0.6b-generic-cpu`.
 
 **Model source:** https://huggingface.co/jiafatom/nemotron-cpu-int4/tree/main
 
