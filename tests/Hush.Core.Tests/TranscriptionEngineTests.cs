@@ -645,6 +645,148 @@ public sealed class TranscriptionEngineTests
     }
 
     [Fact]
+    public async Task LiveSession_StreamingMode_JoinsContinuationFragmentsWithoutSpaces()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "we are optim", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.2)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "izing for distribut", false, TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.4)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "ion advant", false, TimeSpan.FromSeconds(0.4), TimeSpan.FromSeconds(0.6)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "age", false, TimeSpan.FromSeconds(0.6), TimeSpan.FromSeconds(0.8)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "we are optimizing for distribution advantage", true, TimeSpan.Zero, TimeSpan.FromSeconds(1.0)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        string allOutput = string.Join('\n', results.Select(r => $"{r.DisplayText}|{r.CommittedDelta}"));
+        Assert.DoesNotContain("optim izing", allOutput);
+        Assert.DoesNotContain("distribut ion", allOutput);
+        Assert.DoesNotContain("advant age", allOutput);
+        Assert.Equal("we are optimizing for distribution advantage", results[^1].DisplayText);
+    }
+
+    [Fact]
+    public async Task LiveSession_StreamingMode_JoinsContractionsAndSuffixFragments()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "leveraging Microsoft", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.2)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "'s integr", false, TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.4)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "ated stack", false, TimeSpan.FromSeconds(0.4), TimeSpan.FromSeconds(0.6)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "leveraging Microsoft's integrated stack", true, TimeSpan.Zero, TimeSpan.FromSeconds(0.8)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        string allOutput = string.Join('\n', results.Select(r => $"{r.DisplayText}|{r.CommittedDelta}"));
+        Assert.DoesNotContain("Microsoft 's", allOutput);
+        Assert.DoesNotContain("integr ated", allOutput);
+        Assert.Equal("leveraging Microsoft's integrated stack", results[^1].DisplayText);
+    }
+
+    [Fact]
+    public async Task LiveSession_StreamingMode_NormalizesHeadlineFragmentsBeforeFinal()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            " I", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.1)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            " don't expect", false, TimeSpan.FromSeconds(0.1), TimeSpan.FromSeconds(0.2)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            " forgiv", false, TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.3)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "eness", false, TimeSpan.FromSeconds(0.3), TimeSpan.FromSeconds(0.4)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            ". Author", false, TimeSpan.FromSeconds(0.4), TimeSpan.FromSeconds(0.5)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "ities review", false, TimeSpan.FromSeconds(0.5), TimeSpan.FromSeconds(0.6)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            " writings", false, TimeSpan.FromSeconds(0.6), TimeSpan.FromSeconds(0.7)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            " of Californ", false, TimeSpan.FromSeconds(0.7), TimeSpan.FromSeconds(0.8)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "ia teach", false, TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(0.9)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "er sus", false, TimeSpan.FromSeconds(0.9), TimeSpan.FromSeconds(1.0)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "pected of shooting", false, TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(1.1)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "I don't expect forgiveness. Authorities review writings of California teacher suspected of shooting",
+            true,
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(1.2)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        string allOutput = string.Join('\n', results.Select(r => $"{r.DisplayText}|{r.CommittedDelta}"));
+        Assert.DoesNotContain("forgiv eness", allOutput);
+        Assert.DoesNotContain("forgiveness .", allOutput);
+        Assert.DoesNotContain("Author ities", allOutput);
+        Assert.DoesNotContain("Californ ia", allOutput);
+        Assert.DoesNotContain("teach er", allOutput);
+        Assert.DoesNotContain("sus pected", allOutput);
+
+        var final = results[^1];
+        Assert.True(final.IsFinal);
+        Assert.Equal("I don't expect forgiveness. Authorities review writings of California teacher suspected of shooting", final.DisplayText);
+        Assert.Equal(0, final.BackspaceCount);
+        Assert.Equal(" shooting", final.CommittedDelta);
+    }
+
+    [Fact]
+    public async Task LiveSession_StreamingMode_IgnoresDestructiveFinalRewrite()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "the correct live transcript tail",
+            false,
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(0.5)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "the incorrect final replacement",
+            true,
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(0.8)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        var final = results[^1];
+        Assert.True(final.IsFinal);
+        Assert.Equal("the correct live transcript tail", final.DisplayText);
+        Assert.Equal(" tail", final.CommittedDelta);
+        Assert.Equal(0, final.BackspaceCount);
+    }
+
+    [Fact]
     public async Task AppendAudioAsync_ForwardsAudioToLiveSession()
     {
         var factory = new FakeLiveAudioSessionFactory();

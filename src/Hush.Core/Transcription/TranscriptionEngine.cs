@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using System.Text;
 using System.Threading.Channels;
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
@@ -57,6 +58,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     // rewrites are already blocked below, so this favors responsive live typing
     // while still deferring corrections to final chunks.
     private const int StreamingTrailingWordHoldback = 1;
+    private const int MaxConservativeFinalBackspaces = 16;
     // Allow a small timestamp overlap when the SDK rolls windows forward so a
     // later chunk can still be treated as additive speech instead of a rewrite.
     private static readonly TimeSpan DetachedChunkOverlapTolerance = TimeSpan.FromMilliseconds(150);
@@ -470,7 +472,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             // Final chunk — commit the full segment and prepare for the next one.
             // Filter any repetition artifacts before committing.
             var finalWords = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            finalWords = FilterArtifactWords(finalWords);
+            finalWords = MergeAdjacentContinuationWords(FilterArtifactWords(finalWords));
             if (finalWords.Length == 0)
             {
                 result = default!;
@@ -490,6 +492,18 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             displayText = BuildFullText(cleanedText);
             using (PerformanceProfiler.MeasureWithContext("Engine.ComputeCommitDelta", _committedText.Length))
                 (backspaceCount, committedDelta) = ComputeCommitDelta(displayText);
+
+            if (ShouldPreferLiveFinalization(backspaceCount, displayText))
+            {
+                var liveText = BuildFullText(_lastFullText);
+                _logger.LogDebug(
+                    "Ignoring destructive final rewrite: committed='{Committed}' final='{Final}' live='{Live}' bs={BS}",
+                    _committedText, displayText, liveText, backspaceCount);
+                displayText = liveText;
+                using (PerformanceProfiler.MeasureWithContext("Engine.ComputeCommitDelta.LiveFinal", _committedText.Length))
+                    (backspaceCount, committedDelta) = ComputeCommitDelta(displayText);
+            }
+
             _committedText = displayText;
             _lastCommittedEndTime = chunk.EndTime ?? _lastCommittedEndTime;
             _lastFullText = string.Empty;
@@ -506,7 +520,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         {
             // Split into words and filter repetition artifacts at any position.
             var rawSegmentWords = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            rawSegmentWords = FilterArtifactWords(rawSegmentWords);
+            rawSegmentWords = MergeAdjacentContinuationWords(FilterArtifactWords(rawSegmentWords));
             if (rawSegmentWords.Length == 0)
             {
                 result = default!;
@@ -608,6 +622,30 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         return true;
     }
 
+    private bool ShouldPreferLiveFinalization(int finalBackspaceCount, string finalText)
+    {
+        if (!_streamingCommit ||
+            finalBackspaceCount <= MaxConservativeFinalBackspaces ||
+            string.IsNullOrWhiteSpace(_committedText) ||
+            string.IsNullOrWhiteSpace(_lastFullText))
+        {
+            return false;
+        }
+
+        var liveText = BuildFullText(_lastFullText);
+        if (string.IsNullOrWhiteSpace(liveText) ||
+            liveText == _committedText ||
+            !liveText.StartsWith(_committedText, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (finalText.StartsWith(_committedText, StringComparison.Ordinal))
+            return false;
+
+        return true;
+    }
+
     /// <summary>
     /// Composes the full transcript text from the segment base and the current
     /// accumulated segment hypothesis.
@@ -628,7 +666,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (overlap > 0)
             return _segmentBase + segmentText[overlap..];
 
-        return _segmentBase + " " + segmentText;
+        return JoinStreamingText(_segmentBase, segmentText);
     }
 
     private void RebaseSegmentToCommittedText(bool includeBufferedTail)
@@ -705,7 +743,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         // may contain degenerate tokens that were held back by the stability
         // mechanism but would otherwise be committed wholesale on session end.
         var flushWords = _lastFullText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        flushWords = FilterArtifactWords(flushWords);
+        flushWords = MergeAdjacentContinuationWords(FilterArtifactWords(flushWords));
         if (flushWords.Length == 0)
             return false;
 
@@ -868,9 +906,129 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             return previousText + currentText[overlap..];
 
         // No overlap found — chunks are sequential, non-overlapping segments
-        // (typical of Nemotron RNN-T). Concatenate to build the full hypothesis.
-        return previousText + " " + currentText;
+        // (typical of Nemotron RNN-T). Concatenate to build the full hypothesis,
+        // but do not inject a space when the new chunk starts with a suffix
+        // fragment that completes the previous chunk's trailing token.
+        return JoinStreamingText(previousText, currentText);
     }
+
+    private static string JoinStreamingText(string previousText, string currentText)
+    {
+        if (string.IsNullOrEmpty(previousText))
+            return currentText;
+
+        if (string.IsNullOrEmpty(currentText))
+            return previousText;
+
+        if (StartsWithAttachedPunctuation(currentText))
+            return previousText + currentText;
+
+        return ShouldJoinStreamingTokenBoundary(previousText, currentText)
+            ? previousText + currentText
+            : previousText + " " + currentText;
+    }
+
+    private static bool ShouldJoinStreamingTokenBoundary(string previousText, string currentText)
+    {
+        string previousToken = GetLastToken(previousText);
+        string currentToken = GetFirstToken(currentText);
+        if (previousToken.Length == 0 || currentToken.Length == 0)
+            return false;
+
+        char left = previousToken[^1];
+        char right = currentToken[0];
+
+        if (IsAttachedPunctuation(right))
+            return true;
+
+        if (right is '\'' or '\u2019')
+            return IsLetterLike(left);
+
+        if (!IsLetterLike(left) || !char.IsAsciiLetter(right) || char.IsUpper(right))
+            return false;
+
+        var currentCore = TrimTokenCore(currentToken);
+        if (currentCore.Length == 0 || IsCommonStandaloneShortWord(currentCore))
+            return false;
+
+        return LooksLikeContinuationSuffix(currentCore);
+    }
+
+    private static string GetLastToken(string text)
+    {
+        var span = text.AsSpan().TrimEnd();
+        int index = span.LastIndexOf(' ');
+        return index < 0
+            ? span.ToString()
+            : span[(index + 1)..].ToString();
+    }
+
+    private static string GetFirstToken(string text)
+    {
+        var span = text.AsSpan().TrimStart();
+        int index = span.IndexOf(' ');
+        return index < 0
+            ? span.ToString()
+            : span[..index].ToString();
+    }
+
+    private static string TrimTokenCore(string token)
+    {
+        int start = 0;
+        int end = token.Length;
+        while (start < end && !char.IsAsciiLetter(token[start])) start++;
+        while (end > start && !char.IsAsciiLetter(token[end - 1])) end--;
+        return start >= end ? string.Empty : token[start..end].ToLowerInvariant();
+    }
+
+    private static bool LooksLikeContinuationSuffix(string token)
+    {
+        if (token.Length >= 3)
+        {
+            string[] suffixes =
+            [
+                "ing", "izing", "ised", "ized", "ated", "ation", "ations",
+                "eness", "veness", "ness",
+                "tion", "tions", "sion", "sions", "ion", "ions", "ment",
+                "ments", "able", "ible", "ally", "ously", "ive", "ives",
+                "ity", "ities", "ous", "age", "ages", "ent", "ence",
+                "ences", "ant", "ance", "ances", "pected", "pect", "ia", "er", "ers",
+                "est", "ly", "ed", "es", "vices", "ices"
+            ];
+
+            foreach (string suffix in suffixes)
+            {
+                if (token.Equals(suffix, StringComparison.Ordinal))
+                    return true;
+            }
+        }
+
+        return token is "s" or "es" or "ed" or "er" or "ly" or "os" or "ia";
+    }
+
+    private static bool IsCommonStandaloneShortWord(string token)
+    {
+        return token is
+            "a" or "i" or "am" or "an" or "as" or "at" or "be" or "by" or
+            "do" or "go" or "he" or "if" or "in" or "is" or "it" or "me" or
+            "my" or "no" or "of" or "on" or "or" or "so" or "to" or "up" or
+            "us" or "we" or "you" or "and" or "are" or "but" or "can" or
+            "for" or "had" or "has" or "her" or "him" or "his" or "how" or
+            "not" or "now" or "our" or "out" or "she" or "the" or "was" or
+            "who" or "why" or "yes" or "yet";
+    }
+
+    private static bool IsLetterLike(char value)
+        => char.IsLetter(value);
+
+    private static bool StartsWithAttachedPunctuation(string text)
+    {
+        var span = text.AsSpan().TrimStart();
+        return span.Length > 0 && IsAttachedPunctuation(span[0]);
+    }
+
+    private static bool IsAttachedPunctuation(char value)
+        => value is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '%';
 
     private static int LargestTextSuffixPrefixOverlap(string previousText, string currentText)
     {
@@ -896,6 +1054,99 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         return index <= 0 || index >= text.Length || char.IsWhiteSpace(text[index - 1]) || char.IsWhiteSpace(text[index]);
     }
 
+    private static string[] MergeAdjacentContinuationWords(string[] words)
+    {
+        if (words.Length < 2)
+            return words;
+
+        var merged = new List<string>(words.Length);
+        foreach (string word in words)
+        {
+            if (merged.Count > 0 && ShouldJoinStreamingTokenBoundary(merged[^1], word))
+            {
+                merged[^1] += word;
+                continue;
+            }
+
+            merged.Add(word);
+        }
+
+        return merged.ToArray();
+    }
+
     private static string NormalizeText(string text)
-        => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    {
+        var collapsed = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (collapsed.Length == 0)
+            return collapsed;
+
+        return NormalizePunctuationSpacing(collapsed);
+    }
+
+    private static string NormalizePunctuationSpacing(string text)
+    {
+        var builder = new StringBuilder(text.Length);
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char current = text[i];
+            if (IsAttachedPunctuation(current) && builder.Length > 0 && builder[^1] == ' ')
+            {
+                builder.Length--;
+                builder.Append(current);
+                continue;
+            }
+
+            if (current is '\'' or '\u2019')
+            {
+                int previous = PreviousNonSpaceIndex(builder);
+                int next = NextNonSpaceIndex(text, i + 1);
+                if (previous >= 0 &&
+                    next >= 0 &&
+                    char.IsLetter(builder[previous]) &&
+                    char.IsLetter(text[next]) &&
+                    builder.Length > 0 &&
+                    builder[^1] == ' ')
+                {
+                    builder.Length--;
+                }
+            }
+
+            if (current == ' ' &&
+                builder.Length > 0 &&
+                builder[^1] is '\'' or '\u2019' &&
+                NextNonSpaceIndex(text, i + 1) >= 0)
+            {
+                int next = NextNonSpaceIndex(text, i + 1);
+                if (char.IsLetter(text[next]))
+                    continue;
+            }
+
+            builder.Append(current);
+        }
+
+        return builder.ToString();
+    }
+
+    private static int PreviousNonSpaceIndex(StringBuilder builder)
+    {
+        for (int i = builder.Length - 1; i >= 0; i--)
+        {
+            if (!char.IsWhiteSpace(builder[i]))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static int NextNonSpaceIndex(string text, int start)
+    {
+        for (int i = start; i < text.Length; i++)
+        {
+            if (!char.IsWhiteSpace(text[i]))
+                return i;
+        }
+
+        return -1;
+    }
 }

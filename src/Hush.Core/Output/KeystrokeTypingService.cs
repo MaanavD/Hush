@@ -476,8 +476,8 @@ internal static class WindowsClipboardTyper
     private const ushort VK_RWIN       = 0x5C;
     private const int ClipboardRetryCount = 10;
     private const int ClipboardRetryDelayMs = 20;
-    private const int DefaultPasteCompletionDelayMs = 100;
-    private const int TsfPasteCompletionDelayMs = 250;
+    private const int DefaultPasteCompletionDelayMs = 120;
+    private const int TsfPasteCompletionDelayMs = 400;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT

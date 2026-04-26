@@ -291,7 +291,7 @@ public sealed class DictationSessionTests
     }
 
     [Fact]
-    public async Task SustainedSilence_FlushesCurrentSegment_AndKeepsOverlayTranscriptContinuous()
+    public async Task ResultInactivity_DoesNotStopAndRestartStreamingSession()
     {
         var engine = new ScriptedTranscriptionEngine();
         var captureMock = new Mock<IAudioCaptureService>();
@@ -299,17 +299,6 @@ public sealed class DictationSessionTests
         var interimTexts = new List<string>();
         var typedTexts = new List<string>();
 
-        Action<float>? audioLevelHandler = null;
-        captureMock
-            .SetupAdd(c => c.AudioLevelChanged += It.IsAny<Action<float>>())
-            .Callback<Action<float>>(handler => audioLevelHandler = handler);
-        captureMock
-            .SetupRemove(c => c.AudioLevelChanged -= It.IsAny<Action<float>>())
-            .Callback<Action<float>>(handler =>
-            {
-                if (audioLevelHandler == handler)
-                    audioLevelHandler = null;
-            });
         captureMock
             .Setup(c => c.Start(It.IsAny<Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>>()));
         captureMock
@@ -331,14 +320,14 @@ public sealed class DictationSessionTests
 
         await session.StartAsync();
 
-        audioLevelHandler!.Invoke(0.5f);
         engine.Emit(new TranscriptionResult("hello", "hello", IsFinal: false));
         await TestWait.WaitUntilAsync(() => interimTexts.Contains("hello", StringComparer.Ordinal));
 
-        await TestWait.WaitUntilAsync(() => engine.StartCount >= 2, TimeSpan.FromSeconds(3));
+        await Task.Delay(900);
+        Assert.Equal(1, engine.StartCount);
+        Assert.Equal(0, engine.StopCount);
 
-        audioLevelHandler.Invoke(0.5f);
-        engine.Emit(new TranscriptionResult("world again", "world", IsFinal: false));
+        engine.Emit(new TranscriptionResult("hello world again", " world", IsFinal: false));
         await TestWait.WaitUntilAsync(() => interimTexts.Contains("hello world again", StringComparer.Ordinal));
 
         await session.StopAsync();
@@ -346,10 +335,61 @@ public sealed class DictationSessionTests
         Assert.Contains("hello", interimTexts);
         Assert.Contains("hello world again", interimTexts);
         Assert.Equal(new[] { "hello", " world" }, typedTexts);
-        Assert.Equal(2, engine.StartCount);
-        Assert.Equal(2, engine.StopCount);
-        captureMock.Verify(c => c.Start(It.IsAny<Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>>()), Times.Exactly(2));
-        captureMock.Verify(c => c.Stop(), Times.Exactly(2));
+        Assert.Equal(1, engine.StartCount);
+        Assert.Equal(1, engine.StopCount);
+        captureMock.Verify(c => c.Start(It.IsAny<Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>>()), Times.Once);
+        captureMock.Verify(c => c.Stop(), Times.Once);
+
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StopAsync_TypesFinalCorrectionEmittedDuringEngineStop()
+    {
+        var engine = new ScriptedTranscriptionEngine
+        {
+            OnStop = scripted =>
+            {
+                scripted.Emit(new TranscriptionResult("optimizing", "izing", IsFinal: true)
+                {
+                    BackspaceCount = 6
+                });
+            }
+        };
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var typedTexts = new List<string>();
+        var backspaceCounts = new List<int>();
+
+        captureMock
+            .Setup(c => c.Start(It.IsAny<Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>>()));
+        captureMock
+            .Setup(c => c.Stop());
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) =>
+            {
+                typedTexts.Add(text);
+                return Task.CompletedTask;
+            });
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<int, CancellationToken, bool>((count, _, _) =>
+            {
+                backspaceCounts.Add(count);
+                return Task.CompletedTask;
+            });
+
+        var session = new DictationSession(engine, captureMock.Object, outputMock.Object);
+
+        await session.StartAsync();
+        engine.Emit(new TranscriptionResult("optim", "optim", IsFinal: false));
+        await TestWait.WaitUntilAsync(() => typedTexts.Contains("optim", StringComparer.Ordinal));
+
+        await session.StopAsync();
+
+        Assert.Equal(new[] { "optim", "izing" }, typedTexts);
+        Assert.Equal(new[] { 6 }, backspaceCounts);
 
         await session.DisposeAsync();
     }
@@ -632,6 +672,7 @@ file sealed class ScriptedTranscriptionEngine : ITranscriptionEngine
 
     public int StartCount { get; private set; }
     public int StopCount { get; private set; }
+    public Action<ScriptedTranscriptionEngine>? OnStop { get; init; }
 
     public Task InitializeAsync(
         string modelAlias = "nemotron-speech-streaming-en-0.6b",
@@ -659,6 +700,7 @@ file sealed class ScriptedTranscriptionEngine : ITranscriptionEngine
     public Task StopSessionAsync(CancellationToken cancellationToken = default)
     {
         StopCount++;
+        OnStop?.Invoke(this);
         _channel.Writer.TryComplete();
         return Task.CompletedTask;
     }

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 using Hush.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,6 +29,9 @@ public sealed class AudioCaptureService : IAudioCaptureService
     private readonly ILogger<AudioCaptureService> _logger;
     private readonly Lock _stateLock = new();
     private Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>? _audioAvailable;
+    private Channel<byte[]>? _audioQueue;
+    private Task? _audioPumpTask;
+    private CancellationTokenSource? _audioPumpCts;
     private PaStream? _stream;
     // Holding a strong reference prevents the JIT-emitted thunk from being
     // collected while PortAudio's audio thread is calling it. PortAudioSharp2
@@ -75,7 +79,21 @@ public sealed class AudioCaptureService : IAudioCaptureService
                     throw new InvalidOperationException(
                         "The selected audio device has no input channels. Choose a different microphone in Settings.");
 
+                var audioQueue = Channel.CreateUnbounded<byte[]>(
+                    new UnboundedChannelOptions
+                    {
+                        SingleReader = true,
+                        SingleWriter = false,
+                        AllowSynchronousContinuations = false
+                    });
+                var pumpCts = new CancellationTokenSource();
+
                 _audioAvailable = audioAvailable;
+                _audioQueue = audioQueue;
+                _audioPumpCts = pumpCts;
+                _audioPumpTask = Task.Run(
+                    () => PumpAudioAsync(audioQueue.Reader, audioAvailable, pumpCts.Token),
+                    CancellationToken.None);
                 _callback = StreamCallback;
 
                 var inputParams = new StreamParameters
@@ -111,6 +129,8 @@ public sealed class AudioCaptureService : IAudioCaptureService
             catch (Exception ex)
             {
                 CleanupStream();
+                var pump = DetachAudioPump(completeWriter: true);
+                StopAudioPump(pump, cancel: true);
                 _audioAvailable = null;
                 _callback = null;
                 throw BuildStartupException(ex);
@@ -131,8 +151,8 @@ public sealed class AudioCaptureService : IAudioCaptureService
         // swallow exceptions and return Continue.
         try
         {
-            var sink = _audioAvailable;
-            if (sink is null || input == IntPtr.Zero || frameCount == 0)
+            var queue = _audioQueue;
+            if (_audioAvailable is null || queue is null || input == IntPtr.Zero || frameCount == 0)
                 return StreamCallbackResult.Continue;
 
             using var _prof = PerformanceProfiler.Measure("Audio.OnDataAvailable");
@@ -147,14 +167,38 @@ public sealed class AudioCaptureService : IAudioCaptureService
             try { AudioLevelChanged?.Invoke(rms); }
             catch { /* visualisation must never break capture */ }
 
-            // Fire-and-forget; transcription SDK handles backpressure.
-            _ = sink(buffer, CancellationToken.None);
+            // Never await on PortAudio's real-time thread. A background pump
+            // serializes appends to preserve audio order and drains on Stop().
+            queue.Writer.TryWrite(buffer);
         }
         catch
         {
             // Don't log on the audio thread (allocator/IO); just swallow.
         }
         return StreamCallbackResult.Continue;
+    }
+
+    private async Task PumpAudioAsync(
+        ChannelReader<byte[]> reader,
+        Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask> sink,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var buffer in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                using var _ = PerformanceProfiler.Measure("Audio.AppendPump");
+                await sink(buffer, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Capture is shutting down.
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audio append pump failed.");
+        }
     }
 
     private static float ComputeRms(byte[] buffer, int byteCount)
@@ -181,12 +225,15 @@ public sealed class AudioCaptureService : IAudioCaptureService
     /// <inheritdoc/>
     public void Stop()
     {
+        (Channel<byte[]>? Queue, Task? PumpTask, CancellationTokenSource? PumpCts) pump;
         lock (_stateLock)
         {
             CleanupStream();
+            pump = DetachAudioPump(completeWriter: true);
             _audioAvailable = null;
             _callback = null;
         }
+        StopAudioPump(pump, cancel: false);
         _logger.LogInformation("Audio capture stopped.");
     }
 
@@ -215,6 +262,49 @@ public sealed class AudioCaptureService : IAudioCaptureService
         catch { /* best-effort */ }
 
         _stream = null;
+    }
+
+    private (Channel<byte[]>? Queue, Task? PumpTask, CancellationTokenSource? PumpCts) DetachAudioPump(bool completeWriter)
+    {
+        var queue = _audioQueue;
+        var pumpTask = _audioPumpTask;
+        var pumpCts = _audioPumpCts;
+
+        _audioQueue = null;
+        _audioPumpTask = null;
+        _audioPumpCts = null;
+
+        if (completeWriter)
+            queue?.Writer.TryComplete();
+
+        return (queue, pumpTask, pumpCts);
+    }
+
+    private void StopAudioPump(
+        (Channel<byte[]>? Queue, Task? PumpTask, CancellationTokenSource? PumpCts) pump,
+        bool cancel)
+    {
+        if (cancel)
+            pump.PumpCts?.Cancel();
+
+        if (pump.PumpTask is not null)
+        {
+            try
+            {
+                if (!pump.PumpTask.Wait(TimeSpan.FromSeconds(3)))
+                {
+                    _logger.LogWarning("Timed out waiting for queued audio appends to drain; cancelling the audio pump.");
+                    pump.PumpCts?.Cancel();
+                    pump.PumpTask.Wait(TimeSpan.FromSeconds(1));
+                }
+            }
+            catch (AggregateException ex)
+            {
+                _logger.LogWarning(ex.Flatten(), "Audio append pump completed with an error during shutdown.");
+            }
+        }
+
+        pump.PumpCts?.Dispose();
     }
 
     private static void EnsurePortAudioInitialized()
