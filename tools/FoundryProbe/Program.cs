@@ -4,16 +4,14 @@ using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging.Abstractions;
 
 await FoundryLocalManager.CreateAsync(
-    new Configuration { AppName = "HushProbe" },
+    new Configuration { AppName = "Hush" },
     NullLogger.Instance);
 
 var manager = FoundryLocalManager.Instance;
 var catalog = await manager.GetCatalogAsync(default);
 
 foreach (var alias in new[] {
-    "nemotron-speech-streaming-en-0.6b",
     "nemotron-speech-streaming-en-0.6b-generic-cpu",
-    "whisper-tiny",
 })
 {
     try

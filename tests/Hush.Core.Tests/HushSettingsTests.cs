@@ -14,7 +14,7 @@ public sealed class HushSettingsTests
         var expectedHotkey = "Ctrl+H";
         Assert.Equal(expectedHotkey, settings.Hotkey);
         Assert.Equal("en", settings.Language);
-        Assert.Equal("nemotron-speech-streaming-en-0.6b", settings.TranscriptionModel);
+        Assert.Equal("nemotron-speech-streaming-en-0.6b-generic-cpu", settings.TranscriptionModel);
         Assert.True(settings.PartialsInOverlay);
         Assert.False(settings.ClipboardFallback);
         Assert.False(settings.AutoStart);
@@ -52,7 +52,7 @@ public sealed class HushSettingsTests
         Assert.NotNull(settings.PostProcessingPrompts);
         Assert.Empty(settings.PostProcessingPrompts);
         Assert.Null(settings.ActivePostProcessingPromptId);
-        Assert.Equal(3, HushSettings.BuiltInPrompts.Count);
+        Assert.Equal(7, HushSettings.BuiltInPrompts.Count);
     }
 
     [Fact]

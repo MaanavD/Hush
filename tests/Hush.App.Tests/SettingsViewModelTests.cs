@@ -18,7 +18,7 @@ public sealed class SettingsViewModelTests
         {
             Hotkey = "Alt+Space",
             Language = "ja",
-            TranscriptionModel = "whisper-large-v3",
+            TranscriptionModel = "nemotron-speech-streaming-en-0.6b-generic-cpu",
             PartialsInOverlay = false,
             OverlayPosition = "top-right",
             OverlayOpacity = 0.42,
@@ -30,7 +30,7 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal("Alt+Space", vm.Hotkey);
         Assert.Equal("ja", vm.Language);
-        Assert.Equal("whisper-large-v3", vm.TranscriptionModel);
+        Assert.Equal("nemotron-speech-streaming-en-0.6b-generic-cpu", vm.TranscriptionModel);
         Assert.False(vm.PartialsInOverlay);
         Assert.Equal("top-right", vm.OverlayPosition);
         Assert.Equal(0.42, vm.OverlayOpacity);
@@ -47,7 +47,7 @@ public sealed class SettingsViewModelTests
         // Modify VM properties
         vm.Hotkey = "F5";
         vm.Language = "fr";
-        vm.TranscriptionModel = "whisper-small";
+        vm.TranscriptionModel = "nemotron-speech-streaming-en-0.6b-generic-cpu";
         vm.PartialsInOverlay = false;
         vm.OverlayPosition = "top-left";
         vm.OverlayOpacity = 0.7;
@@ -59,7 +59,7 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal("F5", settings.Hotkey);
         Assert.Equal("fr", settings.Language);
-        Assert.Equal("whisper-small", settings.TranscriptionModel);
+        Assert.Equal("nemotron-speech-streaming-en-0.6b-generic-cpu", settings.TranscriptionModel);
         Assert.False(settings.PartialsInOverlay);
         Assert.Equal("top-left", settings.OverlayPosition);
         Assert.Equal(0.7, settings.OverlayOpacity);
@@ -102,7 +102,7 @@ public sealed class SettingsViewModelTests
 
         vm.Hotkey = "X";
         vm.Language = "de";
-        vm.TranscriptionModel = "whisper-base";
+        vm.TranscriptionModel = "nemotron-speech-streaming-en-0.6b-alt";
         vm.PartialsInOverlay = false;
         vm.OverlayPosition = "center";
         vm.OverlayOpacity = 0.1;

@@ -30,7 +30,7 @@ dotnet build
 dotnet run --project src/Hush.App
 ```
 
-On first launch Hush downloads the Whisper Tiny transcription model (~75 MB).
+On first launch Hush downloads the Nemotron streaming transcription model (~350 MB).
 Progress is shown in the overlay and tray icon tooltip.
 
 ## Requirements
@@ -81,7 +81,7 @@ Settings are stored in `~/.hush/settings.json`.
 | `postProcessingEnabled` | `true`                                | Enable LLM rewrite on clean-mode sessions (coming soon)        |
 | `postProcessingModel`   | `"qwen3-0.6b"`                        | Foundry Local model alias for post-processing (coming soon)    |
 | `language`              | `"en"`                                | BCP-47 transcription language                                  |
-| `transcriptionModel`    | `"nemotron-speech-streaming-en-0.6b"` | Foundry Local model alias                                      |
+| `transcriptionModel`    | `"nemotron-speech-streaming-en-0.6b-generic-cpu"` | Foundry Local model alias                                      |
 | `overlayOpacity`        | `0.85`                                | Overlay background opacity                                     |
 | `soundEffects`          | `true`                                | Start/stop audio cues                                          |
 | `autoStart`             | `false`                               | Launch at OS login                                             |
@@ -121,7 +121,7 @@ See [SPEC.md](SPEC.md) for the full product and implementation specification.
 ```
 Hush.App  (Avalonia UI — tray, overlay, settings)
     └── Hush.Core  (class library — engine, audio, hotkey, output)
-            └── Foundry Local SDK  (on-device Whisper inference)
+            └── Foundry Local SDK  (on-device Nemotron streaming inference)
 ```
 
 The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifying mic-to-text transcription without the full UI. Useful for development and troubleshooting.

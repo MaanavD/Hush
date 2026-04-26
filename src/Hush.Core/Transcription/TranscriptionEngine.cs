@@ -61,7 +61,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     // later chunk can still be treated as additive speech instead of a rewrite.
     private static readonly TimeSpan DetachedChunkOverlapTolerance = TimeSpan.FromMilliseconds(150);
 
-    // Whisper hallucination tokens that should never be typed or shown.
+    // ASR hallucination / silence tokens that should never be typed or shown.
     private static readonly HashSet<string> NoiseTokens =
         new(StringComparer.OrdinalIgnoreCase)
         {
@@ -169,7 +169,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
     /// <inheritdoc/>
     public async Task InitializeAsync(
-        string modelAlias = "nemotron-speech-streaming-en-0.6b",
+        string modelAlias = "nemotron-speech-streaming-en-0.6b-generic-cpu",
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
         IProgress<string>? statusProgress = null,

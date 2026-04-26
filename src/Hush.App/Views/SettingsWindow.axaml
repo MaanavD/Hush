@@ -170,48 +170,115 @@
                            Foreground="{StaticResource Hush.Text.Secondary.Brush}"
                            Margin="0 0 0 10" />
 
-                <TextBlock Text="Templates used by clean-mode LLM rewriting."
+                <TextBlock Text="Templates used by clean-mode LLM rewriting. Pick one that matches how you'll use the dictated text."
                            FontSize="10" Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                           TextWrapping="Wrap"
                            Margin="0 0 0 8" />
 
-                <!-- Prompt list -->
+                <!-- Prompt picker: card-style list with icon, name, and use-case description -->
                 <ListBox ItemsSource="{Binding AllPrompts}"
                          SelectedItem="{Binding SelectedPrompt}"
-                         MaxHeight="180"
+                         MaxHeight="280"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0"
                          Margin="0 0 0 8">
+                    <ListBox.Styles>
+                        <Style Selector="ListBoxItem">
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0 0 0 6" />
+                            <Setter Property="CornerRadius" Value="8" />
+                        </Style>
+                        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+                            <Setter Property="Background" Value="{StaticResource Hush.Accent.Brush}" />
+                            <Setter Property="CornerRadius" Value="8" />
+                        </Style>
+                    </ListBox.Styles>
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="vm:LlmPromptViewModel">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0"
-                                           Text="{Binding Name}"
-                                           FontSize="12"
-                                           VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1"
-                                           Text="🔒"
-                                           FontSize="10"
-                                           IsVisible="{Binding IsBuiltIn}"
-                                           Opacity="0.4"
-                                           VerticalAlignment="Center"
-                                           Margin="8 0 0 0" />
-                            </Grid>
+                            <Border Padding="12 10"
+                                    CornerRadius="8"
+                                    BorderThickness="1"
+                                    BorderBrush="{StaticResource Hush.Border.Brush}">
+                                <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Icon}"
+                                               FontSize="20"
+                                               VerticalAlignment="Center"
+                                               Margin="0 0 12 0" />
+                                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{StaticResource Hush.Text.Primary.Brush}" />
+                                        <TextBlock Text="{Binding Description}"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
+                                    </StackPanel>
+                                    <Border Grid.Column="2"
+                                            IsVisible="{Binding IsBuiltIn}"
+                                            Background="{StaticResource Hush.Surface.Brush}"
+                                            CornerRadius="4"
+                                            Padding="6 2"
+                                            VerticalAlignment="Center"
+                                            Margin="8 0 0 0">
+                                        <TextBlock Text="Built-in"
+                                                   FontSize="9"
+                                                   LetterSpacing="1"
+                                                   Foreground="{StaticResource Hush.Text.Muted.Brush}" />
+                                    </Border>
+                                    <Border Grid.Column="2"
+                                            IsVisible="{Binding IsUserDefined}"
+                                            Background="{StaticResource Hush.Surface.Brush}"
+                                            CornerRadius="4"
+                                            Padding="6 2"
+                                            VerticalAlignment="Center"
+                                            Margin="8 0 0 0">
+                                        <TextBlock Text="Custom"
+                                                   FontSize="9"
+                                                   LetterSpacing="1"
+                                                   Foreground="{StaticResource Hush.Text.Muted.Brush}" />
+                                    </Border>
+                                </Grid>
+                            </Border>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
 
+                <!-- Selected prompt preview -->
+                <Border IsVisible="{Binding SelectedPrompt, Converter={x:Static ObjectConverters.IsNotNull}}"
+                        BorderBrush="{StaticResource Hush.Border.Brush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="12"
+                        Margin="0 0 0 8">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="PROMPT PREVIEW"
+                                   FontSize="9" FontWeight="Bold" LetterSpacing="2"
+                                   Foreground="{StaticResource Hush.Text.Muted.Brush}" />
+                        <TextBlock Text="{Binding SelectedPrompt.Prompt}"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource Hush.Text.Secondary.Brush}"
+                                   MaxHeight="140" />
+                    </StackPanel>
+                </Border>
+
                 <!-- Action buttons -->
                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0 0 0 8">
-                    <Button Content="+ Add"
+                    <Button Content="+ New custom prompt"
                             Command="{Binding AddPromptCommand}"
                             Padding="10 5" FontSize="12" />
                     <Button Content="Edit"
                             Command="{Binding EditPromptCommand}"
                             CommandParameter="{Binding SelectedPrompt}"
-                            IsVisible="{Binding SelectedPrompt.IsUserDefined}"
+                            IsVisible="{Binding SelectedPrompt.IsUserDefined, FallbackValue=False}"
                             Padding="10 5" FontSize="12" />
                     <Button Content="Remove"
                             Command="{Binding DeletePromptCommand}"
                             CommandParameter="{Binding SelectedPrompt}"
-                            IsVisible="{Binding SelectedPrompt.IsUserDefined}"
+                            IsVisible="{Binding SelectedPrompt.IsUserDefined, FallbackValue=False}"
                             Padding="10 5" FontSize="12" />
                 </StackPanel>
 
@@ -319,7 +386,7 @@
                     </StackPanel>
                     <TextBox Grid.Column="1"
                              Text="{Binding TranscriptionModel}"
-                             Watermark="whisper-tiny"
+                             Watermark="nemotron-speech-streaming-en-0.6b-generic-cpu"
                              ToolTip.Tip="Foundry Local model alias. Changing this takes effect on next launch." />
                 </Grid>
                 <TextBlock Text="Changing the model takes effect on next launch."

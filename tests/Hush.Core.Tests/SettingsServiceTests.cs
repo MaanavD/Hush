@@ -63,4 +63,39 @@ public sealed class SettingsServiceTests
             Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    [Theory]
+    [InlineData("whisper-tiny")]
+    [InlineData("openai-whisper-large-v3-turbo")]
+    [InlineData("nemotron-speech-streaming-en-0.6b")]
+    public void TryMigrateLegacyTranscriptionModel_RewritesObsoleteAliases(string obsoleteAlias)
+    {
+        var settings = new HushSettings { TranscriptionModel = obsoleteAlias };
+
+        var migrated = SettingsService.TryMigrateLegacyTranscriptionModel(
+            settings,
+            out var oldAlias,
+            out var newAlias);
+
+        Assert.True(migrated);
+        Assert.Equal(obsoleteAlias, oldAlias);
+        Assert.Equal(HushSettings.DefaultTranscriptionModel, newAlias);
+        Assert.Equal(HushSettings.DefaultTranscriptionModel, settings.TranscriptionModel);
+    }
+
+    [Fact]
+    public void TryMigrateLegacyTranscriptionModel_LeavesCurrentAliasUnchanged()
+    {
+        var settings = new HushSettings();
+
+        var migrated = SettingsService.TryMigrateLegacyTranscriptionModel(
+            settings,
+            out var oldAlias,
+            out var newAlias);
+
+        Assert.False(migrated);
+        Assert.Equal(HushSettings.DefaultTranscriptionModel, oldAlias);
+        Assert.Equal(HushSettings.DefaultTranscriptionModel, newAlias);
+        Assert.Equal(HushSettings.DefaultTranscriptionModel, settings.TranscriptionModel);
+    }
 }

@@ -107,7 +107,7 @@ namespace Hush.App.ViewModels
 
             // Prompts — built-ins first, then user-defined
             foreach (var p in HushSettings.BuiltInPrompts)
-                AllPrompts.Add(new LlmPromptViewModel(p.Id, p.Name, p.Prompt, isBuiltIn: true));
+                AllPrompts.Add(new LlmPromptViewModel(p.Id, p.Name, p.Prompt, isBuiltIn: true, p.Icon, p.Description));
             foreach (var p in settings.PostProcessingPrompts)
                 AllPrompts.Add(new LlmPromptViewModel(p.Id, p.Name, p.Prompt, isBuiltIn: false));
 
@@ -259,13 +259,15 @@ namespace Hush.App.ViewModels
 
     // Display view-models
 
-    public sealed class LlmPromptViewModel(string id, string name, string prompt, bool isBuiltIn)
+    public sealed class LlmPromptViewModel(string id, string name, string prompt, bool isBuiltIn, string icon = "", string description = "")
     {
         public string Id { get; } = id;
         public string Name { get; } = name;
         public string Prompt { get; } = prompt;
         public bool IsBuiltIn { get; } = isBuiltIn;
         public bool IsUserDefined => !IsBuiltIn;
+        public string Icon { get; } = string.IsNullOrEmpty(icon) && !isBuiltIn ? "✨" : icon;
+        public string Description { get; } = string.IsNullOrEmpty(description) && !isBuiltIn ? "Custom prompt" : description;
     }
 
     public sealed partial class SubstitutionRuleViewModel : ObservableObject

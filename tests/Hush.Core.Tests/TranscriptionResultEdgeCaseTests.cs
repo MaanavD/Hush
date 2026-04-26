@@ -23,7 +23,7 @@ public sealed class TranscriptionResultEdgeCaseTests
     [Fact]
     public void WhitespaceOnlyCommittedDelta_IsPreserved()
     {
-        // Whisper may produce a leading space as a word separator.
+        // ASR may produce a leading space as a word separator.
         var result = new TranscriptionResult("hello world", " ", IsFinal: false);
         Assert.Equal(" ", result.CommittedDelta);
     }
