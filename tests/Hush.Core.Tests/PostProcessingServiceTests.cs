@@ -71,6 +71,44 @@ public sealed class PostProcessingServiceTests
     }
 
     [Fact]
+    public void ApplyCleanDictationSafeguards_RemovesLeftoverFillersFromBuiltInCleanPrompt()
+    {
+        const string modelOutput =
+            "Sometimes I see the fellow words, um has been fixed, um sometimes the failure word are not fixed. " +
+            "I don't know how this works, but you know, I I like to see have everything fixed.";
+        var prompt = Configuration.HushSettings.BuiltInPrompts[0].Prompt;
+
+        var cleaned = FoundryPostProcessingService.ApplyCleanDictationSafeguards(modelOutput, prompt);
+
+        Assert.DoesNotContain("um", cleaned, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("you know", cleaned, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("I I", cleaned, StringComparison.Ordinal);
+        Assert.Equal(
+            "Sometimes I see the fellow words has been fixed sometimes the failure word are not fixed. I don't know how this works, but I like to see have everything fixed.",
+            cleaned);
+    }
+
+    [Fact]
+    public void ApplyCleanDictationSafeguards_DoesNotAlterCustomPromptOutput()
+    {
+        const string modelOutput = "Keep um and you know exactly because the custom prompt asked for it.";
+
+        var cleaned = FoundryPostProcessingService.ApplyCleanDictationSafeguards(modelOutput, "Custom prompt.");
+
+        Assert.Equal(modelOutput, cleaned);
+    }
+
+    [Fact]
+    public void BuiltInCleanPrompt_PrioritizesFillerCleanupOverWordPreservation()
+    {
+        var prompt = Configuration.HushSettings.BuiltInPrompts[0].Prompt;
+
+        Assert.Contains("Cleanup rules override preservation", prompt);
+        Assert.Contains("verify no standalone filler phrases", prompt);
+        Assert.Contains("fellow words/failure word", prompt);
+    }
+
+    [Fact]
     public void GetActivePrompt_ReturnsFallback_WhenIdIsNull()
     {
         var settings = new Configuration.HushSettings

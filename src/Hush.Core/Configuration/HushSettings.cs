@@ -108,9 +108,11 @@ public sealed class HushSettings
                 "- Remove filler words: \"um\", \"uh\", \"er\", \"ah\", \"like\" (when used as filler), \"you know\", \"I mean\" (when filler), \"sort of\", \"kind of\" (when filler), and stutter repetitions.\n" +
                 "- Honor self-corrections: if the speaker says \"I mean X\", \"no wait Y\", \"scratch that Z\", \"actually Z\", keep only the corrected version.\n" +
                 "- Add correct punctuation, capitalization, and sentence breaks.\n" +
-                "- Fix obvious transcription errors from context (e.g. their/there/they're) but do NOT invent facts or change meaning.\n" +
-                "- Preserve the speaker's word choices, names, numbers, and technical terms exactly.\n" +
+                "- Fix obvious transcription errors from context (e.g. their/there/they're, or filler words misheard as fellow words/failure word) but do NOT invent facts or change meaning.\n" +
+                "- Cleanup rules override preservation for filler words, stutters, and self-corrections.\n" +
+                "- After cleanup, preserve the speaker's meaningful word choices, names, numbers, and technical terms exactly.\n" +
                 "- Keep the same language as the input.\n\n" +
+                "Before output, verify no standalone filler phrases such as \"um\", \"uh\", or \"you know\" remain.\n\n" +
                 "Output ONLY the cleaned text. No preamble, no explanation, no quotes, no markdown fences, no \"Here is...\" or \"Sure,\"."
         },
         new()
