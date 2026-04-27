@@ -642,6 +642,19 @@ public sealed class DictationSessionTests
                 operations.Add($"backspace:{count}");
                 return Task.CompletedTask;
             });
+        outputMock
+            .Setup(o => o.ReplaceTextAsync(
+                It.IsAny<int>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(),
+                It.IsAny<bool>(),
+                It.IsAny<string?>()))
+            .Returns<int, string, CancellationToken, bool, bool, string?>((count, text, _, _, bounded, existing) =>
+            {
+                operations.Add($"replace:{count}:{bounded}:{existing}:{text}");
+                return Task.CompletedTask;
+            });
 
         postProcessorMock
             .Setup(p => p.RewriteAsync(finalRaw, "Fix punctuation.", It.IsAny<CancellationToken>()))
@@ -663,8 +676,7 @@ public sealed class DictationSessionTests
             {
                 $"type:{preview}",
                 "type:|",
-                $"backspace:{preview.Length + 1 - "Hey".Length}",
-                $"type:{cleaned["Hey".Length..]}"
+                $"replace:{preview.Length + 1}:True:{preview}|:{cleaned}"
             },
             operations);
     }

@@ -375,7 +375,6 @@ public sealed class DictationSession : IDictationSession
         var delta = targetText[commonPrefixLength..];
         bool boundToCurrentLine = ShouldBoundReplacementToCurrentLine(
             boundLargeReplacementToCurrentLine,
-            commonPrefixLength,
             backspaceCount,
             currentText,
             targetText);
@@ -383,8 +382,8 @@ public sealed class DictationSession : IDictationSession
         if (boundToCurrentLine)
         {
             await _output.ReplaceTextAsync(
-                backspaceCount,
-                delta,
+                currentText.Length,
+                targetText,
                 cancellationToken,
                 skipModifierRestore,
                 boundToCurrentLine: true,
@@ -415,12 +414,10 @@ public sealed class DictationSession : IDictationSession
 
     private static bool ShouldBoundReplacementToCurrentLine(
         bool enabled,
-        int commonPrefixLength,
         int backspaceCount,
         string currentText,
         string targetText)
         => enabled
-           && commonPrefixLength == 0
            && backspaceCount >= 32
            && currentText.Length >= 32
            && !string.IsNullOrEmpty(targetText);
