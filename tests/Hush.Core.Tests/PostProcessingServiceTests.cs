@@ -32,6 +32,36 @@ public sealed class PostProcessingServiceTests
     }
 
     [Fact]
+    public void BuildPromptMessages_ReplacesInputPlaceholderInUserPrompt()
+    {
+        const string rawTranscript = "I'm testing the real time transcription.";
+        const string prompt =
+            "Translate the following English text into Chinese accurately and naturally.\n\n" +
+            "Rules:\n" +
+            "- Output only the Chinese translation.\n\n" +
+            "English text:\n{input}";
+
+        var messages = FoundryPostProcessingService.BuildPromptMessages(rawTranscript, prompt);
+
+        Assert.Contains("post-processing assistant", messages.SystemMessage);
+        Assert.Contains("/no_think", messages.UserMessage);
+        Assert.Contains(rawTranscript, messages.UserMessage);
+        Assert.DoesNotContain("{input}", messages.UserMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildPromptMessages_UsesPromptAsSystemMessageWhenNoPlaceholder()
+    {
+        const string rawTranscript = "raw text";
+        const string prompt = "Fix punctuation and output only the cleaned text.";
+
+        var messages = FoundryPostProcessingService.BuildPromptMessages(rawTranscript, prompt);
+
+        Assert.Equal(prompt, messages.SystemMessage);
+        Assert.Equal("/no_think\nraw text", messages.UserMessage);
+    }
+
+    [Fact]
     public void GetActivePrompt_ReturnsFallback_WhenIdIsNull()
     {
         var settings = new Configuration.HushSettings

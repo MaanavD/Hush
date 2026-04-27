@@ -26,6 +26,19 @@ public interface ITextOutputService
     /// </summary>
     Task SendBackspacesAsync(int count, CancellationToken cancellationToken = default, bool skipModifierRestore = false);
 
+    /// <summary>
+    /// Replaces recently typed text with <paramref name="replacementText"/>.
+    /// Implementations may use platform-specific safer replacement strategies
+    /// when <paramref name="boundToCurrentLine"/> is requested.
+    /// </summary>
+    Task ReplaceTextAsync(
+        int backspaceCount,
+        string replacementText,
+        CancellationToken cancellationToken = default,
+        bool skipModifierRestore = false,
+        bool boundToCurrentLine = false,
+        string? expectedExistingText = null);
+
     /// <summary>Sends a single well-known key combination to the focused application.</summary>
     Task SendKeyAsync(AutoSubmitKey key, CancellationToken cancellationToken = default);
 }

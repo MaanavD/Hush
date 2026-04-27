@@ -13,6 +13,8 @@ namespace Hush.Core.PostProcessing;
 /// </summary>
 public sealed class FoundryPostProcessingService : IPostProcessingService
 {
+    private const string InputPlaceholder = "{input}";
+
     private readonly ILogger<FoundryPostProcessingService> _logger;
     private OpenAIChatClient? _chatClient;
 
@@ -70,12 +72,11 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
             _chatClient.Settings.Temperature = 0.7f;
             _chatClient.Settings.TopP = 0.8f;
 
+            var promptMessages = BuildPromptMessages(rawTranscript, systemPrompt);
             var messages = new[]
             {
-                ChatMessage.FromSystem(systemPrompt),
-                // /no_think is Qwen3's soft switch to disable chain-of-thought.
-                // It must appear in the user message; prepend it before the transcript.
-                ChatMessage.FromUser("/no_think\n" + rawTranscript)
+                ChatMessage.FromSystem(promptMessages.SystemMessage),
+                ChatMessage.FromUser(promptMessages.UserMessage)
             };
 
             var response = await _chatClient.CompleteChatAsync(messages, ct);
@@ -88,6 +89,22 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
             return null;
         }
     }
+
+    internal static PromptMessages BuildPromptMessages(string rawTranscript, string systemPrompt)
+    {
+        if (systemPrompt.Contains(InputPlaceholder, StringComparison.OrdinalIgnoreCase))
+        {
+            return new PromptMessages(
+                "You are Hush's post-processing assistant. Follow the user's prompt exactly and output only the final transformed text.",
+                WithNoThink(systemPrompt.Replace(InputPlaceholder, rawTranscript, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return new PromptMessages(systemPrompt, WithNoThink(rawTranscript));
+    }
+
+    private static string WithNoThink(string text) => "/no_think\n" + text;
+
+    internal readonly record struct PromptMessages(string SystemMessage, string UserMessage);
 
     /// <summary>
     /// Removes Qwen3 reasoning content from the output.

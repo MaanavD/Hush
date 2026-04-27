@@ -767,8 +767,8 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     private static (int BackspaceCount, string Delta) ComputeWordLevelDelta(
         string committedText, string targetText)
     {
-        var cWords = committedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var tWords = targetText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var cWords = GetComparableWordTokens(committedText);
+        var tWords = GetComparableWordTokens(targetText);
 
         if (cWords.Length == 0 || tWords.Length == 0)
             return (committedText.Length, targetText);
@@ -777,9 +777,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         int commonCount = 0;
         for (int i = 0; i < minLen; i++)
         {
-            var cNorm = NormalizeWordForComparison(cWords[i]);
-            var tNorm = NormalizeWordForComparison(tWords[i]);
-            if (string.IsNullOrEmpty(cNorm) || cNorm != tNorm)
+            if (cWords[i].Normalized != tWords[i].Normalized)
                 break;
             commonCount++;
         }
@@ -787,12 +785,36 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (commonCount == 0)
             return (committedText.Length, targetText);
 
-        // Text is space-normalised, so joining the first N words gives the exact
-        // character offset of the end of the last common word in each string.
-        int cPos = string.Join(' ', cWords[..commonCount]).Length;
-        int tPos = string.Join(' ', tWords[..commonCount]).Length;
+        int cPos = cWords[commonCount - 1].EndIndex;
+        int tPos = tWords[commonCount - 1].EndIndex;
 
         return (committedText.Length - cPos, targetText[tPos..]);
+    }
+
+    private readonly record struct ComparableWordToken(string Normalized, int EndIndex);
+
+    private static ComparableWordToken[] GetComparableWordTokens(string text)
+    {
+        var tokens = new List<ComparableWordToken>();
+        int index = 0;
+        while (index < text.Length)
+        {
+            while (index < text.Length && char.IsWhiteSpace(text[index]))
+                index++;
+
+            int start = index;
+            while (index < text.Length && !char.IsWhiteSpace(text[index]))
+                index++;
+
+            if (start == index)
+                continue;
+
+            var normalized = NormalizeWordForComparison(text[start..index]);
+            if (!string.IsNullOrEmpty(normalized))
+                tokens.Add(new ComparableWordToken(normalized, index));
+        }
+
+        return tokens.ToArray();
     }
 
     /// <summary>

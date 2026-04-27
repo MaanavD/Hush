@@ -645,6 +645,42 @@ public sealed class TranscriptionEngineTests
     }
 
     [Fact]
+    public async Task LiveSession_FinalChunk_StandalonePunctuationCorrection_AppendsOnlyNewWords()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "Hey", false, null, null));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            ", I'm testing the", false, null, null));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "real time", false, null, null));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "transcription", false, null, null));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "tell me", false, null, null));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "it's working", false, null, null));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "Hey, I'm testing the real time transcription tell me it's working",
+            true,
+            null,
+            null));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        var finalResult = results[^1];
+        Assert.True(finalResult.IsFinal);
+        Assert.Equal(0, finalResult.BackspaceCount);
+        Assert.Equal(" working", finalResult.CommittedDelta);
+    }
+
+    [Fact]
     public async Task AppendAudioAsync_ForwardsAudioToLiveSession()
     {
         var factory = new FakeLiveAudioSessionFactory();

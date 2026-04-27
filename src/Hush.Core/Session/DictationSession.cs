@@ -36,7 +36,7 @@ public sealed class DictationSession : IDictationSession
     private Task? _transcriptionLoop;
     private CancellationTokenSource? _loopCts;
     private bool _disposed;
-    private bool _showSpinner;
+    private DictationOutputMode _outputMode = DictationOutputMode.Streaming;
     private string? _postProcessingPrompt;
     private int _sessionErrorRaised;
     private AutoSubmitKey _autoSubmitKey;
@@ -87,11 +87,12 @@ public sealed class DictationSession : IDictationSession
         bool showSpinner = false,
         string? postProcessingPrompt = null,
         AutoSubmitKey autoSubmitKey = AutoSubmitKey.None,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DictationOutputMode outputMode = DictationOutputMode.Auto)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        _showSpinner = showSpinner;
+        _outputMode = ResolveOutputMode(outputMode, showSpinner);
         _postProcessingPrompt = postProcessingPrompt;
         _sessionErrorRaised = 0;
         _autoSubmitKey = autoSubmitKey;
@@ -101,7 +102,10 @@ public sealed class DictationSession : IDictationSession
         // nullifies _loopCts while we are suspended at the await below.
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _loopCts = cts;
-        await _engine.StartSessionAsync(language: language, streamingCommit: streamingCommit, cancellationToken: cts.Token);
+        var engineStreamingCommit = _outputMode == DictationOutputMode.CleanStreamingPreview
+            ? true
+            : streamingCommit;
+        await _engine.StartSessionAsync(language: language, streamingCommit: engineStreamingCommit, cancellationToken: cts.Token);
 
         // StopAsync may have been called while StartSessionAsync was awaited.
         // If the token was cancelled, bail out — the session is already stopping.
@@ -120,14 +124,22 @@ public sealed class DictationSession : IDictationSession
             throw;
         }
 
-        _logger.LogInformation("Dictation session started (spinner={Spinner}).", showSpinner);
+        _logger.LogInformation("Dictation session started (mode={Mode}).", _outputMode);
 
         _transcriptionLoop = Task.Run(
-            () => _showSpinner
-                ? SpinnerTranscriptionLoopAsync(cts.Token)
-                : StreamingTranscriptionLoopAsync(cts.Token),
+            () => _outputMode switch
+            {
+                DictationOutputMode.Spinner => SpinnerTranscriptionLoopAsync(cts.Token),
+                DictationOutputMode.CleanStreamingPreview => CleanStreamingPreviewTranscriptionLoopAsync(cts.Token),
+                _ => StreamingTranscriptionLoopAsync(cts.Token)
+            },
             cts.Token);
     }
+
+    private static DictationOutputMode ResolveOutputMode(DictationOutputMode outputMode, bool showSpinner)
+        => outputMode == DictationOutputMode.Auto
+            ? showSpinner ? DictationOutputMode.Spinner : DictationOutputMode.Streaming
+            : outputMode;
 
     // ── Streaming path: commit only stable deltas ────────────────────────
     //
@@ -193,6 +205,238 @@ public sealed class DictationSession : IDictationSession
         {
             ReportSessionError(ex, "Transcription loop encountered an unhandled error.");
         }
+    }
+
+    private async Task CleanStreamingPreviewTranscriptionLoopAsync(CancellationToken cancellationToken)
+    {
+        var rawTranscript = new StringBuilder();
+        var visiblePreview = new StringBuilder();
+        var targetWindow = TargetWindowGuard.Capture();
+
+        try
+        {
+            await foreach (var result in _engine.GetResultStreamAsync(cancellationToken))
+            {
+                var targetText = result.DisplayText ?? string.Empty;
+                if (!string.IsNullOrEmpty(targetText))
+                    OnInterimText?.Invoke(targetText);
+
+                if (result.BackspaceCount > 0 && rawTranscript.Length > 0)
+                {
+                    int toRemove = Math.Min(result.BackspaceCount, rawTranscript.Length);
+                    rawTranscript.Remove(rawTranscript.Length - toRemove, toRemove);
+                }
+
+                if (!string.IsNullOrEmpty(result.CommittedDelta))
+                    rawTranscript.Append(result.CommittedDelta);
+
+                if (!result.IsFinal
+                    && (result.BackspaceCount > 0 || !string.IsNullOrEmpty(result.CommittedDelta)))
+                {
+                    var targetPreview = ApplySessionSubstitutions(rawTranscript.ToString());
+                    await TryReplaceVisiblePreviewAsync(
+                        visiblePreview,
+                        targetPreview,
+                        targetWindow,
+                        cancellationToken,
+                        restoreForeground: false,
+                        skipModifierRestore: true);
+                }
+
+                if (!string.IsNullOrEmpty(result.CommittedDelta))
+                    OnCommittedChunk?.Invoke(result.CommittedDelta);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown.
+        }
+        catch (Exception ex)
+        {
+            ReportSessionError(ex, "Transcription loop encountered an unhandled error.");
+        }
+
+        var finalText = ApplySessionSubstitutions(rawTranscript.ToString());
+        if (!string.IsNullOrEmpty(finalText)
+            && _postProcessor is not null
+            && !string.IsNullOrEmpty(_postProcessingPrompt))
+        {
+            using var spinnerCts = new CancellationTokenSource();
+            var spinnerTask = await StartCleanProcessingSpinnerAsync(
+                visiblePreview,
+                targetWindow,
+                spinnerCts.Token);
+
+            OnPostProcessingStateChanged?.Invoke(true);
+            try
+            {
+                var rewritten = await _postProcessor.RewriteAsync(finalText, _postProcessingPrompt, CancellationToken.None);
+                if (!string.IsNullOrEmpty(rewritten))
+                    finalText = rewritten;
+            }
+            finally
+            {
+                await spinnerCts.CancelAsync();
+                if (spinnerTask is not null)
+                {
+                    try { await spinnerTask; }
+                    catch (OperationCanceledException) { }
+                }
+
+                OnPostProcessingStateChanged?.Invoke(false);
+            }
+        }
+
+        if (!string.Equals(visiblePreview.ToString(), finalText, StringComparison.Ordinal))
+        {
+            bool replaced = await TryReplaceVisiblePreviewAsync(
+                visiblePreview,
+                finalText,
+                targetWindow,
+                CancellationToken.None,
+                restoreForeground: true,
+                skipModifierRestore: false,
+                boundLargeReplacementToCurrentLine: true);
+
+            if (!replaced)
+            {
+                _logger.LogWarning(
+                    "Leaving {Length}-char clean streaming preview unchanged because the target window lost focus and could not be restored.",
+                    visiblePreview.Length);
+                finalText = visiblePreview.ToString();
+            }
+        }
+
+        if (!string.IsNullOrEmpty(finalText))
+            _sessionAccumulated.Append(finalText);
+    }
+
+    private async Task<Task?> StartCleanProcessingSpinnerAsync(
+        StringBuilder visiblePreview,
+        TargetWindowGuard.Handle targetWindow,
+        CancellationToken cancellationToken)
+    {
+        if (!TargetWindowGuard.IsStillForeground(targetWindow))
+            return null;
+
+        await _output.TypeTextAsync(SpinnerFrames[0].ToString(), CancellationToken.None, skipModifierRestore: true);
+        visiblePreview.Append(SpinnerFrames[0]);
+
+        return Task.Run(
+            () => AnimateCleanProcessingSpinnerAsync(visiblePreview, targetWindow, cancellationToken),
+            CancellationToken.None);
+    }
+
+    private async Task AnimateCleanProcessingSpinnerAsync(
+        StringBuilder visiblePreview,
+        TargetWindowGuard.Handle targetWindow,
+        CancellationToken cancellationToken)
+    {
+        int frameIndex = 1;
+
+        while (true)
+        {
+            await Task.Delay(SpinnerIntervalMs, cancellationToken);
+            if (!TargetWindowGuard.IsStillForeground(targetWindow))
+                continue;
+
+            await _output.SendBackspacesAsync(1, CancellationToken.None, skipModifierRestore: true);
+            if (visiblePreview.Length > 0)
+                visiblePreview.Length--;
+
+            var frame = SpinnerFrames[frameIndex % SpinnerFrames.Length];
+            await _output.TypeTextAsync(frame.ToString(), CancellationToken.None, skipModifierRestore: true);
+            visiblePreview.Append(frame);
+            frameIndex++;
+        }
+    }
+
+    private async Task<bool> TryReplaceVisiblePreviewAsync(
+        StringBuilder visiblePreview,
+        string targetText,
+        TargetWindowGuard.Handle targetWindow,
+        CancellationToken cancellationToken,
+        bool restoreForeground,
+        bool skipModifierRestore,
+        bool boundLargeReplacementToCurrentLine = false)
+    {
+        var currentText = visiblePreview.ToString();
+        if (string.Equals(currentText, targetText, StringComparison.Ordinal))
+            return true;
+
+        bool hasForeground = restoreForeground
+            ? TargetWindowGuard.TryEnsureForeground(targetWindow)
+            : TargetWindowGuard.IsStillForeground(targetWindow);
+        if (!hasForeground)
+            return false;
+
+        int commonPrefixLength = CommonPrefixLength(currentText, targetText);
+        int backspaceCount = visiblePreview.Length - commonPrefixLength;
+        var delta = targetText[commonPrefixLength..];
+        bool boundToCurrentLine = ShouldBoundReplacementToCurrentLine(
+            boundLargeReplacementToCurrentLine,
+            commonPrefixLength,
+            backspaceCount,
+            currentText,
+            targetText);
+
+        if (boundToCurrentLine)
+        {
+            await _output.ReplaceTextAsync(
+                backspaceCount,
+                delta,
+                cancellationToken,
+                skipModifierRestore,
+                boundToCurrentLine: true,
+                expectedExistingText: currentText);
+            visiblePreview.Clear();
+            visiblePreview.Append(targetText);
+            return true;
+        }
+
+        if (backspaceCount > 0)
+        {
+            await _output.SendBackspacesAsync(backspaceCount, cancellationToken, skipModifierRestore);
+            visiblePreview.Remove(commonPrefixLength, backspaceCount);
+
+            int settleMs = CalculateBackspaceSettleMs(backspaceCount);
+            _logger.LogDebug("Clean preview backspace settle: {SettleMs}ms for {Count} backspaces", settleMs, backspaceCount);
+            await Task.Delay(settleMs, cancellationToken);
+        }
+
+        if (!string.IsNullOrEmpty(delta))
+        {
+            await _output.TypeTextAsync(delta, cancellationToken, skipModifierRestore);
+            visiblePreview.Append(delta);
+        }
+
+        return true;
+    }
+
+    private static bool ShouldBoundReplacementToCurrentLine(
+        bool enabled,
+        int commonPrefixLength,
+        int backspaceCount,
+        string currentText,
+        string targetText)
+        => enabled
+           && commonPrefixLength == 0
+           && backspaceCount >= 32
+           && currentText.Length >= 32
+           && !string.IsNullOrEmpty(targetText);
+
+    private string ApplySessionSubstitutions(string text)
+        => _substitutions?.Count > 0
+            ? SubstitutionProcessor.Apply(text, _substitutions)
+            : text;
+
+    private static int CommonPrefixLength(string left, string right)
+    {
+        int length = Math.Min(left.Length, right.Length);
+        int index = 0;
+        while (index < length && left[index] == right[index])
+            index++;
+        return index;
     }
 
     private static int CalculateBackspaceSettleMs(int backspaceCount)

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Hush.Core.Configuration;
 using Microsoft.Extensions.Logging;
@@ -82,6 +83,46 @@ public sealed class KeystrokeTypingService : ITextOutputService
     }
 
     /// <inheritdoc/>
+    public async Task ReplaceTextAsync(
+        int backspaceCount,
+        string replacementText,
+        CancellationToken cancellationToken = default,
+        bool skipModifierRestore = false,
+        bool boundToCurrentLine = false,
+        string? expectedExistingText = null)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            await Task.FromCanceled(cancellationToken);
+
+        if (OperatingSystem.IsWindows()
+            && boundToCurrentLine
+            && ForegroundWindowDetector.IsTsfProblematic())
+        {
+            _logger.LogDebug(
+                "ReplaceText: current-line bounded replacement len={Len} expectedLen={ExpectedLen}",
+                replacementText.Length,
+                expectedExistingText?.Length ?? 0);
+            if (await WindowsAutomationTextReplacer.TryReplaceFocusedSuffixAsync(
+                    expectedExistingText,
+                    replacementText,
+                    cancellationToken,
+                    _logger))
+            {
+                return;
+            }
+
+            await WindowsClipboardTyper.ReplaceExpectedTextAsync(
+                expectedExistingText,
+                replacementText,
+                cancellationToken);
+            return;
+        }
+
+        await SendBackspacesAsync(backspaceCount, cancellationToken, skipModifierRestore);
+        await TypeTextAsync(replacementText, cancellationToken, skipModifierRestore);
+    }
+
+    /// <inheritdoc/>
     public Task SendKeyAsync(AutoSubmitKey key, CancellationToken cancellationToken = default)
     {
         if (key == AutoSubmitKey.None)
@@ -153,6 +194,384 @@ internal static class ForegroundWindowDetector
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Windows — UI Automation document-value replacement
+//
+// Keyboard selection in Windows 11 Notepad/WinUI3 can under-select long wrapped
+// live previews even when every SendInput call succeeds. UI Automation lets us
+// operate on the editor's actual text value instead: if the focused editable
+// value ends with the Hush-owned live preview, replace that suffix in one step.
+// The clipboard/keyboard path remains as a fallback for controls without
+// ValuePattern support.
+// ────────────────────────────────────────────────────────────────────────────
+
+internal static class WindowsAutomationTextReplacer
+{
+    private const uint INPUT_KEYBOARD = 1;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const ushort VK_CONTROL = 0x11;
+    private const ushort VK_END = 0x23;
+    private const int UIA_ValuePatternId = 10002;
+    private const int MinPrefixAnchorLength = 16;
+    private const int CaretRestoreSettleMs = 50;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint Type;
+        public INPUTUNION Union;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 32)]
+    private struct INPUTUNION
+    {
+        [FieldOffset(0)] public KEYBDINPUT Keyboard;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort VirtualKey;
+        public ushort ScanCode;
+        public uint Flags;
+        public uint Time;
+        public nint ExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    internal static Task<bool> TryReplaceFocusedSuffixAsync(
+        string? expectedExistingText,
+        string replacementText,
+        CancellationToken cancellationToken,
+        ILogger? logger = null)
+    {
+        if (string.IsNullOrEmpty(expectedExistingText))
+            return Task.FromResult(false);
+
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var t = new Thread(() =>
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                tcs.TrySetResult(TryReplaceFocusedSuffix(expectedExistingText, replacementText, logger));
+            }
+            catch (OperationCanceledException ex)
+            {
+                tcs.TrySetCanceled(ex.CancellationToken);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "UI Automation clean replacement failed; falling back to keyboard replacement.");
+                tcs.TrySetResult(false);
+            }
+        });
+
+        t.SetApartmentState(ApartmentState.STA);
+        t.IsBackground = true;
+        t.Name = "Hush.UIAReplace";
+        t.Start();
+        return tcs.Task;
+    }
+
+    internal static bool TryCreateReplacementValue(
+        string currentValue,
+        string expectedExistingText,
+        string replacementText,
+        out string replacementValue,
+        out int replaceStart)
+    {
+        replacementValue = currentValue;
+        replaceStart = -1;
+
+        if (string.IsNullOrEmpty(expectedExistingText))
+            return false;
+
+        if (currentValue.EndsWith(expectedExistingText, StringComparison.Ordinal))
+        {
+            replaceStart = currentValue.Length - expectedExistingText.Length;
+            replacementValue = currentValue[..replaceStart] + replacementText;
+            return true;
+        }
+
+        int exactIndex = currentValue.LastIndexOf(expectedExistingText, StringComparison.Ordinal);
+        if (exactIndex >= 0)
+        {
+            replaceStart = exactIndex;
+            replacementValue = currentValue[..exactIndex] + replacementText;
+            return true;
+        }
+
+        var anchor = expectedExistingText[..Math.Min(expectedExistingText.Length, MinPrefixAnchorLength)];
+        int anchorIndex = currentValue.LastIndexOf(anchor, StringComparison.Ordinal);
+        if (anchorIndex >= 0 && IsLineSuffix(currentValue, anchorIndex))
+        {
+            replaceStart = anchorIndex;
+            replacementValue = currentValue[..anchorIndex] + replacementText;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsLineSuffix(string text, int index)
+    {
+        for (int i = index - 1; i >= 0; i--)
+        {
+            if (text[i] is '\r' or '\n')
+                return true;
+            if (!char.IsWhiteSpace(text[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReplaceFocusedSuffix(
+        string expectedExistingText,
+        string replacementText,
+        ILogger? logger)
+    {
+        Type? automationType = Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e"));
+        if (automationType is null)
+            return false;
+
+        object? automationObject = null;
+        object? valuePatternObject = null;
+        try
+        {
+            automationObject = Activator.CreateInstance(automationType);
+            if (automationObject is not IUIAutomation automation)
+                return false;
+
+            int hr = automation.GetFocusedElement(out var focusedElement);
+            if (hr != 0 || focusedElement is null)
+            {
+                logger?.LogDebug("UI Automation clean replacement skipped: GetFocusedElement hr={Hr}.", hr);
+                return false;
+            }
+
+            hr = focusedElement.GetCurrentPattern(UIA_ValuePatternId, out valuePatternObject);
+            if (hr != 0 || valuePatternObject is not IUIAutomationValuePattern valuePattern)
+            {
+                logger?.LogDebug("UI Automation clean replacement skipped: ValuePattern hr={Hr}.", hr);
+                return false;
+            }
+
+            hr = valuePattern.get_CurrentIsReadOnly(out int isReadOnly);
+            if (hr != 0 || isReadOnly != 0)
+            {
+                logger?.LogDebug(
+                    "UI Automation clean replacement skipped: read-only={ReadOnly} hr={Hr}.",
+                    isReadOnly,
+                    hr);
+                return false;
+            }
+
+            hr = valuePattern.get_CurrentValue(out string? currentValue);
+            if (hr != 0 || currentValue is null)
+            {
+                logger?.LogDebug("UI Automation clean replacement skipped: CurrentValue hr={Hr}.", hr);
+                return false;
+            }
+
+            if (!TryCreateReplacementValue(
+                    currentValue,
+                    expectedExistingText,
+                    replacementText,
+                    out var replacementValue,
+                    out int replaceStart))
+            {
+                logger?.LogDebug(
+                    "UI Automation clean replacement skipped: expected preview not found (docLen={DocLen}, expectedLen={ExpectedLen}).",
+                    currentValue.Length,
+                    expectedExistingText.Length);
+                return false;
+            }
+
+            hr = valuePattern.SetValue(replacementValue);
+            if (hr != 0)
+            {
+                logger?.LogDebug("UI Automation clean replacement SetValue failed hr={Hr}.", hr);
+                return false;
+            }
+
+            try
+            {
+                MoveCaretToDocumentEnd(focusedElement, logger);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "UI Automation clean replacement succeeded but caret restore failed.");
+            }
+
+            logger?.LogDebug(
+                "UI Automation clean replacement succeeded: docLen={DocLen} expectedLen={ExpectedLen} replacementLen={ReplacementLen} start={Start}.",
+                currentValue.Length,
+                expectedExistingText.Length,
+                replacementText.Length,
+                replaceStart);
+            return true;
+        }
+        finally
+        {
+            if (valuePatternObject is not null && Marshal.IsComObject(valuePatternObject))
+                Marshal.ReleaseComObject(valuePatternObject);
+            if (automationObject is not null && Marshal.IsComObject(automationObject))
+                Marshal.ReleaseComObject(automationObject);
+        }
+    }
+
+    private static void MoveCaretToDocumentEnd(IUIAutomationElement focusedElement, ILogger? logger)
+    {
+        int hr = focusedElement.SetFocus();
+        if (hr != 0)
+            logger?.LogDebug("UI Automation caret restore SetFocus returned hr={Hr}; sending Ctrl+End anyway.", hr);
+
+        Thread.Sleep(CaretRestoreSettleMs);
+        SendCtrlEnd();
+    }
+
+    private static void SendCtrlEnd()
+    {
+        INPUT[] inputs =
+        [
+            MakeKey(VK_CONTROL, 0),
+            MakeKey(VK_END, 0),
+            MakeKey(VK_END, KEYEVENTF_KEYUP),
+            MakeKey(VK_CONTROL, KEYEVENTF_KEYUP),
+        ];
+
+        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        if (sent != inputs.Length)
+        {
+            int error = Marshal.GetLastWin32Error();
+            throw new InvalidOperationException(
+                $"SendInput failed while restoring caret after UIA replacement (sent {sent}/{inputs.Length}, Win32={error}).");
+        }
+    }
+
+    private static INPUT MakeKey(ushort vk, uint flags) => new()
+    {
+        Type = INPUT_KEYBOARD,
+        Union = new INPUTUNION
+        {
+            Keyboard = new KEYBDINPUT
+            {
+                VirtualKey = vk,
+                ScanCode = 0,
+                Flags = flags,
+                ExtraInfo = (nint)WindowsInputCoordinator.InjectedExtraInfo,
+            }
+        }
+    };
+
+    [ComImport]
+    [Guid("30CBE57D-D9D0-452A-AB13-7AC5AC4825EE")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomation
+    {
+        [PreserveSig]
+        int CompareElements(
+            [MarshalAs(UnmanagedType.Interface)] object? el1,
+            [MarshalAs(UnmanagedType.Interface)] object? el2,
+            out int areSame);
+
+        [PreserveSig]
+        int CompareRuntimeIds(IntPtr runtimeId1, IntPtr runtimeId2, out int areSame);
+
+        [PreserveSig]
+        int GetRootElement([MarshalAs(UnmanagedType.Interface)] out IUIAutomationElement? root);
+
+        [PreserveSig]
+        int ElementFromHandle(nint hwnd, [MarshalAs(UnmanagedType.Interface)] out IUIAutomationElement? element);
+
+        [PreserveSig]
+        int ElementFromPoint(UiaPoint pt, [MarshalAs(UnmanagedType.Interface)] out IUIAutomationElement? element);
+
+        [PreserveSig]
+        int GetFocusedElement([MarshalAs(UnmanagedType.Interface)] out IUIAutomationElement? element);
+    }
+
+    [ComImport]
+    [Guid("D22108AA-8AC5-49A5-837B-37BBB3D7591E")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationElement
+    {
+        [PreserveSig]
+        int SetFocus();
+
+        [PreserveSig]
+        int GetRuntimeId(out IntPtr runtimeId);
+
+        [PreserveSig]
+        int FindFirst(int scope, [MarshalAs(UnmanagedType.Interface)] object condition, [MarshalAs(UnmanagedType.Interface)] out IUIAutomationElement? found);
+
+        [PreserveSig]
+        int FindAll(int scope, [MarshalAs(UnmanagedType.Interface)] object condition, [MarshalAs(UnmanagedType.Interface)] out IntPtr found);
+
+        [PreserveSig]
+        int FindFirstBuildCache(int scope, [MarshalAs(UnmanagedType.Interface)] object condition, [MarshalAs(UnmanagedType.Interface)] object cacheRequest, [MarshalAs(UnmanagedType.Interface)] out IUIAutomationElement? found);
+
+        [PreserveSig]
+        int FindAllBuildCache(int scope, [MarshalAs(UnmanagedType.Interface)] object condition, [MarshalAs(UnmanagedType.Interface)] object cacheRequest, [MarshalAs(UnmanagedType.Interface)] out IntPtr found);
+
+        [PreserveSig]
+        int BuildUpdatedCache([MarshalAs(UnmanagedType.Interface)] object cacheRequest, [MarshalAs(UnmanagedType.Interface)] out IUIAutomationElement? updatedElement);
+
+        [PreserveSig]
+        int GetCurrentPropertyValue(int propertyId, [MarshalAs(UnmanagedType.Struct)] out object value);
+
+        [PreserveSig]
+        int GetCurrentPropertyValueEx(int propertyId, int ignoreDefaultValue, [MarshalAs(UnmanagedType.Struct)] out object value);
+
+        [PreserveSig]
+        int GetCachedPropertyValue(int propertyId, [MarshalAs(UnmanagedType.Struct)] out object value);
+
+        [PreserveSig]
+        int GetCachedPropertyValueEx(int propertyId, int ignoreDefaultValue, [MarshalAs(UnmanagedType.Struct)] out object value);
+
+        [PreserveSig]
+        int GetCurrentPatternAs(int patternId, in Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object patternObject);
+
+        [PreserveSig]
+        int GetCachedPatternAs(int patternId, in Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object patternObject);
+
+        [PreserveSig]
+        int GetCurrentPattern(int patternId, [MarshalAs(UnmanagedType.IUnknown)] out object patternObject);
+    }
+
+    [ComImport]
+    [Guid("A94CD8B1-0844-4CD6-9D2D-640537AB39E9")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationValuePattern
+    {
+        [PreserveSig]
+        int SetValue([MarshalAs(UnmanagedType.BStr)] string val);
+
+        [PreserveSig]
+        int get_CurrentValue([MarshalAs(UnmanagedType.BStr)] out string? retVal);
+
+        [PreserveSig]
+        int get_CurrentIsReadOnly(out int retVal);
+
+        [PreserveSig]
+        int get_CachedValue([MarshalAs(UnmanagedType.BStr)] out string? retVal);
+
+        [PreserveSig]
+        int get_CachedIsReadOnly(out int retVal);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct UiaPoint
+    {
+        public readonly double X;
+        public readonly double Y;
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Windows — KEYEVENTF_UNICODE via SendInput (primary, clipboard-free)
 //
 // Each character is injected as a WM_CHAR-equivalent keyboard event using
@@ -170,6 +589,7 @@ internal static class WindowsKeystrokeTyper
     private const uint INPUT_KEYBOARD     = 1;
     private const uint KEYEVENTF_KEYUP    = 0x0002;
     private const uint KEYEVENTF_UNICODE  = 0x0004;
+    private const int TsfBackspaceInterKeyDelayMs = 4;
 
     private const ushort VK_LSHIFT     = 0xA0;
     private const ushort VK_RSHIFT     = 0xA1;
@@ -283,6 +703,12 @@ internal static class WindowsKeystrokeTyper
 
             var pressedModifiers = GetPressedModifierVks();
 
+            if (count > 1 && ForegroundWindowDetector.IsTsfProblematic())
+            {
+                SendBackspacesOneAtATime(count, pressedModifiers, cancellationToken, skipModifierRestore, logger);
+                return;
+            }
+
             // Single atomic SendInput batch: modifier releases + backspaces + optional restores.
             int modCount = pressedModifiers.Count;
             int restoreCount = skipModifierRestore ? 0 : modCount;
@@ -311,6 +737,55 @@ internal static class WindowsKeystrokeTyper
             SendInput((uint)idx, inputs, Marshal.SizeOf<INPUT>());
             logger?.LogDebug("SendInput(backspace) returned");
         }, cancellationToken);
+    }
+
+    private static void SendBackspacesOneAtATime(
+        int count,
+        IReadOnlyList<ushort> pressedModifiers,
+        CancellationToken cancellationToken,
+        bool skipModifierRestore,
+        ILogger? logger)
+    {
+        int cbSize = Marshal.SizeOf<INPUT>();
+
+        if (pressedModifiers.Count > 0)
+        {
+            var modifierInputs = new INPUT[pressedModifiers.Count];
+            for (int i = 0; i < pressedModifiers.Count; i++)
+                modifierInputs[i] = MakeVkInput(pressedModifiers[i], KEYEVENTF_KEYUP);
+            SendInput((uint)modifierInputs.Length, modifierInputs, cbSize);
+        }
+
+        var backspaceInputs = new[]
+        {
+            MakeBackspaceInput(0),
+            MakeBackspaceInput(KEYEVENTF_KEYUP),
+        };
+
+        uint totalSent = 0;
+        for (int i = 0; i < count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            totalSent += SendInput(2, backspaceInputs, cbSize);
+            if (i + 1 < count)
+                Thread.Sleep(TsfBackspaceInterKeyDelayMs);
+        }
+
+        if (!skipModifierRestore)
+        {
+            var toRestore = GetModifiersToRestore(pressedModifiers);
+            if (toRestore.Count > 0)
+            {
+                var restoreInputs = new INPUT[toRestore.Count];
+                for (int i = 0; i < toRestore.Count; i++)
+                    restoreInputs[i] = MakeVkInput(toRestore[i], 0);
+                SendInput((uint)restoreInputs.Length, restoreInputs, cbSize);
+            }
+        }
+
+        logger?.LogDebug(
+            "SendInput(backspace-tsf): count={Count} mods={ModCount} totalSent={Sent}/{Total}",
+            count, pressedModifiers.Count, totalSent, count * 2);
     }
 
     internal static IReadOnlyList<ushort> GetModifiersToRestore(
@@ -406,7 +881,7 @@ internal static class WindowsKeystrokeTyper
             {
                 VirtualKey = VK_BACK,
                 ScanCode   = SC_BACK,
-                Flags      = extraFlags,
+                Flags      = KEYEVENTF_SCANCODE | extraFlags,
                 ExtraInfo  = (nint)WindowsInputCoordinator.InjectedExtraInfo,
             }
         }
@@ -460,9 +935,24 @@ internal static class WindowsClipboardTyper
     private const uint INPUT_KEYBOARD  = 1;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const ushort VK_CONTROL    = 0x11;
+    private const ushort VK_SHIFT      = 0x10;
+    private const ushort VK_HOME       = 0x24;
+    private const ushort VK_LEFT       = 0x25;
     private const ushort VK_V          = 0x56;
     private const uint CF_UNICODETEXT  = 13;
     private const uint GMEM_MOVEABLE   = 0x0002;
+    private const int ClipboardPasteBaseSettleMs = 120;
+    private const int ClipboardPastePerCharMs = 1;
+    private const int ClipboardPasteMaxSettleMs = 350;
+    private const int ReplacementClipboardRestoreBaseMs = 1200;
+    private const int ReplacementClipboardRestorePerCharMs = 3;
+    private const int ReplacementClipboardRestoreMaxMs = 3000;
+    private const int ClipboardSettleBeforePasteMs = 60;
+    private const int SelectionPasteSettleBaseMs = 120;
+    private const int SelectionPasteSettlePerCharMs = 2;
+    private const int SelectionPasteSettleMaxMs = 900;
+    private const int SelectionCharacterBatchSize = 8;
+    private const int SelectionCharacterBatchDelayMs = 8;
     private const ushort VK_LSHIFT     = 0xA0;
     private const ushort VK_RSHIFT     = 0xA1;
     private const ushort VK_LCONTROL   = 0xA2;
@@ -529,10 +1019,13 @@ internal static class WindowsClipboardTyper
                     SendKeys(pressedModifiers, KEYEVENTF_KEYUP);
 
                 string? savedText = TryGetClipboardText();
-                TrySetClipboardText(text);
+                if (!TrySetClipboardText(text))
+                    throw new InvalidOperationException("Unable to set clipboard text before typing into a TSF-backed target.");
+
+                Thread.Sleep(ClipboardSettleBeforePasteMs);
                 SendCtrlV();
 
-                Thread.Sleep(30);
+                Thread.Sleep(CalculateClipboardRestoreDelayMs(text.Length));
                 TrySetClipboardText(savedText ?? string.Empty);
 
                 if (pressedModifiers.Count > 0)
@@ -571,6 +1064,111 @@ internal static class WindowsClipboardTyper
         return tcs.Task;
     }
 
+    internal static Task ReplaceExpectedTextAsync(
+        string? expectedExistingText,
+        string replacementText,
+        CancellationToken cancellationToken)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var t = new Thread(() =>
+        {
+            List<ushort>? pressedModifiers = null;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                pressedModifiers = GetPressedModifierVks();
+                if (pressedModifiers.Count > 0)
+                    SendKeys(pressedModifiers, KEYEVENTF_KEYUP);
+
+                string? savedText = TryGetClipboardText();
+                if (!TrySetClipboardText(replacementText))
+                    throw new InvalidOperationException("Unable to set clipboard text before replacing clean-mode preview.");
+
+                Thread.Sleep(ClipboardSettleBeforePasteMs);
+
+                int selectedCharacterCount = SelectExpectedPreviousText(expectedExistingText);
+                if (selectedCharacterCount <= 0)
+                {
+                    SelectToStartOfCurrentLine();
+                }
+                else
+                {
+                    Thread.Sleep(CalculateSelectionPasteSettleDelayMs(selectedCharacterCount));
+                }
+
+                SendCtrlV();
+
+                Thread.Sleep(CalculateReplacementClipboardRestoreDelayMs(
+                    replacementText.Length,
+                    selectedCharacterCount));
+                TrySetClipboardText(savedText ?? string.Empty);
+
+                if (pressedModifiers.Count > 0)
+                {
+                    var modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(pressedModifiers);
+                    if (modifiersToRestore.Count > 0)
+                        SendKeys(modifiersToRestore, 0);
+                }
+
+                tcs.TrySetResult();
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    if (pressedModifiers is { Count: > 0 })
+                    {
+                        var modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(pressedModifiers);
+                        if (modifiersToRestore.Count > 0)
+                            SendKeys(modifiersToRestore, 0);
+                    }
+                }
+                catch
+                {
+                    // Best effort only; preserve the original replacement exception.
+                }
+
+                tcs.TrySetException(ex);
+            }
+        });
+
+        t.SetApartmentState(ApartmentState.STA);
+        t.IsBackground = true;
+        t.Name = "Hush.ClipboardLineReplace";
+        t.Start();
+        return tcs.Task;
+    }
+
+    internal static int CountSelectionCharacters(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return 0;
+
+        return StringInfo.ParseCombiningCharacters(text).Length;
+    }
+
+    internal static int CalculateClipboardRestoreDelayMs(int textLength)
+        => Math.Clamp(
+            ClipboardPasteBaseSettleMs + Math.Max(0, textLength) * ClipboardPastePerCharMs,
+            ClipboardPasteBaseSettleMs,
+            ClipboardPasteMaxSettleMs);
+
+    internal static int CalculateSelectionPasteSettleDelayMs(int characterCount)
+        => Math.Clamp(
+            SelectionPasteSettleBaseMs + Math.Max(0, characterCount) * SelectionPasteSettlePerCharMs,
+            SelectionPasteSettleBaseMs,
+            SelectionPasteSettleMaxMs);
+
+    internal static int CalculateReplacementClipboardRestoreDelayMs(int replacementLength, int selectedCharacterCount)
+        => Math.Clamp(
+            ReplacementClipboardRestoreBaseMs
+            + Math.Max(0, replacementLength) * ReplacementClipboardRestorePerCharMs
+            + Math.Max(0, selectedCharacterCount),
+            ReplacementClipboardRestoreBaseMs,
+            ReplacementClipboardRestoreMaxMs);
+
     private static string? TryGetClipboardText()
     {
         for (int attempt = 0; attempt < 5; attempt++)
@@ -596,8 +1194,24 @@ internal static class WindowsClipboardTyper
         return null;
     }
 
-    private static void TrySetClipboardText(string text)
+    private static bool TrySetClipboardText(string text)
     {
+        int bytes = (text.Length + 1) * 2;
+        var hGlobal = GlobalAlloc(GMEM_MOVEABLE, (nuint)bytes);
+        if (hGlobal == 0)
+            return false;
+
+        var ptr = GlobalLock(hGlobal);
+        if (ptr == 0)
+        {
+            GlobalFree(hGlobal);
+            return false;
+        }
+
+        Marshal.Copy(text.ToCharArray(), 0, ptr, text.Length);
+        Marshal.WriteInt16(ptr + text.Length * 2, 0);
+        GlobalUnlock(hGlobal);
+
         for (int attempt = 0; attempt < 5; attempt++)
         {
             if (OpenClipboard(0))
@@ -605,21 +1219,19 @@ internal static class WindowsClipboardTyper
                 try
                 {
                     EmptyClipboard();
-                    int bytes = (text.Length + 1) * 2;
-                    var hGlobal = GlobalAlloc(GMEM_MOVEABLE, (nuint)bytes);
-                    if (hGlobal == 0) return;
-                    var ptr = GlobalLock(hGlobal);
-                    if (ptr == 0) { GlobalFree(hGlobal); return; }
-                    Marshal.Copy(text.ToCharArray(), 0, ptr, text.Length);
-                    Marshal.WriteInt16(ptr + text.Length * 2, 0);
-                    GlobalUnlock(hGlobal);
-                    SetClipboardData(CF_UNICODETEXT, hGlobal);
-                    return;
+                    if (SetClipboardData(CF_UNICODETEXT, hGlobal) != 0)
+                        return true;
+
+                    GlobalFree(hGlobal);
+                    return false;
                 }
                 finally { CloseClipboard(); }
             }
             Thread.Sleep(20);
         }
+
+        GlobalFree(hGlobal);
+        return false;
     }
 
     private static void SendCtrlV()
@@ -633,6 +1245,58 @@ internal static class WindowsClipboardTyper
         ];
 
         SendInputs(inputs);
+    }
+
+    private static void SelectToStartOfCurrentLine()
+    {
+        INPUT[] inputs =
+        [
+            MakeKey(VK_SHIFT, 0),
+            MakeKey(VK_HOME, 0),
+            MakeKey(VK_HOME, KEYEVENTF_KEYUP),
+            MakeKey(VK_SHIFT, KEYEVENTF_KEYUP),
+        ];
+
+        SendInputs(inputs);
+    }
+
+    private static int SelectExpectedPreviousText(string? expectedExistingText)
+    {
+        int characterCount = CountSelectionCharacters(expectedExistingText);
+        if (characterCount <= 0)
+            return 0;
+
+        SelectPreviousCharacters(characterCount);
+        return characterCount;
+    }
+
+    private static void SelectPreviousCharacters(int count)
+    {
+        SendInputs([MakeKey(VK_SHIFT, 0)]);
+        try
+        {
+            int remaining = count;
+            while (remaining > 0)
+            {
+                int batch = Math.Min(remaining, SelectionCharacterBatchSize);
+                var inputs = new INPUT[batch * 2];
+                int idx = 0;
+                for (int i = 0; i < batch; i++)
+                {
+                    inputs[idx++] = MakeKey(VK_LEFT, 0);
+                    inputs[idx++] = MakeKey(VK_LEFT, KEYEVENTF_KEYUP);
+                }
+
+                SendInputs(inputs);
+                remaining -= batch;
+                if (remaining > 0)
+                    Thread.Sleep(SelectionCharacterBatchDelayMs);
+            }
+        }
+        finally
+        {
+            SendInputs([MakeKey(VK_SHIFT, KEYEVENTF_KEYUP)]);
+        }
     }
 
     private static void SendKeys(IReadOnlyList<ushort> virtualKeys, uint flags)
