@@ -62,6 +62,15 @@ public sealed class PostProcessingServiceTests
     }
 
     [Fact]
+    public void CleanupGenerationSettings_AreDeterministicAndBounded()
+    {
+        Assert.Equal(0.0f, FoundryPostProcessingService.CleanupTemperature);
+        Assert.Equal(1.0f, FoundryPostProcessingService.CleanupTopP);
+        Assert.Equal(0, FoundryPostProcessingService.CleanupRandomSeed);
+        Assert.Equal(1024, FoundryPostProcessingService.MaxPostProcessingTokens);
+    }
+
+    [Fact]
     public void GetActivePrompt_ReturnsFallback_WhenIdIsNull()
     {
         var settings = new Configuration.HushSettings

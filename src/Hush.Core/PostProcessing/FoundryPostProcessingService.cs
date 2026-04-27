@@ -19,6 +19,10 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
     private OpenAIChatClient? _chatClient;
 
     public const string DefaultModelAlias = "qwen3-0.6b";
+    internal const float CleanupTemperature = 0.0f;
+    internal const float CleanupTopP = 1.0f;
+    internal const int CleanupRandomSeed = 0;
+    internal const int MaxPostProcessingTokens = 1024;
 
     public FoundryPostProcessingService(ILogger<FoundryPostProcessingService>? logger = null)
         => _logger = logger ?? NullLogger<FoundryPostProcessingService>.Instance;
@@ -67,10 +71,13 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
 
         try
         {
-            // Set recommended non-thinking parameters for Qwen3.
+            // Dictation cleanup should be deterministic and bounded; small local
+            // models can otherwise echo instructions until the backend limit.
             // These must be applied before each call because Settings is shared state.
-            _chatClient.Settings.Temperature = 0.7f;
-            _chatClient.Settings.TopP = 0.8f;
+            _chatClient.Settings.Temperature = CleanupTemperature;
+            _chatClient.Settings.TopP = CleanupTopP;
+            _chatClient.Settings.RandomSeed = CleanupRandomSeed;
+            _chatClient.Settings.MaxTokens = MaxPostProcessingTokens;
 
             var promptMessages = BuildPromptMessages(rawTranscript, systemPrompt);
             var messages = new[]
