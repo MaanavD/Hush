@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using System.Threading.Channels;
 using Hush.Core.Audio;
 using Hush.Core.Configuration;
 using Hush.Core.Output;
@@ -596,9 +597,89 @@ public sealed class DictationSessionTests
         await session.StopAsync();
 
         Assert.Equal(
-            new[] { "type:hello", "type:|", "backspace:6", "type:Hello world.", "key:Enter" },
+            new[] { "type:hello", "type: world", "type:|", "backspace:12", "type:Hello world.", "key:Enter" },
             operations);
         Assert.Equal(new[] { true, false }, postProcessingStates);
+    }
+
+    [Fact]
+    public async Task CleanStreamingPreview_ShowsHeldBackDisplayWordBeforeStop()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var results = Channel.CreateUnbounded<TranscriptionResult>();
+        var previewVisible = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(results.Reader.ReadAllAsync());
+
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) =>
+            {
+                if (text == "hello world")
+                    previewVisible.TrySetResult(text);
+                return Task.CompletedTask;
+            });
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
+
+        await session.StartAsync(outputMode: DictationOutputMode.CleanStreamingPreview);
+        Assert.True(results.Writer.TryWrite(new TranscriptionResult("hello world", "hello", IsFinal: false)));
+
+        Assert.Equal("hello world", await previewVisible.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.True(results.Writer.TryWrite(new TranscriptionResult("hello world", " world", IsFinal: true)));
+        results.Writer.TryComplete();
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task CleanStreamingPreview_AppendsFinalAdditiveChunkBeforeStreamEnds()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var results = Channel.CreateUnbounded<TranscriptionResult>();
+        var finalTailVisible = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(results.Reader.ReadAllAsync());
+
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) =>
+            {
+                if (text == " world")
+                    finalTailVisible.TrySetResult(text);
+                return Task.CompletedTask;
+            });
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
+
+        await session.StartAsync(outputMode: DictationOutputMode.CleanStreamingPreview);
+        Assert.True(results.Writer.TryWrite(new TranscriptionResult("hello", "hello", IsFinal: false)));
+        Assert.True(results.Writer.TryWrite(new TranscriptionResult("hello world", " world", IsFinal: true)));
+
+        Assert.Equal(" world", await finalTailVisible.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        results.Writer.TryComplete();
+        await session.StopAsync();
     }
 
     [Fact]
@@ -751,8 +832,9 @@ public sealed class DictationSessionTests
             new[]
             {
                 $"type:{preview}",
+                "type: fine",
                 "type:|",
-                $"replace:{preview.Length + 1}:True:{preview}|:{cleaned}"
+                $"replace:{finalRaw.Length + 1}:True:{finalRaw}|:{cleaned}"
             },
             operations);
     }
@@ -871,7 +953,7 @@ public sealed class DictationSessionTests
             outputMode: DictationOutputMode.CleanStreamingPreview);
         await session.StopAsync();
 
-        Assert.Equal(new[] { "|", "fallback text" }, typedTexts);
+        Assert.Equal(new[] { "fallback text", "|" }, typedTexts);
         Assert.Equal(new[] { 1 }, backspaceCounts);
     }
 

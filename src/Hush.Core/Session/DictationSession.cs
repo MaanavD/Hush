@@ -230,10 +230,17 @@ public sealed class DictationSession : IDictationSession
                 if (!string.IsNullOrEmpty(result.CommittedDelta))
                     rawTranscript.Append(result.CommittedDelta);
 
-                if (!result.IsFinal
-                    && (result.BackspaceCount > 0 || !string.IsNullOrEmpty(result.CommittedDelta)))
+                bool canRefreshFinalPreview = result.IsFinal
+                    && result.BackspaceCount == 0
+                    && !string.IsNullOrEmpty(result.CommittedDelta);
+                bool shouldRefreshPreview = !result.IsFinal || canRefreshFinalPreview;
+                var previewText = !string.IsNullOrEmpty(targetText)
+                    ? targetText
+                    : rawTranscript.ToString();
+
+                if (shouldRefreshPreview && !string.IsNullOrEmpty(previewText))
                 {
-                    var targetPreview = ApplySessionSubstitutions(rawTranscript.ToString());
+                    var targetPreview = ApplySessionSubstitutions(previewText);
                     await TryReplaceVisiblePreviewAsync(
                         visiblePreview,
                         targetPreview,
