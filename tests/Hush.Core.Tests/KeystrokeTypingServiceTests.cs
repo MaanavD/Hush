@@ -96,4 +96,13 @@ public sealed class KeystrokeTypingServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => svc.TypeTextAsync("test", cts.Token));
     }
+
+    [Fact]
+    public void GetPasteCompletionDelay_TsfWindowsUseLongerClipboardDelay()
+    {
+        int defaultDelay = WindowsClipboardTyper.GetPasteCompletionDelay(isTsfProblematic: false);
+        int tsfDelay = WindowsClipboardTyper.GetPasteCompletionDelay(isTsfProblematic: true);
+
+        Assert.True(tsfDelay > defaultDelay);
+    }
 }

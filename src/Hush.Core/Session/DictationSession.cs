@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using System.Diagnostics;
 using System.Text;
 using Hush.Core.Audio;
 using Hush.Core.Configuration;
@@ -32,18 +33,34 @@ public sealed class DictationSession : IDictationSession
     private readonly IReadOnlyList<TextSubstitution>? _substitutions;
     private readonly ITranscriptBuffer? _transcriptBuffer;
     private readonly IPostProcessingService? _postProcessor;
+    private readonly SemaphoreSlim _segmentGate = new(1, 1);
 
     private Task? _transcriptionLoop;
+    private Task? _silenceMonitorTask;
     private CancellationTokenSource? _loopCts;
+    private CancellationTokenSource? _silenceMonitorCts;
     private bool _disposed;
     private bool _showSpinner;
     private string? _postProcessingPrompt;
     private int _sessionErrorRaised;
     private AutoSubmitKey _autoSubmitKey;
     private readonly StringBuilder _sessionAccumulated = new();
+    private readonly StringBuilder _displayCommitted = new();
+    private string _sessionLanguage = "en";
+    private bool _sessionStreamingCommit = true;
+    private bool _captureRunning;
+    private int _segmentProducedText;
+    private long _lastResultTimestamp;
+    private bool _pendingSegmentSeparator;
 
     private static readonly char[] SpinnerFrames = { '|', '/', '\u2014', '\\' };
     private const int SpinnerIntervalMs = 120;
+    // Real-world logs show the live-session flush itself adds ~200-250 ms once
+    // we decide a pause has happened, so keep the inactivity threshold short
+    // enough to feel responsive while still leaving headroom over normal
+    // chunk-to-chunk gaps during continuous speech.
+    private static readonly TimeSpan SilenceFlushDelay = TimeSpan.FromMilliseconds(700);
+    private static readonly TimeSpan SilencePollInterval = TimeSpan.FromMilliseconds(50);
 
     public DictationSession(
         ITranscriptionEngine engine,
@@ -61,7 +78,7 @@ public sealed class DictationSession : IDictationSession
         _substitutions = substitutions;
         _transcriptBuffer = transcriptBuffer;
         _postProcessor = postProcessor;
-        _audioLevelForwarder = level => OnAudioLevel?.Invoke(level);
+        _audioLevelForwarder = HandleAudioLevel;
     }
 
     /// <inheritdoc/>
@@ -96,37 +113,49 @@ public sealed class DictationSession : IDictationSession
         _sessionErrorRaised = 0;
         _autoSubmitKey = autoSubmitKey;
         _sessionAccumulated.Clear();
+        _displayCommitted.Clear();
+        _sessionLanguage = language;
+        _sessionStreamingCommit = streamingCommit;
+        _lastResultTimestamp = Stopwatch.GetTimestamp();
+        _pendingSegmentSeparator = false;
 
         // Capture in a local so post-await code is safe even if StopAsync
         // nullifies _loopCts while we are suspended at the await below.
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _loopCts = cts;
-        await _engine.StartSessionAsync(language: language, streamingCommit: streamingCommit, cancellationToken: cts.Token);
+        _silenceMonitorCts?.Dispose();
+        _silenceMonitorCts = _showSpinner ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        _capture.AudioLevelChanged += _audioLevelForwarder;
+        try
+        {
+            await _segmentGate.WaitAsync(cts.Token);
+            try
+            {
+                await StartSegmentCoreAsync(cts.Token);
+            }
+            finally
+            {
+                _segmentGate.Release();
+            }
+        }
+        catch
+        {
+            _capture.AudioLevelChanged -= _audioLevelForwarder;
+            _silenceMonitorCts?.Cancel();
+            _silenceMonitorCts?.Dispose();
+            _silenceMonitorCts = null;
+            throw;
+        }
 
         // StopAsync may have been called while StartSessionAsync was awaited.
         // If the token was cancelled, bail out — the session is already stopping.
         if (cts.IsCancellationRequested)
             return;
 
-        // Wire audio capture to the engine's append method.
-        _capture.AudioLevelChanged += _audioLevelForwarder;
-        try
-        {
-            _capture.Start(ForwardAudioToEngineAsync);
-        }
-        catch
-        {
-            _capture.AudioLevelChanged -= _audioLevelForwarder;
-            throw;
-        }
-
         _logger.LogInformation("Dictation session started (spinner={Spinner}).", showSpinner);
-
-        _transcriptionLoop = Task.Run(
-            () => _showSpinner
-                ? SpinnerTranscriptionLoopAsync(cts.Token)
-                : StreamingTranscriptionLoopAsync(cts.Token),
-            cts.Token);
+        if (!_showSpinner && _silenceMonitorCts is not null)
+            _silenceMonitorTask = Task.Run(() => MonitorSilenceAsync(_silenceMonitorCts.Token), CancellationToken.None);
     }
 
     // ── Streaming path: commit only stable deltas ────────────────────────
@@ -153,9 +182,14 @@ public sealed class DictationSession : IDictationSession
             await foreach (var result in _engine.GetResultStreamAsync(cancellationToken))
             {
                 var targetText = result.DisplayText ?? string.Empty;
+                if (!string.IsNullOrEmpty(targetText) || !string.IsNullOrEmpty(result.CommittedDelta))
+                {
+                    Volatile.Write(ref _segmentProducedText, 1);
+                    Interlocked.Exchange(ref _lastResultTimestamp, Stopwatch.GetTimestamp());
+                }
 
                 if (!string.IsNullOrEmpty(targetText))
-                    OnInterimText?.Invoke(targetText);
+                    OnInterimText?.Invoke(BuildDisplayText(targetText));
 
                 _logger.LogDebug(
                     "Output: bs={BS} delta='{Delta}' isFinal={Final} display='{Display}'",
@@ -178,7 +212,9 @@ public sealed class DictationSession : IDictationSession
                             ? SubstitutionProcessor.Apply(result.CommittedDelta, _substitutions)
                             : result.CommittedDelta;
                     }
+                    delta = ApplyPendingSegmentSeparator(delta);
                     _sessionAccumulated.Append(delta);
+                    _displayCommitted.Append(delta);
                     using (PerformanceProfiler.Measure("Session.TypeText"))
                         await _output.TypeTextAsync(delta, cancellationToken, skipModifierRestore: true);
                     OnCommittedChunk?.Invoke(delta);
@@ -193,6 +229,153 @@ public sealed class DictationSession : IDictationSession
         {
             ReportSessionError(ex, "Transcription loop encountered an unhandled error.");
         }
+    }
+
+    private async Task MonitorSilenceAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(SilencePollInterval, cancellationToken);
+
+                if (!_captureRunning || Volatile.Read(ref _segmentProducedText) == 0)
+                    continue;
+
+                if (Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastResultTimestamp)) < SilenceFlushDelay)
+                    continue;
+
+                await FlushPausedSegmentAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Expected during session shutdown.
+        }
+    }
+
+    private async Task FlushPausedSegmentAsync(CancellationToken cancellationToken)
+    {
+        await _segmentGate.WaitAsync(cancellationToken);
+        try
+        {
+                if (_showSpinner ||
+                !_captureRunning ||
+                Volatile.Read(ref _segmentProducedText) == 0 ||
+                Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastResultTimestamp)) < SilenceFlushDelay)
+            {
+                return;
+            }
+
+            _logger.LogDebug("Detected sustained silence; flushing the current streaming segment.");
+            await StopActiveSegmentCoreAsync(cancellationToken);
+            _pendingSegmentSeparator = _displayCommitted.Length > 0;
+
+            if (cancellationToken.IsCancellationRequested)
+                return;
+
+            await StartSegmentCoreAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Session is stopping.
+        }
+        catch (Exception ex)
+        {
+            ReportSessionError(ex, "Failed to flush the current streaming segment after sustained silence.");
+        }
+        finally
+        {
+            _segmentGate.Release();
+        }
+    }
+
+    private async Task StartSegmentCoreAsync(CancellationToken cancellationToken)
+    {
+        Volatile.Write(ref _segmentProducedText, 0);
+        _lastResultTimestamp = Stopwatch.GetTimestamp();
+
+        await _engine.StartSessionAsync(language: _sessionLanguage, streamingCommit: _sessionStreamingCommit, cancellationToken: cancellationToken);
+
+        try
+        {
+            _capture.Start(ForwardAudioToEngineAsync);
+            _captureRunning = true;
+        }
+        catch
+        {
+            await _engine.StopSessionAsync(cancellationToken);
+            throw;
+        }
+
+        _transcriptionLoop = Task.Run(
+            () => _showSpinner
+                ? SpinnerTranscriptionLoopAsync(cancellationToken)
+                : StreamingTranscriptionLoopAsync(cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task StopActiveSegmentCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_captureRunning)
+        {
+            _capture.Stop();
+            _captureRunning = false;
+        }
+
+        await _engine.StopSessionAsync(cancellationToken);
+
+        if (_transcriptionLoop is not null)
+        {
+            var loop = _transcriptionLoop;
+            _transcriptionLoop = null;
+            await loop.WaitAsync(cancellationToken);
+        }
+    }
+
+    private void HandleAudioLevel(float level)
+    {
+        OnAudioLevel?.Invoke(level);
+    }
+
+    private string BuildDisplayText(string targetText)
+    {
+        if (_displayCommitted.Length == 0)
+            return targetText;
+
+        if (string.IsNullOrWhiteSpace(targetText))
+            return _displayCommitted.ToString();
+
+        var committed = _displayCommitted.ToString();
+        if (targetText.StartsWith(committed, StringComparison.Ordinal))
+            return targetText;
+
+        if (char.IsWhiteSpace(committed[^1]) || char.IsWhiteSpace(targetText[0]))
+            return committed + targetText;
+
+        return committed + " " + targetText;
+    }
+
+    private string ApplyPendingSegmentSeparator(string delta)
+    {
+        if (!_pendingSegmentSeparator || string.IsNullOrEmpty(delta))
+            return delta;
+
+        _pendingSegmentSeparator = false;
+        if (_displayCommitted.Length == 0)
+            return delta;
+
+        return NeedsInterSegmentSpace(_displayCommitted[^1], delta[0])
+            ? " " + delta
+            : delta;
+    }
+
+    private static bool NeedsInterSegmentSpace(char left, char right)
+    {
+        if (char.IsWhiteSpace(left) || char.IsWhiteSpace(right))
+            return false;
+
+        return right is not '.' and not ',' and not '!' and not '?' and not ';' and not ':' and not ')' and not ']' and not '}';
     }
 
     private static int CalculateBackspaceSettleMs(int backspaceCount)
@@ -418,17 +601,32 @@ public sealed class DictationSession : IDictationSession
     /// <inheritdoc/>
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        _capture.AudioLevelChanged -= _audioLevelForwarder;
-        _capture.Stop();
-        await _engine.StopSessionAsync(cancellationToken);
-
-        if (_transcriptionLoop is not null)
+        _silenceMonitorCts?.Cancel();
+        if (_silenceMonitorTask is not null)
         {
-            // Wait for the loop to flush remaining committed chunks
-            // (or type buffered text in spinner mode).
-            await _transcriptionLoop.WaitAsync(cancellationToken);
-            _transcriptionLoop = null;
+            try
+            {
+                await _silenceMonitorTask.WaitAsync(CancellationToken.None);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown.
+            }
+
+            _silenceMonitorTask = null;
         }
+
+        await _segmentGate.WaitAsync(cancellationToken);
+        try
+        {
+            await StopActiveSegmentCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            _segmentGate.Release();
+        }
+
+        _capture.AudioLevelChanged -= _audioLevelForwarder;
 
         if (_sessionAccumulated.Length > 0)
         {
@@ -442,6 +640,8 @@ public sealed class DictationSession : IDictationSession
         _loopCts?.Cancel();
         _loopCts?.Dispose();
         _loopCts = null;
+        _silenceMonitorCts?.Dispose();
+        _silenceMonitorCts = null;
 
         _logger.LogInformation("Dictation session stopped.");
         OnSessionStopped?.Invoke();

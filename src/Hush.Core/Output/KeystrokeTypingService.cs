@@ -39,11 +39,14 @@ public sealed class KeystrokeTypingService : ITextOutputService
 
         if (OperatingSystem.IsWindows())
         {
-            bool useClipboard = _useClipboardFallback || ForegroundWindowDetector.IsTsfProblematic();
+            bool isTsfProblematic = ForegroundWindowDetector.IsTsfProblematic();
+            bool useClipboard = _useClipboardFallback || isTsfProblematic;
             if (useClipboard)
-                _logger.LogDebug("TypeText: using clipboard paste (TSF-problematic window detected)");
+                _logger.LogDebug(
+                    "TypeText: using clipboard paste (TSF-problematic window detected={TsfProblematic})",
+                    isTsfProblematic);
             return useClipboard
-                ? WindowsClipboardTyper.TypeAsync(text, cancellationToken)
+                ? WindowsClipboardTyper.TypeAsync(text, cancellationToken, isTsfProblematic, _logger)
                 : WindowsKeystrokeTyper.TypeAsync(text, cancellationToken, skipModifierRestore, _logger);
         }
 
@@ -471,6 +474,10 @@ internal static class WindowsClipboardTyper
     private const ushort VK_RMENU      = 0xA5;
     private const ushort VK_LWIN       = 0x5B;
     private const ushort VK_RWIN       = 0x5C;
+    private const int ClipboardRetryCount = 10;
+    private const int ClipboardRetryDelayMs = 20;
+    private const int DefaultPasteCompletionDelayMs = 100;
+    private const int TsfPasteCompletionDelayMs = 250;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
@@ -501,25 +508,31 @@ internal static class WindowsClipboardTyper
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(ushort vKey);
 
-    [DllImport("user32.dll")] private static extern bool OpenClipboard(nint hWnd);
-    [DllImport("user32.dll")] private static extern bool CloseClipboard();
-    [DllImport("user32.dll")] private static extern bool EmptyClipboard();
-    [DllImport("user32.dll")] private static extern nint SetClipboardData(uint uFormat, nint hMem);
-    [DllImport("user32.dll")] private static extern nint GetClipboardData(uint uFormat);
-    [DllImport("user32.dll")] private static extern bool IsClipboardFormatAvailable(uint format);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool OpenClipboard(nint hWnd);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseClipboard();
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool EmptyClipboard();
+    [DllImport("user32.dll", SetLastError = true)] private static extern nint SetClipboardData(uint uFormat, nint hMem);
+    [DllImport("user32.dll", SetLastError = true)] private static extern nint GetClipboardData(uint uFormat);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool IsClipboardFormatAvailable(uint format);
 
-    [DllImport("kernel32.dll")] private static extern nint GlobalAlloc(uint uFlags, nuint dwBytes);
-    [DllImport("kernel32.dll")] private static extern nint GlobalLock(nint hMem);
-    [DllImport("kernel32.dll")] private static extern bool GlobalUnlock(nint hMem);
-    [DllImport("kernel32.dll")] private static extern nint GlobalFree(nint hMem);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern nint GlobalAlloc(uint uFlags, nuint dwBytes);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern nint GlobalLock(nint hMem);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GlobalUnlock(nint hMem);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern nint GlobalFree(nint hMem);
 
-    internal static Task TypeAsync(string text, CancellationToken cancellationToken)
+    internal static Task TypeAsync(
+        string text,
+        CancellationToken cancellationToken,
+        bool isTsfProblematic = false,
+        ILogger? logger = null)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var t = new Thread(() =>
         {
             List<ushort>? pressedModifiers = null;
+            string? savedText = null;
+            bool clipboardNeedsRestore = false;
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -528,12 +541,14 @@ internal static class WindowsClipboardTyper
                 if (pressedModifiers.Count > 0)
                     SendKeys(pressedModifiers, KEYEVENTF_KEYUP);
 
-                string? savedText = TryGetClipboardText();
-                TrySetClipboardText(text);
+                savedText = TryGetClipboardText();
+                SetClipboardTextOrThrow(text);
+                clipboardNeedsRestore = true;
                 SendCtrlV();
 
-                Thread.Sleep(30);
-                TrySetClipboardText(savedText ?? string.Empty);
+                Thread.Sleep(GetPasteCompletionDelay(isTsfProblematic));
+                RestoreClipboardText(savedText, logger);
+                clipboardNeedsRestore = false;
 
                 if (pressedModifiers.Count > 0)
                 {
@@ -548,6 +563,9 @@ internal static class WindowsClipboardTyper
             {
                 try
                 {
+                    if (clipboardNeedsRestore)
+                        RestoreClipboardText(savedText, logger);
+
                     if (pressedModifiers is { Count: > 0 })
                     {
                         var modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(pressedModifiers);
@@ -571,54 +589,153 @@ internal static class WindowsClipboardTyper
         return tcs.Task;
     }
 
+    internal static int GetPasteCompletionDelay(bool isTsfProblematic) =>
+        isTsfProblematic ? TsfPasteCompletionDelayMs : DefaultPasteCompletionDelayMs;
+
     private static string? TryGetClipboardText()
     {
-        for (int attempt = 0; attempt < 5; attempt++)
+        for (int attempt = 0; attempt < ClipboardRetryCount; attempt++)
         {
             if (OpenClipboard(0))
             {
                 try
                 {
-                    if (!IsClipboardFormatAvailable(CF_UNICODETEXT))
-                        return null;
-                    var h = GetClipboardData(CF_UNICODETEXT);
-                    if (h == 0) return null;
-                    var ptr = GlobalLock(h);
-                    if (ptr == 0) return null;
-                    var s = Marshal.PtrToStringUni(ptr);
-                    GlobalUnlock(h);
-                    return s;
+                    return ReadClipboardTextOpen();
                 }
                 finally { CloseClipboard(); }
             }
-            Thread.Sleep(20);
+            Thread.Sleep(ClipboardRetryDelayMs);
         }
         return null;
     }
 
-    private static void TrySetClipboardText(string text)
+    private static void SetClipboardTextOrThrow(string text)
     {
-        for (int attempt = 0; attempt < 5; attempt++)
+        if (TrySetClipboardText(text, out string? failureReason))
+            return;
+
+        throw new InvalidOperationException(
+            $"Could not place dictated text on the clipboard before paste ({failureReason}). " +
+            "Hush did not send Ctrl+V to avoid inserting existing clipboard content.");
+    }
+
+    private static void RestoreClipboardText(string? savedText, ILogger? logger)
+    {
+        if (TrySetClipboardText(savedText ?? string.Empty, out string? failureReason))
+            return;
+
+        logger?.LogWarning(
+            "Could not restore clipboard text after dictation paste: {FailureReason}",
+            failureReason);
+    }
+
+    private static bool TrySetClipboardText(string text, out string? failureReason)
+    {
+        failureReason = null;
+
+        for (int attempt = 0; attempt < ClipboardRetryCount; attempt++)
         {
-            if (OpenClipboard(0))
+            if (TrySetClipboardTextOnce(text, out failureReason))
+                return true;
+
+            Thread.Sleep(ClipboardRetryDelayMs);
+        }
+
+        return false;
+    }
+
+    private static bool TrySetClipboardTextOnce(string text, out string? failureReason)
+    {
+        failureReason = null;
+
+        if (!OpenClipboard(0))
+        {
+            failureReason = $"OpenClipboard failed (Win32={Marshal.GetLastWin32Error()})";
+            return false;
+        }
+
+        nint hGlobal = 0;
+        bool clipboardOwnsMemory = false;
+        try
+        {
+            if (!EmptyClipboard())
             {
-                try
-                {
-                    EmptyClipboard();
-                    int bytes = (text.Length + 1) * 2;
-                    var hGlobal = GlobalAlloc(GMEM_MOVEABLE, (nuint)bytes);
-                    if (hGlobal == 0) return;
-                    var ptr = GlobalLock(hGlobal);
-                    if (ptr == 0) { GlobalFree(hGlobal); return; }
-                    Marshal.Copy(text.ToCharArray(), 0, ptr, text.Length);
-                    Marshal.WriteInt16(ptr + text.Length * 2, 0);
-                    GlobalUnlock(hGlobal);
-                    SetClipboardData(CF_UNICODETEXT, hGlobal);
-                    return;
-                }
-                finally { CloseClipboard(); }
+                failureReason = $"EmptyClipboard failed (Win32={Marshal.GetLastWin32Error()})";
+                return false;
             }
-            Thread.Sleep(20);
+
+            int bytes = checked((text.Length + 1) * 2);
+            hGlobal = GlobalAlloc(GMEM_MOVEABLE, (nuint)bytes);
+            if (hGlobal == 0)
+            {
+                failureReason = $"GlobalAlloc failed (Win32={Marshal.GetLastWin32Error()})";
+                return false;
+            }
+
+            var ptr = GlobalLock(hGlobal);
+            if (ptr == 0)
+            {
+                failureReason = $"GlobalLock failed (Win32={Marshal.GetLastWin32Error()})";
+                return false;
+            }
+
+            try
+            {
+                Marshal.Copy(text.ToCharArray(), 0, ptr, text.Length);
+                Marshal.WriteInt16(ptr + text.Length * 2, 0);
+            }
+            finally
+            {
+                GlobalUnlock(hGlobal);
+            }
+
+            nint clipboardHandle = SetClipboardData(CF_UNICODETEXT, hGlobal);
+            if (clipboardHandle == 0)
+            {
+                failureReason = $"SetClipboardData failed (Win32={Marshal.GetLastWin32Error()})";
+                return false;
+            }
+
+            clipboardOwnsMemory = true;
+
+            string? currentText = ReadClipboardTextOpen();
+            if (!string.Equals(currentText, text, StringComparison.Ordinal))
+            {
+                failureReason = "clipboard verification did not match dictated text";
+                return false;
+            }
+
+            return true;
+        }
+        finally
+        {
+            if (!clipboardOwnsMemory && hGlobal != 0)
+                GlobalFree(hGlobal);
+
+            CloseClipboard();
+        }
+    }
+
+    private static string? ReadClipboardTextOpen()
+    {
+        if (!IsClipboardFormatAvailable(CF_UNICODETEXT))
+            return null;
+
+        var h = GetClipboardData(CF_UNICODETEXT);
+        if (h == 0)
+            return null;
+
+        var ptr = GlobalLock(h);
+        if (ptr == 0)
+            return null;
+
+        try
+        {
+            return Marshal.PtrToStringUni(ptr);
+        }
+        finally
+        {
+            GlobalUnlock(h);
         }
     }
 

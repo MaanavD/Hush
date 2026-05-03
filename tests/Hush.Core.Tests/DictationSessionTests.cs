@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using System.Threading.Channels;
 using Hush.Core.Audio;
 using Hush.Core.Configuration;
 using Hush.Core.Output;
@@ -136,7 +137,7 @@ public sealed class DictationSessionTests
 
         // Assert
         Assert.Contains("see you jason", interimTexts);
-        Assert.Contains("we'll miss you", interimTexts);
+        Assert.Contains("see you jason have fun we'll miss you", interimTexts);
         Assert.Contains(" we'll miss you", committedChunks);
         outputMock.Verify(o => o.TypeTextAsync("see you jason", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
         outputMock.Verify(o => o.TypeTextAsync(" have fun", It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Once);
@@ -286,6 +287,70 @@ public sealed class DictationSessionTests
         await session.StopAsync();
 
         bufferMock.Verify(b => b.Push(It.IsAny<string>()), Times.Once);
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task SustainedSilence_FlushesCurrentSegment_AndKeepsOverlayTranscriptContinuous()
+    {
+        var engine = new ScriptedTranscriptionEngine();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<ITextOutputService>();
+        var interimTexts = new List<string>();
+        var typedTexts = new List<string>();
+
+        Action<float>? audioLevelHandler = null;
+        captureMock
+            .SetupAdd(c => c.AudioLevelChanged += It.IsAny<Action<float>>())
+            .Callback<Action<float>>(handler => audioLevelHandler = handler);
+        captureMock
+            .SetupRemove(c => c.AudioLevelChanged -= It.IsAny<Action<float>>())
+            .Callback<Action<float>>(handler =>
+            {
+                if (audioLevelHandler == handler)
+                    audioLevelHandler = null;
+            });
+        captureMock
+            .Setup(c => c.Start(It.IsAny<Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>>()));
+        captureMock
+            .Setup(c => c.Stop());
+
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns<string, CancellationToken, bool>((text, _, _) =>
+            {
+                typedTexts.Add(text);
+                return Task.CompletedTask;
+            });
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(engine, captureMock.Object, outputMock.Object);
+        session.OnInterimText += text => interimTexts.Add(text);
+
+        await session.StartAsync();
+
+        audioLevelHandler!.Invoke(0.5f);
+        engine.Emit(new TranscriptionResult("hello", "hello", IsFinal: false));
+        await TestWait.WaitUntilAsync(() => interimTexts.Contains("hello", StringComparer.Ordinal));
+
+        await TestWait.WaitUntilAsync(() => engine.StartCount >= 2, TimeSpan.FromSeconds(3));
+
+        audioLevelHandler.Invoke(0.5f);
+        engine.Emit(new TranscriptionResult("world again", "world", IsFinal: false));
+        await TestWait.WaitUntilAsync(() => interimTexts.Contains("hello world again", StringComparer.Ordinal));
+
+        await session.StopAsync();
+
+        Assert.Contains("hello", interimTexts);
+        Assert.Contains("hello world again", interimTexts);
+        Assert.Equal(new[] { "hello", " world" }, typedTexts);
+        Assert.Equal(2, engine.StartCount);
+        Assert.Equal(2, engine.StopCount);
+        captureMock.Verify(c => c.Start(It.IsAny<Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask>>()), Times.Exactly(2));
+        captureMock.Verify(c => c.Stop(), Times.Exactly(2));
+
         await session.DisposeAsync();
     }
 
@@ -558,6 +623,68 @@ file static class ArrayExtensions
 
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
+    }
+}
+
+file sealed class ScriptedTranscriptionEngine : ITranscriptionEngine
+{
+    private Channel<TranscriptionResult> _channel = Channel.CreateUnbounded<TranscriptionResult>();
+
+    public int StartCount { get; private set; }
+    public int StopCount { get; private set; }
+
+    public Task InitializeAsync(
+        string modelAlias = "nemotron-speech-streaming-en-0.6b",
+        IProgress<double>? downloadProgress = null,
+        bool downloadHardwareEPs = false,
+        IProgress<string>? statusProgress = null,
+        CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task StartSessionAsync(
+        int sampleRate = 16000,
+        int channels = 1,
+        string language = "en",
+        bool streamingCommit = true,
+        CancellationToken cancellationToken = default)
+    {
+        StartCount++;
+        _channel = Channel.CreateUnbounded<TranscriptionResult>();
+        return Task.CompletedTask;
+    }
+
+    public ValueTask AppendAudioAsync(ReadOnlyMemory<byte> pcmData, CancellationToken cancellationToken = default)
+        => ValueTask.CompletedTask;
+
+    public Task StopSessionAsync(CancellationToken cancellationToken = default)
+    {
+        StopCount++;
+        _channel.Writer.TryComplete();
+        return Task.CompletedTask;
+    }
+
+    public IAsyncEnumerable<TranscriptionResult> GetResultStreamAsync(CancellationToken cancellationToken = default)
+        => _channel.Reader.ReadAllAsync(cancellationToken);
+
+    public void Emit(TranscriptionResult result) => _channel.Writer.TryWrite(result);
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+file static class TestWait
+{
+    public static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(2));
+        while (DateTime.UtcNow < deadline)
+        {
+            if (predicate())
+                return;
+
+            await Task.Delay(25);
+        }
+
+        Assert.True(predicate(), "Condition was not met before the timeout elapsed.");
     }
 }
 
