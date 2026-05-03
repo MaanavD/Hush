@@ -47,6 +47,24 @@ internal static class NotepadStandardReportMetrics
         string expectedRawTranscript,
         TimeSpan audioDuration)
     {
+        var latencies = CalculateEstimatedAudioTokenE2ELatencies(typeEvents, expectedRawTranscript, audioDuration);
+        return latencies.Count == 0 ? 0 : latencies.Average();
+    }
+
+    public static double CalculateFirstEstimatedAudioTokenE2ELatency(
+        IReadOnlyList<NotepadStandardRenderTiming> typeEvents,
+        string expectedRawTranscript,
+        TimeSpan audioDuration)
+    {
+        var latencies = CalculateEstimatedAudioTokenE2ELatencies(typeEvents, expectedRawTranscript, audioDuration);
+        return latencies.Count == 0 ? 0 : latencies[0];
+    }
+
+    private static IReadOnlyList<double> CalculateEstimatedAudioTokenE2ELatencies(
+        IReadOnlyList<NotepadStandardRenderTiming> typeEvents,
+        string expectedRawTranscript,
+        TimeSpan audioDuration)
+    {
         int expectedTokenCount = Math.Max(1, TranscriptQuality.CountTokens(expectedRawTranscript));
         int tokenOrdinal = 0;
         var latencies = new List<double>();
@@ -64,7 +82,7 @@ internal static class NotepadStandardReportMetrics
             }
         }
 
-        return latencies.Count == 0 ? 0 : latencies.Average();
+        return latencies;
     }
 
     public static double CalculateAverageRenderOutputDuration(IReadOnlyList<NotepadStandardRenderTiming> typeEvents) =>

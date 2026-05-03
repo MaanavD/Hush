@@ -30,10 +30,11 @@ public sealed class NotepadAllAudioReportE2ETests
     {
         using var timeout = new CancellationTokenSource(NotepadE2EOptions.Timeout);
         var corpus = SyntheticAudioCorpus.Load();
+        var reportCases = NotepadE2EOptions.FilterReportCases(corpus.Cases);
         var results = new List<NotepadAudioReportRow>();
         var lockedDesktop = WindowsInteractiveDesktop.IsLocked();
 
-        foreach (var testCase in corpus.Cases.OrderBy(testCase => testCase.Id, StringComparer.Ordinal))
+        foreach (var testCase in reportCases.OrderBy(testCase => testCase.Id, StringComparer.Ordinal))
         {
             var result = await RunCaseAsync(corpus, testCase, lockedDesktop, timeout.Token);
             results.Add(result);

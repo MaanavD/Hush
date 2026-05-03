@@ -135,6 +135,22 @@ public sealed class NotepadStandardReportMetricsTests
     }
 
     [Fact]
+    public void CalculateFirstEstimatedAudioTokenE2ELatency_UsesFirstRenderedToken()
+    {
+        var events = new[]
+        {
+            new NotepadStandardRenderTiming("alpha beta", 1_000, 3_000),
+        };
+
+        var first = NotepadStandardReportMetrics.CalculateFirstEstimatedAudioTokenE2ELatency(
+            events,
+            "alpha beta gamma delta",
+            TimeSpan.FromSeconds(4));
+
+        Assert.Equal(2_000, first);
+    }
+
+    [Fact]
     public void CalculateAverageEstimatedAudioTokenE2ELatency_CanComparePreviewRenderAndCommitAvailability()
     {
         var previewEvents = new[]

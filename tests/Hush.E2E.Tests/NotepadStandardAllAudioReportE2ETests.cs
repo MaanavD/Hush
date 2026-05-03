@@ -25,10 +25,11 @@ public sealed class NotepadStandardAllAudioReportE2ETests
     {
         using var timeout = new CancellationTokenSource(NotepadE2EOptions.Timeout);
         var corpus = SyntheticAudioCorpus.Load();
+        var reportCases = NotepadE2EOptions.FilterReportCases(corpus.Cases);
         var results = new List<NotepadStandardAudioReportRow>();
         var lockedDesktop = WindowsInteractiveDesktop.IsLocked();
 
-        foreach (var testCase in corpus.Cases.OrderBy(testCase => testCase.Id, StringComparer.Ordinal))
+        foreach (var testCase in reportCases.OrderBy(testCase => testCase.Id, StringComparer.Ordinal))
         {
             var result = await RunCaseAsync(corpus, testCase, lockedDesktop, timeout.Token);
             results.Add(result);
@@ -56,7 +57,7 @@ public sealed class NotepadStandardAllAudioReportE2ETests
         CancellationToken cancellationToken)
     {
         var wav = WavPcmFile.Read(corpus.GetAudioPath(testCase));
-        var stopwatch = Stopwatch.StartNew();
+        var stopwatch = new Stopwatch();
         var sessionErrors = new List<Exception>();
         var row = new NotepadStandardAudioReportRow
         {
@@ -71,6 +72,7 @@ public sealed class NotepadStandardAllAudioReportE2ETests
             DelayScale = NotepadE2EOptions.DelayScale,
             DesktopLocked = lockedDesktop,
             RenderBackend = lockedDesktop ? "locked-file-backed-notepad-document" : "interactive-notepad-uia-buffered-setvalue",
+            VoiceOnsetMs = wav.DetectVoiceOnsetMilliseconds(),
         };
 
         try
@@ -81,9 +83,14 @@ public sealed class NotepadStandardAllAudioReportE2ETests
             await using var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>())
             {
                 UnloadTimeout = ModelUnloadTimeout.Never,
+                LiveAudioPushQueueCapacity = NotepadE2EOptions.LiveAudioPushQueueCapacity,
             };
 
-            using var capture = new WavFileAudioCaptureService(wav, NotepadE2EOptions.DelayScale);
+            using var capture = new WavFileAudioCaptureService(
+                wav,
+                NotepadE2EOptions.DelayScale,
+                NotepadE2EOptions.AudioChunkDurationMilliseconds);
+            capture.AudioStreamingStarted += stopwatch.Restart;
             ITextOutputService innerOutput = lockedDesktop
                 ? new LockedNotepadDocumentOutputService(notepad)
                 : new NotepadTargetedTextOutputService(
@@ -128,7 +135,6 @@ public sealed class NotepadStandardAllAudioReportE2ETests
             await Task.Delay(250, cancellationToken);
             if (!lockedDesktop)
                 notepad.Focus();
-            stopwatch.Restart();
             await session.StartAsync(
                 testCase.Language,
                 streamingCommit: true,
@@ -156,6 +162,8 @@ public sealed class NotepadStandardAllAudioReportE2ETests
                 ? measuredOutput.PreviewEvents
                 : measuredOutput.TypeEvents;
             row.FirstRenderLatencyMs = primaryRenderEvents.FirstOrDefault()?.CompletedAtMs;
+            row.FirstInterimAfterVoiceOnsetMs = SubtractVoiceOnset(row.FirstInterimLatencyMs, row.VoiceOnsetMs);
+            row.FirstRenderAfterVoiceOnsetMs = SubtractVoiceOnset(row.FirstRenderLatencyMs, row.VoiceOnsetMs);
             row.AverageRenderOutputDurationMs =
                 NotepadStandardReportMetrics.CalculateAverageRenderOutputDuration(primaryRenderEvents);
             row.AverageInterCommitIntervalMs =
@@ -180,6 +188,10 @@ public sealed class NotepadStandardAllAudioReportE2ETests
             row.ContainsContaminationArtifact = artifactAnalysis.ContainsContaminationArtifact;
             row.ContaminationArtifactReason = artifactAnalysis.ContaminationArtifactReason;
             row.AverageEstimatedPreviewTokenE2ELatencyMs = NotepadStandardReportMetrics.CalculateAverageEstimatedAudioTokenE2ELatency(
+                primaryRenderEvents,
+                testCase.ExpectedTranscript,
+                testCase.Duration);
+            row.FirstEstimatedPreviewTokenE2ELatencyMs = NotepadStandardReportMetrics.CalculateFirstEstimatedAudioTokenE2ELatency(
                 primaryRenderEvents,
                 testCase.ExpectedTranscript,
                 testCase.Duration);
@@ -226,11 +238,14 @@ public sealed class NotepadStandardAllAudioReportE2ETests
         _output.WriteLine($"Markdown report: {markdownPath}");
     }
 
+    private static double? SubtractVoiceOnset(double? latencyMs, double voiceOnsetMs) =>
+        latencyMs.HasValue ? Math.Max(0, latencyMs.Value - voiceOnsetMs) : null;
+
     private static string BuildCsv(IReadOnlyList<NotepadStandardAudioReportRow> rows)
     {
         var sb = new StringBuilder();
         sb.AppendLine(
-            "case_id,tags,audio_seconds,asr_wer,asr_cer,output_fidelity_wer,output_fidelity_cer,estimated_preview_token_e2e_latency_ms,estimated_committed_token_availability_latency_ms,first_interim_latency_ms,first_commit_latency_ms,first_render_latency_ms,avg_render_output_duration_ms,avg_inter_commit_interval_ms,avg_inter_render_interval_ms,audio_streaming_completed_ms,session_completed_ms,output_fidelity_overlap_rate,output_fidelity_token_ratio,expected_raw_tokens,reconstructed_committed_tokens,rendered_tokens,interim_events,committed_events,type_render_events,backspace_events,replacement_events,preview_render_events,unexpected_postprocessing_events,desktop_locked,render_backend,output_mode,streaming_commit,show_spinner,post_processor_mode,delay_scale,duplicate_artifact,spinner_artifact,contamination_artifact,contamination_reason,completed,error");
+            "case_id,tags,audio_seconds,voice_onset_ms,asr_wer,asr_cer,output_fidelity_wer,output_fidelity_cer,estimated_preview_token_e2e_latency_ms,first_estimated_preview_token_e2e_latency_ms,estimated_committed_token_availability_latency_ms,first_interim_latency_ms,first_interim_after_voice_onset_ms,first_commit_latency_ms,first_render_latency_ms,first_render_after_voice_onset_ms,avg_render_output_duration_ms,avg_inter_commit_interval_ms,avg_inter_render_interval_ms,audio_streaming_completed_ms,session_completed_ms,output_fidelity_overlap_rate,output_fidelity_token_ratio,expected_raw_tokens,reconstructed_committed_tokens,rendered_tokens,interim_events,committed_events,type_render_events,backspace_events,replacement_events,preview_render_events,unexpected_postprocessing_events,desktop_locked,render_backend,output_mode,streaming_commit,show_spinner,post_processor_mode,delay_scale,duplicate_artifact,spinner_artifact,contamination_artifact,contamination_reason,completed,error");
         foreach (var row in rows)
         {
             sb.AppendLine(string.Join(
@@ -238,15 +253,19 @@ public sealed class NotepadStandardAllAudioReportE2ETests
                 Csv(row.CaseId),
                 Csv(row.Tags),
                 Number(row.AudioDurationSeconds),
+                Number(row.VoiceOnsetMs),
                 Number(row.AsrWer),
                 Number(row.AsrCer),
                 Number(row.OutputFidelityWer),
                 Number(row.OutputFidelityCer),
                 Number(row.AverageEstimatedPreviewTokenE2ELatencyMs),
+                Number(row.FirstEstimatedPreviewTokenE2ELatencyMs),
                 Number(row.AverageEstimatedCommittedTokenAvailabilityLatencyMs),
                 NullableNumber(row.FirstInterimLatencyMs),
+                NullableNumber(row.FirstInterimAfterVoiceOnsetMs),
                 NullableNumber(row.FirstCommitLatencyMs),
                 NullableNumber(row.FirstRenderLatencyMs),
+                NullableNumber(row.FirstRenderAfterVoiceOnsetMs),
                 Number(row.AverageRenderOutputDurationMs),
                 Number(row.AverageInterCommitIntervalMs),
                 Number(row.AverageInterRenderIntervalMs),
@@ -295,12 +314,15 @@ public sealed class NotepadStandardAllAudioReportE2ETests
         sb.AppendLine($"- Average output fidelity WER vs reconstructed committed transcript: {report.AverageOutputFidelityWer:P2}");
         sb.AppendLine($"- Average output fidelity CER vs reconstructed committed transcript: {report.AverageOutputFidelityCer:P2}");
         sb.AppendLine($"- Average ASR first-interim latency: {report.AverageFirstInterimLatencyMs:F0} ms");
+        sb.AppendLine($"- Average ASR first-interim latency after voice onset: {report.AverageFirstInterimAfterVoiceOnsetMs:F0} ms");
         sb.AppendLine($"- Average first commit availability latency: {report.AverageFirstCommitLatencyMs:F0} ms");
         sb.AppendLine($"- Average first render completion latency: {report.AverageFirstRenderLatencyMs:F0} ms");
+        sb.AppendLine($"- Average first render completion latency after voice onset: {report.AverageFirstRenderAfterVoiceOnsetMs:F0} ms");
         sb.AppendLine($"- Average render output duration (commit availability to render completion): {report.AverageRenderOutputDurationMs:F0} ms");
         sb.AppendLine($"- Average inter-commit interval: {report.AverageInterCommitIntervalMs:F0} ms");
         sb.AppendLine($"- Average inter-render interval: {report.AverageInterRenderIntervalMs:F0} ms");
         sb.AppendLine($"- Estimated preview audio-token end-to-end latency: {report.AverageEstimatedPreviewTokenE2ELatencyMs:F0} ms");
+        sb.AppendLine($"- First estimated preview token end-to-end latency: {report.AverageFirstEstimatedPreviewTokenE2ELatencyMs:F0} ms");
         sb.AppendLine($"- Estimated committed-token availability latency: {report.AverageEstimatedCommittedTokenAvailabilityLatencyMs:F0} ms");
         sb.AppendLine($"- Average output fidelity overlap: {report.AverageOutputFidelityOverlapRate:P2}");
         sb.AppendLine($"- Average output fidelity token ratio: {report.AverageOutputFidelityTokenRatio:P2}");
@@ -310,14 +332,14 @@ public sealed class NotepadStandardAllAudioReportE2ETests
         sb.AppendLine($"- Unexpected post-processing event cases: {report.UnexpectedPostProcessingEventCases}");
         sb.AppendLine($"- Render backend: {string.Join(", ", report.Rows.Select(row => row.RenderBackend).Distinct(StringComparer.Ordinal))}");
         sb.AppendLine();
-        sb.AppendLine("| Case | ASR WER | Output WER | ASR first interim | First commit | First render | Render output | Inter-commit | Inter-render | Est. preview token E2E | Est. commit token availability | Output overlap | Output token ratio | Artifacts | Backend | Completed |");
-        sb.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |");
+        sb.AppendLine("| Case | ASR WER | Output WER | Voice onset | ASR first interim | First render after voice onset | First commit | First render | Render output | Inter-commit | Inter-render | Est. preview token E2E | Est. commit token availability | Output overlap | Output token ratio | Artifacts | Backend | Completed |");
+        sb.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |");
         foreach (var row in report.Rows)
         {
             var artifacts = BuildArtifactSummary(row);
             sb.AppendLine(
-                $"| {row.CaseId} | {row.AsrWer:P1} | {row.OutputFidelityWer:P1} | " +
-                $"{FormatNullableMs(row.FirstInterimLatencyMs)} | {FormatNullableMs(row.FirstCommitLatencyMs)} | " +
+                $"| {row.CaseId} | {row.AsrWer:P1} | {row.OutputFidelityWer:P1} | {row.VoiceOnsetMs:F0} ms | " +
+                $"{FormatNullableMs(row.FirstInterimLatencyMs)} | {FormatNullableMs(row.FirstRenderAfterVoiceOnsetMs)} | {FormatNullableMs(row.FirstCommitLatencyMs)} | " +
                 $"{FormatNullableMs(row.FirstRenderLatencyMs)} | {row.AverageRenderOutputDurationMs:F0} ms | " +
                 $"{row.AverageInterCommitIntervalMs:F0} ms | {row.AverageInterRenderIntervalMs:F0} ms | " +
                 $"{row.AverageEstimatedPreviewTokenE2ELatencyMs:F0} ms | {row.AverageEstimatedCommittedTokenAvailabilityLatencyMs:F0} ms | {row.OutputFidelityOverlapRate:P1} | " +
@@ -573,13 +595,19 @@ public sealed class NotepadStandardAllAudioReportE2ETests
 
         public double AverageEstimatedPreviewTokenE2ELatencyMs { get; init; }
 
+        public double AverageFirstEstimatedPreviewTokenE2ELatencyMs { get; init; }
+
         public double AverageEstimatedCommittedTokenAvailabilityLatencyMs { get; init; }
 
         public double AverageFirstInterimLatencyMs { get; init; }
 
+        public double AverageFirstInterimAfterVoiceOnsetMs { get; init; }
+
         public double AverageFirstCommitLatencyMs { get; init; }
 
         public double AverageFirstRenderLatencyMs { get; init; }
+
+        public double AverageFirstRenderAfterVoiceOnsetMs { get; init; }
 
         public double AverageRenderOutputDurationMs { get; init; }
 
@@ -612,10 +640,13 @@ public sealed class NotepadStandardAllAudioReportE2ETests
                 AverageOutputFidelityWer = Average(completed, row => row.OutputFidelityWer),
                 AverageOutputFidelityCer = Average(completed, row => row.OutputFidelityCer),
                 AverageEstimatedPreviewTokenE2ELatencyMs = Average(completed, row => row.AverageEstimatedPreviewTokenE2ELatencyMs),
+                AverageFirstEstimatedPreviewTokenE2ELatencyMs = Average(completed, row => row.FirstEstimatedPreviewTokenE2ELatencyMs),
                 AverageEstimatedCommittedTokenAvailabilityLatencyMs = Average(completed, row => row.AverageEstimatedCommittedTokenAvailabilityLatencyMs),
                 AverageFirstInterimLatencyMs = AverageNullable(completed, row => row.FirstInterimLatencyMs),
+                AverageFirstInterimAfterVoiceOnsetMs = AverageNullable(completed, row => row.FirstInterimAfterVoiceOnsetMs),
                 AverageFirstCommitLatencyMs = AverageNullable(completed, row => row.FirstCommitLatencyMs),
                 AverageFirstRenderLatencyMs = AverageNullable(completed, row => row.FirstRenderLatencyMs),
+                AverageFirstRenderAfterVoiceOnsetMs = AverageNullable(completed, row => row.FirstRenderAfterVoiceOnsetMs),
                 AverageRenderOutputDurationMs = Average(completed, row => row.AverageRenderOutputDurationMs),
                 AverageInterCommitIntervalMs = Average(completed, row => row.AverageInterCommitIntervalMs),
                 AverageInterRenderIntervalMs = Average(completed, row => row.AverageInterRenderIntervalMs),
@@ -649,6 +680,8 @@ public sealed class NotepadStandardAllAudioReportE2ETests
         public string Tags { get; set; } = string.Empty;
 
         public double AudioDurationSeconds { get; set; }
+
+        public double VoiceOnsetMs { get; set; }
 
         public string ExpectedRawTranscript { get; set; } = string.Empty;
 
@@ -690,9 +723,13 @@ public sealed class NotepadStandardAllAudioReportE2ETests
 
         public double? FirstInterimLatencyMs { get; set; }
 
+        public double? FirstInterimAfterVoiceOnsetMs { get; set; }
+
         public double? FirstCommitLatencyMs { get; set; }
 
         public double? FirstRenderLatencyMs { get; set; }
+
+        public double? FirstRenderAfterVoiceOnsetMs { get; set; }
 
         public double AudioStreamingCompletedMs { get; set; }
 
@@ -717,6 +754,8 @@ public sealed class NotepadStandardAllAudioReportE2ETests
         public double OutputFidelityTokenRatio { get; set; }
 
         public double AverageEstimatedPreviewTokenE2ELatencyMs { get; set; }
+
+        public double FirstEstimatedPreviewTokenE2ELatencyMs { get; set; }
 
         public double AverageEstimatedCommittedTokenAvailabilityLatencyMs { get; set; }
 

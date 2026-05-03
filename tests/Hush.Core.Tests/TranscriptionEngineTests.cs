@@ -88,6 +88,7 @@ public sealed class TranscriptionEngineTests
         var results = await CollectAsync(engine.GetResultStreamAsync());
 
         Assert.Equal("fr", factory.Session.StartLanguage);
+        Assert.Equal(12, factory.Session.StartPushQueueCapacity);
         Assert.Collection(
             results,
             item =>
@@ -110,6 +111,22 @@ public sealed class TranscriptionEngineTests
                 Assert.Equal(" tout le monde", item.CommittedDelta);
                 Assert.True(item.IsFinal);
             });
+    }
+
+    [Fact]
+    public async Task StartSessionAsync_UsesConfiguredLiveAudioPushQueueCapacity()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory)
+        {
+            LiveAudioPushQueueCapacity = 4
+        };
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync();
+        await engine.StopSessionAsync();
+
+        Assert.Equal(4, factory.Session.StartPushQueueCapacity);
     }
 
     [Fact]
@@ -148,6 +165,92 @@ public sealed class TranscriptionEngineTests
                 Assert.Equal(" tout le monde", item.CommittedDelta);
                 Assert.True(item.IsFinal);
             });
+    }
+
+    [Fact]
+    public async Task LiveSession_InterimChunksExposeRawDraftPreviewWithoutChangingCommit()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello   wor", false, TimeSpan.Zero, TimeSpan.FromMilliseconds(350)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world", true, TimeSpan.Zero, TimeSpan.FromMilliseconds(700)));
+        await engine.StopSessionAsync();
+
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        Assert.Collection(
+            results,
+            interim =>
+            {
+                Assert.Equal("hello wor", interim.DisplayText);
+                Assert.Equal("hello", interim.CommittedDelta);
+                Assert.Equal("hello   wor", interim.DraftPreviewText);
+                Assert.False(interim.IsFinal);
+            },
+            final =>
+            {
+                Assert.Equal("hello world", final.DisplayText);
+                Assert.Equal(" world", final.CommittedDelta);
+                Assert.Null(final.DraftPreviewText);
+                Assert.True(final.IsFinal);
+            });
+    }
+
+    [Fact]
+    public async Task LiveSession_FilteredNonFinalChunk_EmitsDraftOnlyPreview()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "oooooooooooo hello", false, TimeSpan.Zero, TimeSpan.FromMilliseconds(250)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello world", true, TimeSpan.Zero, TimeSpan.FromMilliseconds(700)));
+        await engine.StopSessionAsync();
+
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        Assert.Collection(
+            results,
+            draftOnly =>
+            {
+                Assert.Equal(string.Empty, draftOnly.DisplayText);
+                Assert.Equal(string.Empty, draftOnly.CommittedDelta);
+                Assert.Equal("oooooooooooo hello", draftOnly.DraftPreviewText);
+                Assert.False(draftOnly.IsFinal);
+                Assert.Equal(0, draftOnly.BackspaceCount);
+            },
+            final =>
+            {
+                Assert.Equal("hello world", final.DisplayText);
+                Assert.Equal("hello world", final.CommittedDelta);
+                Assert.Null(final.DraftPreviewText);
+                Assert.True(final.IsFinal);
+            });
+    }
+
+    [Fact]
+    public async Task LiveSession_FilteredFinalAndNoiseChunks_DoNotCreateCommittedOutput()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory);
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+        factory.Session.Emit(new LiveAudioSessionChunk("[silence]", false, null, null));
+        factory.Session.Emit(new LiveAudioSessionChunk("[silence]", true, null, null));
+        await engine.StopSessionAsync();
+
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        Assert.Empty(results);
     }
 
     [Fact]
@@ -797,12 +900,19 @@ file sealed class FakeLiveAudioSession : ILiveAudioSession
 
     public string? ModelId { get; set; }
     public string? StartLanguage { get; private set; }
+    public int StartPushQueueCapacity { get; private set; }
     public List<byte[]> AppendedAudio { get; } = new();
     public Func<FakeLiveAudioSession, Task>? ConfigureStop { get; set; }
 
-    public Task StartAsync(int sampleRate, int channels, string? language, CancellationToken cancellationToken = default)
+    public Task StartAsync(
+        int sampleRate,
+        int channels,
+        string? language,
+        int pushQueueCapacity,
+        CancellationToken cancellationToken = default)
     {
         StartLanguage = language;
+        StartPushQueueCapacity = pushQueueCapacity;
         return Task.CompletedTask;
     }
 

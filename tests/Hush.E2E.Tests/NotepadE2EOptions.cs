@@ -4,6 +4,8 @@ namespace Hush.E2E.Tests;
 
 internal static class NotepadE2EOptions
 {
+    private static readonly char[] CaseIdSeparators = { ',', ';', '\r', '\n' };
+
     public static bool RunNotepadE2E => IsTruthy(Environment.GetEnvironmentVariable("HUSH_RUN_NOTEPAD_E2E"));
 
     public static bool RunAllAudioReport =>
@@ -17,7 +19,14 @@ internal static class NotepadE2EOptions
             ? value
             : "en_rt_003_fillers_correction";
 
+    public static IReadOnlyList<string> ReportCaseIds =>
+        ParseReportCaseIds(Environment.GetEnvironmentVariable("HUSH_NOTEPAD_E2E_CASES"));
+
     public static double DelayScale => GetDouble("HUSH_NOTEPAD_E2E_DELAY_SCALE", 0.0);
+
+    public static int LiveAudioPushQueueCapacity => GetInt("HUSH_NOTEPAD_E2E_PUSH_QUEUE_CAPACITY", 12);
+
+    public static int AudioChunkDurationMilliseconds => GetInt("HUSH_NOTEPAD_E2E_AUDIO_CHUNK_MS", 50);
 
     public static TimeSpan Timeout => TimeSpan.FromMinutes(GetDouble("HUSH_NOTEPAD_E2E_TIMEOUT_MINUTES", 10.0));
 
@@ -47,6 +56,42 @@ internal static class NotepadE2EOptions
             ? value
             : "qwen3-0.6b";
 
+    internal static IReadOnlyList<string> ParseReportCaseIds(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured))
+            return Array.Empty<string>();
+
+        return configured
+            .Split(CaseIdSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    internal static IReadOnlyList<SyntheticAudioCase> FilterReportCases(IReadOnlyList<SyntheticAudioCase> cases) =>
+        FilterReportCases(cases, ReportCaseIds);
+
+    internal static IReadOnlyList<SyntheticAudioCase> FilterReportCases(
+        IReadOnlyList<SyntheticAudioCase> cases,
+        IReadOnlyList<string> requestedIds)
+    {
+        if (requestedIds.Count == 0)
+            return cases;
+
+        var casesById = cases.ToDictionary(testCase => testCase.Id, StringComparer.OrdinalIgnoreCase);
+        var missingIds = requestedIds
+            .Where(id => !casesById.ContainsKey(id))
+            .ToArray();
+
+        Assert.True(
+            missingIds.Length == 0,
+            $"HUSH_NOTEPAD_E2E_CASES requested unknown case(s): {string.Join(", ", missingIds)}. " +
+            $"Available cases: {string.Join(", ", cases.Select(testCase => testCase.Id).OrderBy(id => id, StringComparer.Ordinal))}.");
+
+        return requestedIds
+            .Select(id => casesById[id])
+            .ToArray();
+    }
+
     private static bool IsTruthy(string? value) =>
         value is not null &&
         (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
@@ -58,6 +103,14 @@ internal static class NotepadE2EOptions
     {
         var value = Environment.GetEnvironmentVariable(name);
         return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static int GetInt(string name, int fallback)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0
             ? parsed
             : fallback;
     }

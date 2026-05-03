@@ -62,6 +62,26 @@ internal sealed record WavPcmFile(
             pcmData ?? throw new InvalidDataException($"WAV data chunk missing in {filePath}."));
     }
 
+    public double DetectVoiceOnsetMilliseconds(short amplitudeThreshold = 500)
+    {
+        if (AudioFormat != 1 || BitsPerSample != 16 || Channels <= 0 || SampleRate <= 0)
+            return 0;
+
+        int frameSizeBytes = Channels * 2;
+        for (int offset = 0; offset <= PcmData.Length - frameSizeBytes; offset += frameSizeBytes)
+        {
+            for (int channel = 0; channel < Channels; channel++)
+            {
+                int sampleOffset = offset + channel * 2;
+                short sample = BinaryPrimitives.ReadInt16LittleEndian(PcmData.AsSpan(sampleOffset, 2));
+                if (Math.Abs((int)sample) >= amplitudeThreshold)
+                    return (offset / frameSizeBytes) * 1000.0 / SampleRate;
+            }
+        }
+
+        return 0;
+    }
+
     private static void AssertChunk(byte[] bytes, int offset, string expected, string filePath)
     {
         var actual = Encoding.ASCII.GetString(bytes, offset, expected.Length);

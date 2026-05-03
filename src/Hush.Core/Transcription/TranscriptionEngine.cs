@@ -57,11 +57,17 @@ public sealed class TranscriptionEngine : ITranscriptionEngine, IStreamingCommit
     // typing partial tokens. DictationSession lowers this to zero only for
     // stable-commit output paths that cannot render display-only preview text.
     private const int DefaultStreamingTrailingWordHoldback = 1;
+    // Keep the Foundry live-audio push queue close to the user's perceptual
+    // latency target instead of the SDK default, which can buffer several seconds
+    // of 50 ms audio chunks before applying backpressure.
+    private const int DefaultLiveAudioPushQueueCapacity = 12;
     // Allow a small timestamp overlap when the SDK rolls windows forward so a
     // later chunk can still be treated as additive speech instead of a rewrite.
     private static readonly TimeSpan DetachedChunkOverlapTolerance = TimeSpan.FromMilliseconds(150);
 
     public int StreamingTrailingWordHoldback { get; set; } = DefaultStreamingTrailingWordHoldback;
+
+    public int LiveAudioPushQueueCapacity { get; set; } = DefaultLiveAudioPushQueueCapacity;
 
     // ASR hallucination / silence tokens that should never be typed or shown.
     private static readonly HashSet<string> NoiseTokens =
@@ -286,7 +292,12 @@ public sealed class TranscriptionEngine : ITranscriptionEngine, IStreamingCommit
 
     private async Task StartLiveSessionAsync(int sampleRate, int channels, string language, CancellationToken cancellationToken)
     {
-        await _liveSession!.StartAsync(sampleRate, channels, language, cancellationToken).ConfigureAwait(false);
+        await _liveSession!.StartAsync(
+            sampleRate,
+            channels,
+            language,
+            LiveAudioPushQueueCapacity,
+            cancellationToken).ConfigureAwait(false);
         _resultPumpTask = Task.Run(() => PumpResultsAsync(_liveSession, _resultChannel!), CancellationToken.None);
     }
 
@@ -312,6 +323,10 @@ public sealed class TranscriptionEngine : ITranscriptionEngine, IStreamingCommit
                     "SDK chunk #{Index}: IsFinal={IsFinal} text=\"{Text}\" start={Start} end={End}",
                     chunkIndex, chunk.IsFinal, chunk.Text, chunk.StartTime, chunk.EndTime);
 
+                var draftPreviewText = !chunk.IsFinal && !string.IsNullOrWhiteSpace(chunk.Text)
+                    ? chunk.Text
+                    : null;
+
                 // Track the growing committed text length — key metric for O(n) growth diagnosis.
                 PerformanceProfiler.Gauge("Engine.CommittedTextLen", _committedText.Length);
                 PerformanceProfiler.Gauge("Engine.SegmentBaseLen", _segmentBase.Length);
@@ -323,13 +338,34 @@ public sealed class TranscriptionEngine : ITranscriptionEngine, IStreamingCommit
 
                 if (emitted)
                 {
+                    if (!string.IsNullOrEmpty(draftPreviewText))
+                        result = result with { DraftPreviewText = draftPreviewText };
+
                     _logger.LogDebug(
-                        "Emitting result #{Index}: display=\"{Display}\" delta=\"{Delta}\" bs={BS} segBase=\"{SegBase}\"",
-                        chunkIndex, result.DisplayText, result.CommittedDelta, result.BackspaceCount, _segmentBase);
+                        "Emitting result #{Index}: display=\"{Display}\" draft=\"{Draft}\" delta=\"{Delta}\" bs={BS} segBase=\"{SegBase}\"",
+                        chunkIndex, result.DisplayText, result.DraftPreviewText, result.CommittedDelta, result.BackspaceCount, _segmentBase);
                     resultChannel.Writer.TryWrite(result);
                 }
                 else
                 {
+                    if (ShouldEmitDraftOnlyResult(chunk))
+                    {
+                        var draftOnlyResult = new TranscriptionResult(
+                            string.Empty,
+                            string.Empty,
+                            IsFinal: false,
+                            chunk.StartTime,
+                            chunk.EndTime)
+                        {
+                            DraftPreviewText = chunk.Text
+                        };
+
+                        _logger.LogDebug(
+                            "Emitting draft-only result #{Index}: draft=\"{Draft}\"",
+                            chunkIndex, draftOnlyResult.DraftPreviewText);
+                        resultChannel.Writer.TryWrite(draftOnlyResult);
+                    }
+
                     _logger.LogDebug("Chunk #{Index} filtered out by TryNormalizeChunk.", chunkIndex);
                 }
             }
@@ -359,6 +395,22 @@ public sealed class TranscriptionEngine : ITranscriptionEngine, IStreamingCommit
         (text.StartsWith('[') && text.EndsWith(']')) ||
         (text.StartsWith('(') && text.EndsWith(')')) ||
         IsRepetitionArtifact(text);
+
+    private static bool ShouldEmitDraftOnlyResult(LiveAudioSessionChunk chunk)
+    {
+        if (chunk.IsFinal || string.IsNullOrWhiteSpace(chunk.Text))
+            return false;
+
+        var normalizedText = NormalizeText(chunk.Text);
+        if (string.IsNullOrWhiteSpace(normalizedText) || IsNoiseToken(normalizedText))
+            return false;
+
+        var words = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Any(word =>
+            !IsNoiseToken(word) &&
+            !IsEntirelyDegenerate(word) &&
+            !IsRepetitionArtifact(word));
+    }
 
     /// <inheritdoc/>
     public async Task StopSessionAsync(CancellationToken cancellationToken = default)

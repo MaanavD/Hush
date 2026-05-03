@@ -746,6 +746,228 @@ public sealed class DictationSessionTests
     }
 
     [Fact]
+    public async Task StreamingMode_WithPreviewOutput_RendersDraftPreviewWithoutCommittingIt()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<IPreviewTextReplacementOutputService>();
+        var transcriptBufferMock = new Mock<ITranscriptBuffer>();
+        var operations = new List<string>();
+        var interimTexts = new List<string>();
+        var committedChunks = new List<string>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[]
+            {
+                new TranscriptionResult("hello world", string.Empty, IsFinal: false)
+                {
+                    DraftPreviewText = "hello wor"
+                },
+                new TranscriptionResult("hello world", "hello world", IsFinal: true)
+            }.ToAsyncEnumerable());
+
+        outputMock
+            .Setup(o => o.ReplacePreviewTextAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>()))
+            .Returns<string, string, CancellationToken, bool>((current, target, _, _) =>
+            {
+                operations.Add($"preview:{current}->{target}");
+                return Task.CompletedTask;
+            });
+        outputMock
+            .Setup(o => o.TypePreviewTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.ReplaceTextAsync(
+                It.IsAny<int>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(),
+                It.IsAny<bool>(),
+                It.IsAny<string?>(),
+                It.IsAny<bool>(),
+                It.IsAny<TextReplacementKind>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(
+            engineMock.Object,
+            captureMock.Object,
+            outputMock.Object,
+            transcriptBuffer: transcriptBufferMock.Object);
+        session.OnInterimText += interimTexts.Add;
+        session.OnCommittedChunk += committedChunks.Add;
+
+        await session.StartAsync(streamingCommit: true, outputMode: DictationOutputMode.Streaming);
+        await session.StopAsync();
+
+        Assert.Equal(
+            new[]
+            {
+                "preview:->hello wor",
+                "preview:hello wor->hello world"
+            },
+            operations);
+        Assert.Equal(new[] { "hello wor", "hello world" }, interimTexts);
+        Assert.Equal(new[] { "hello world" }, committedChunks);
+        transcriptBufferMock.Verify(buffer => buffer.Push("hello world"), Times.Once);
+        outputMock.Verify(
+            o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StreamingMode_WithPreviewOutput_RendersDraftOnlyPreview()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<IPreviewTextReplacementOutputService>();
+        var operations = new List<string>();
+        var interimTexts = new List<string>();
+        var committedChunks = new List<string>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[]
+            {
+                new TranscriptionResult(string.Empty, string.Empty, IsFinal: false)
+                {
+                    DraftPreviewText = "hello wor"
+                },
+                new TranscriptionResult("hello world", "hello world", IsFinal: true)
+            }.ToAsyncEnumerable());
+
+        outputMock
+            .Setup(o => o.ReplacePreviewTextAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>()))
+            .Returns<string, string, CancellationToken, bool>((current, target, _, _) =>
+            {
+                operations.Add($"preview:{current}->{target}");
+                return Task.CompletedTask;
+            });
+        outputMock
+            .Setup(o => o.TypePreviewTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.ReplaceTextAsync(
+                It.IsAny<int>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(),
+                It.IsAny<bool>(),
+                It.IsAny<string?>(),
+                It.IsAny<bool>(),
+                It.IsAny<TextReplacementKind>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
+        session.OnInterimText += interimTexts.Add;
+        session.OnCommittedChunk += committedChunks.Add;
+
+        await session.StartAsync(streamingCommit: true, outputMode: DictationOutputMode.Streaming);
+        await session.StopAsync();
+
+        Assert.Equal(
+            new[]
+            {
+                "preview:->hello wor",
+                "preview:hello wor->hello world"
+            },
+            operations);
+        Assert.Equal(new[] { "hello wor", "hello world" }, interimTexts);
+        Assert.Equal(new[] { "hello world" }, committedChunks);
+        outputMock.Verify(
+            o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StreamingMode_WithPreviewOutput_FallsBackToDisplayForRollingSuffixDraft()
+    {
+        var engineMock = new Mock<ITranscriptionEngine>();
+        var captureMock = new Mock<IAudioCaptureService>();
+        var outputMock = new Mock<IPreviewTextReplacementOutputService>();
+        var operations = new List<string>();
+
+        engineMock
+            .Setup(e => e.StartSessionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        engineMock
+            .Setup(e => e.GetResultStreamAsync(It.IsAny<CancellationToken>()))
+            .Returns(new[]
+            {
+                new TranscriptionResult("hello world", string.Empty, IsFinal: false)
+                {
+                    DraftPreviewText = "world"
+                },
+                new TranscriptionResult("hello world", "hello world", IsFinal: true)
+            }.ToAsyncEnumerable());
+
+        outputMock
+            .Setup(o => o.ReplacePreviewTextAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>()))
+            .Returns<string, string, CancellationToken, bool>((current, target, _, _) =>
+            {
+                operations.Add($"preview:{current}->{target}");
+                return Task.CompletedTask;
+            });
+        outputMock
+            .Setup(o => o.TypePreviewTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.TypeTextAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.SendBackspacesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        outputMock
+            .Setup(o => o.ReplaceTextAsync(
+                It.IsAny<int>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(),
+                It.IsAny<bool>(),
+                It.IsAny<string?>(),
+                It.IsAny<bool>(),
+                It.IsAny<TextReplacementKind>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new DictationSession(engineMock.Object, captureMock.Object, outputMock.Object);
+
+        await session.StartAsync(streamingCommit: true, outputMode: DictationOutputMode.Streaming);
+        await session.StopAsync();
+
+        Assert.Equal(new[] { "preview:->hello world" }, operations);
+    }
+
+    [Fact]
     public async Task CleanStreamingPreview_TypesStablePreviewThenReplacesWithRewriteBeforeAutoSubmit()
     {
         var engineMock = new Mock<ITranscriptionEngine>();

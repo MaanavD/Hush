@@ -13,7 +13,12 @@ internal interface ILiveAudioSessionFactory
 
 internal interface ILiveAudioSession : IAsyncDisposable
 {
-    Task StartAsync(int sampleRate, int channels, string? language, CancellationToken cancellationToken = default);
+    Task StartAsync(
+        int sampleRate,
+        int channels,
+        string? language,
+        int pushQueueCapacity,
+        CancellationToken cancellationToken = default);
     ValueTask AppendAsync(ReadOnlyMemory<byte> pcmData, CancellationToken cancellationToken = default);
     IAsyncEnumerable<LiveAudioSessionChunk> GetTranscriptionStreamAsync(CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);
@@ -72,6 +77,7 @@ internal sealed class ManagedLiveAudioSession : ILiveAudioSession
         int sampleRate,
         int channels,
         string? language,
+        int pushQueueCapacity,
         CancellationToken cancellationToken = default)
     {
         if (_started && !_stopped)
@@ -81,6 +87,8 @@ internal sealed class ManagedLiveAudioSession : ILiveAudioSession
         _session.Settings.SampleRate = sampleRate;
         _session.Settings.Channels = channels;
         _session.Settings.BitsPerSample = BitsPerSample;
+        if (pushQueueCapacity > 0)
+            _session.Settings.PushQueueCapacity = pushQueueCapacity;
 
         var normalizedLanguage = NormalizeLanguageHint(language);
         if (!string.IsNullOrWhiteSpace(normalizedLanguage))
@@ -93,8 +101,8 @@ internal sealed class ManagedLiveAudioSession : ILiveAudioSession
         _streamConsumed = false;
 
         _logger.LogInformation(
-            "Managed live audio session started (sampleRate={SampleRate}, channels={Channels}, language={Language}).",
-            sampleRate, channels, normalizedLanguage ?? "default");
+            "Managed live audio session started (sampleRate={SampleRate}, channels={Channels}, language={Language}, pushQueueCapacity={PushQueueCapacity}).",
+            sampleRate, channels, normalizedLanguage ?? "default", pushQueueCapacity);
     }
 
     internal static string? NormalizeLanguageHint(string? language)

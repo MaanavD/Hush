@@ -275,9 +275,9 @@ public sealed class DictationSession : IDictationSession
         {
             await foreach (var result in _engine.GetResultStreamAsync(cancellationToken))
             {
-                var targetText = result.DisplayText ?? string.Empty;
-                if (!string.IsNullOrEmpty(targetText))
-                    OnInterimText?.Invoke(targetText);
+                var targetPreviewText = GetPreviewText(result);
+                if (!string.IsNullOrEmpty(targetPreviewText))
+                    OnInterimText?.Invoke(targetPreviewText);
 
                 if (result.BackspaceCount > 0 && rawTranscript.Length > 0)
                 {
@@ -293,8 +293,8 @@ public sealed class DictationSession : IDictationSession
                         OnCommittedChunk?.Invoke(committedChunk);
                 }
 
-                var previewText = !string.IsNullOrEmpty(targetText)
-                    ? targetText
+                var previewText = !string.IsNullOrEmpty(targetPreviewText)
+                    ? targetPreviewText
                     : rawTranscript.ToString();
 
                 if (!string.IsNullOrEmpty(previewText))
@@ -354,6 +354,32 @@ public sealed class DictationSession : IDictationSession
         if (!string.IsNullOrEmpty(finalText))
             _sessionAccumulated.Append(finalText);
     }
+
+    private static string GetPreviewText(TranscriptionResult result)
+    {
+        var displayText = result.DisplayText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(result.DraftPreviewText))
+            return displayText;
+
+        if (string.IsNullOrEmpty(displayText))
+            return result.DraftPreviewText;
+
+        return IsCompatibleDraftPreview(result.DraftPreviewText, displayText)
+            ? result.DraftPreviewText
+            : displayText;
+    }
+
+    private static bool IsCompatibleDraftPreview(string draftPreviewText, string displayText)
+    {
+        var comparableDraft = NormalizePreviewComparisonText(draftPreviewText);
+        var comparableDisplay = NormalizePreviewComparisonText(displayText);
+
+        return comparableDisplay.StartsWith(comparableDraft, StringComparison.OrdinalIgnoreCase)
+            || comparableDraft.StartsWith(comparableDisplay, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizePreviewComparisonText(string text)
+        => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     private async Task CleanStreamingPreviewTranscriptionLoopAsync(CancellationToken cancellationToken)
     {

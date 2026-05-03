@@ -4,20 +4,26 @@ namespace Hush.E2E.Tests;
 
 internal sealed class WavFileAudioCaptureService : IAudioCaptureService
 {
-    private const int ChunkDurationMilliseconds = 50;
+    private const int DefaultChunkDurationMilliseconds = 50;
 
     private readonly WavPcmFile _wav;
     private readonly double _delayScale;
+    private readonly int _chunkDurationMilliseconds;
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private CancellationTokenSource? _streamCts;
 
-    public WavFileAudioCaptureService(WavPcmFile wav, double delayScale)
+    public WavFileAudioCaptureService(WavPcmFile wav, double delayScale, int chunkDurationMilliseconds = DefaultChunkDurationMilliseconds)
     {
         _wav = wav;
         _delayScale = delayScale;
+        _chunkDurationMilliseconds = chunkDurationMilliseconds > 0
+            ? chunkDurationMilliseconds
+            : DefaultChunkDurationMilliseconds;
     }
 
     public event Action<float>? AudioLevelChanged;
+
+    public event Action? AudioStreamingStarted;
 
     public int DeviceIndex { get; set; } = -1;
 
@@ -51,20 +57,27 @@ internal sealed class WavFileAudioCaptureService : IAudioCaptureService
         try
         {
             var bytesPerSampleFrame = _wav.Channels * (_wav.BitsPerSample / 8);
-            var chunkSize = _wav.SampleRate * bytesPerSampleFrame * ChunkDurationMilliseconds / 1000;
+            var chunkSize = _wav.SampleRate * bytesPerSampleFrame * _chunkDurationMilliseconds / 1000;
             if (chunkSize <= 0)
                 throw new InvalidOperationException($"Invalid WAV chunk size for {_wav.FilePath}.");
 
+            var notifiedStart = false;
             for (int offset = 0; offset < _wav.PcmData.Length; offset += chunkSize)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var length = Math.Min(chunkSize, _wav.PcmData.Length - offset);
                 var chunk = _wav.PcmData.AsMemory(offset, length);
+                if (!notifiedStart)
+                {
+                    AudioStreamingStarted?.Invoke();
+                    notifiedStart = true;
+                }
+
                 AudioLevelChanged?.Invoke(CalculateRmsLevel(chunk.Span));
                 await audioAvailable(chunk, cancellationToken);
 
                 if (_delayScale > 0)
-                    await Task.Delay(TimeSpan.FromMilliseconds(ChunkDurationMilliseconds * _delayScale), cancellationToken);
+                    await Task.Delay(TimeSpan.FromMilliseconds(_chunkDurationMilliseconds * _delayScale), cancellationToken);
             }
 
             _completion.TrySetResult();
