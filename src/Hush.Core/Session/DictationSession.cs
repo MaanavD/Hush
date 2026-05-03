@@ -41,6 +41,8 @@ public sealed class DictationSession : IDictationSession
     private int _sessionErrorRaised;
     private AutoSubmitKey _autoSubmitKey;
     private readonly StringBuilder _sessionAccumulated = new();
+    private IStreamingCommitPolicy? _activeStreamingCommitPolicy;
+    private int? _previousStreamingTrailingWordHoldback;
 
     private static readonly char[] SpinnerFrames = { '|', '/', '\u2014', '\\' };
     private const int SpinnerIntervalMs = 120;
@@ -105,12 +107,24 @@ public sealed class DictationSession : IDictationSession
         var engineStreamingCommit = _outputMode == DictationOutputMode.CleanStreamingPreview
             ? true
             : streamingCommit;
-        await _engine.StartSessionAsync(language: language, streamingCommit: engineStreamingCommit, cancellationToken: cts.Token);
+        ConfigureStreamingCommitPolicyForSession(engineStreamingCommit);
+        try
+        {
+            await _engine.StartSessionAsync(language: language, streamingCommit: engineStreamingCommit, cancellationToken: cts.Token);
+        }
+        catch
+        {
+            RestoreStreamingCommitPolicy();
+            throw;
+        }
 
         // StopAsync may have been called while StartSessionAsync was awaited.
         // If the token was cancelled, bail out — the session is already stopping.
         if (cts.IsCancellationRequested)
+        {
+            RestoreStreamingCommitPolicy();
             return;
+        }
 
         // Wire audio capture to the engine's append method.
         _capture.AudioLevelChanged += _audioLevelForwarder;
@@ -121,6 +135,7 @@ public sealed class DictationSession : IDictationSession
         catch
         {
             _capture.AudioLevelChanged -= _audioLevelForwarder;
+            RestoreStreamingCommitPolicy();
             throw;
         }
 
@@ -141,6 +156,38 @@ public sealed class DictationSession : IDictationSession
             ? showSpinner ? DictationOutputMode.Spinner : DictationOutputMode.Streaming
             : outputMode;
 
+    private void ConfigureStreamingCommitPolicyForSession(bool engineStreamingCommit)
+    {
+        RestoreStreamingCommitPolicy();
+
+        if (!engineStreamingCommit
+            || !ShouldLowerEngineHoldbackForSession()
+            || _engine is not IStreamingCommitPolicy streamingCommitPolicy)
+        {
+            return;
+        }
+
+        _activeStreamingCommitPolicy = streamingCommitPolicy;
+        _previousStreamingTrailingWordHoldback = streamingCommitPolicy.StreamingTrailingWordHoldback;
+        streamingCommitPolicy.StreamingTrailingWordHoldback = 0;
+    }
+
+    private bool ShouldLowerEngineHoldbackForSession()
+        => _outputMode == DictationOutputMode.Streaming
+           && _output is not IPreviewTextOutputService;
+
+    private void RestoreStreamingCommitPolicy()
+    {
+        if (_activeStreamingCommitPolicy is not null
+            && _previousStreamingTrailingWordHoldback is int previousHoldback)
+        {
+            _activeStreamingCommitPolicy.StreamingTrailingWordHoldback = previousHoldback;
+        }
+
+        _activeStreamingCommitPolicy = null;
+        _previousStreamingTrailingWordHoldback = null;
+    }
+
     // ── Streaming path: commit only stable deltas ────────────────────────
     //
     // A brief settle delay is inserted between backspace events and the
@@ -158,7 +205,12 @@ public sealed class DictationSession : IDictationSession
     private const int TsfBackspaceMinMs = 60;
     private const int TsfBackspaceMaxMs = 600;
 
-    private async Task StreamingTranscriptionLoopAsync(CancellationToken cancellationToken)
+    private Task StreamingTranscriptionLoopAsync(CancellationToken cancellationToken)
+        => _output is IPreviewTextOutputService
+            ? StreamingPreviewTranscriptionLoopAsync(cancellationToken)
+            : StableCommitStreamingTranscriptionLoopAsync(cancellationToken);
+
+    private async Task StableCommitStreamingTranscriptionLoopAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -207,11 +259,139 @@ public sealed class DictationSession : IDictationSession
         }
     }
 
+    private async Task StreamingPreviewTranscriptionLoopAsync(CancellationToken cancellationToken)
+    {
+        var rawTranscript = new StringBuilder();
+        var visiblePreview = new StringBuilder();
+        var targetWindow = TargetWindowGuard.Capture();
+        bool preferOutputFullBufferFinalReplacement =
+            _output is IFullBufferFinalReplacementOutputService { PreferFullBufferFinalReplacement: true };
+        bool allowFullBufferFinalReplacement = preferOutputFullBufferFinalReplacement
+            || await CanUseFullBufferFinalReplacementAsync(
+                targetWindow,
+                cancellationToken);
+
+        try
+        {
+            await foreach (var result in _engine.GetResultStreamAsync(cancellationToken))
+            {
+                var targetPreviewText = GetPreviewText(result);
+                if (!string.IsNullOrEmpty(targetPreviewText))
+                    OnInterimText?.Invoke(targetPreviewText);
+
+                if (result.BackspaceCount > 0 && rawTranscript.Length > 0)
+                {
+                    int toRemove = Math.Min(result.BackspaceCount, rawTranscript.Length);
+                    rawTranscript.Remove(rawTranscript.Length - toRemove, toRemove);
+                }
+
+                if (!string.IsNullOrEmpty(result.CommittedDelta))
+                {
+                    rawTranscript.Append(result.CommittedDelta);
+                    var committedChunk = ApplySessionSubstitutions(result.CommittedDelta);
+                    if (!string.IsNullOrEmpty(committedChunk))
+                        OnCommittedChunk?.Invoke(committedChunk);
+                }
+
+                var previewText = !string.IsNullOrEmpty(targetPreviewText)
+                    ? targetPreviewText
+                    : rawTranscript.ToString();
+
+                if (!string.IsNullOrEmpty(previewText))
+                {
+                    var targetPreview = ApplySessionSubstitutions(previewText);
+                    await TryReplaceVisiblePreviewAsync(
+                        visiblePreview,
+                        targetPreview,
+                        targetWindow,
+                        cancellationToken,
+                        restoreForeground: false,
+                        skipModifierRestore: true);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown.
+        }
+        catch (Exception ex)
+        {
+            ReportSessionError(ex, "Transcription loop encountered an unhandled error.");
+        }
+
+        var finalText = ApplySessionSubstitutions(rawTranscript.ToString());
+        bool requiresFinalSynchronization = preferOutputFullBufferFinalReplacement
+            || await ShouldUseFullBufferFinalSynchronizationAsync(
+                allowFullBufferFinalReplacement,
+                targetWindow,
+                finalText,
+                visiblePreview.ToString(),
+                CancellationToken.None);
+
+        if (requiresFinalSynchronization
+            || !string.Equals(visiblePreview.ToString(), finalText, StringComparison.Ordinal))
+        {
+            bool replaced = await TryReplaceVisiblePreviewAsync(
+                visiblePreview,
+                finalText,
+                targetWindow,
+                CancellationToken.None,
+                restoreForeground: true,
+                skipModifierRestore: false,
+                boundLargeReplacementToCurrentLine: true,
+                allowFullBufferReplacement: requiresFinalSynchronization,
+                replacementKind: TextReplacementKind.FinalSynchronization);
+
+            if (!replaced)
+            {
+                _logger.LogWarning(
+                    "Leaving {Length}-char streaming preview unchanged because the target window lost focus and could not be restored.",
+                    visiblePreview.Length);
+                finalText = visiblePreview.ToString();
+            }
+        }
+
+        if (!string.IsNullOrEmpty(finalText))
+            _sessionAccumulated.Append(finalText);
+    }
+
+    private static string GetPreviewText(TranscriptionResult result)
+    {
+        var displayText = result.DisplayText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(result.DraftPreviewText))
+            return displayText;
+
+        if (string.IsNullOrEmpty(displayText))
+            return result.DraftPreviewText;
+
+        return IsCompatibleDraftPreview(result.DraftPreviewText, displayText)
+            ? result.DraftPreviewText
+            : displayText;
+    }
+
+    private static bool IsCompatibleDraftPreview(string draftPreviewText, string displayText)
+    {
+        var comparableDraft = NormalizePreviewComparisonText(draftPreviewText);
+        var comparableDisplay = NormalizePreviewComparisonText(displayText);
+
+        return comparableDisplay.StartsWith(comparableDraft, StringComparison.OrdinalIgnoreCase)
+            || comparableDraft.StartsWith(comparableDisplay, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizePreviewComparisonText(string text)
+        => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
     private async Task CleanStreamingPreviewTranscriptionLoopAsync(CancellationToken cancellationToken)
     {
         var rawTranscript = new StringBuilder();
         var visiblePreview = new StringBuilder();
         var targetWindow = TargetWindowGuard.Capture();
+        bool preferOutputFullBufferFinalReplacement =
+            _output is IFullBufferFinalReplacementOutputService { PreferFullBufferFinalReplacement: true };
+        bool allowFullBufferFinalReplacement = preferOutputFullBufferFinalReplacement
+            || await CanUseFullBufferFinalReplacementAsync(
+                targetWindow,
+                cancellationToken);
 
         try
         {
@@ -230,10 +410,17 @@ public sealed class DictationSession : IDictationSession
                 if (!string.IsNullOrEmpty(result.CommittedDelta))
                     rawTranscript.Append(result.CommittedDelta);
 
-                if (!result.IsFinal
-                    && (result.BackspaceCount > 0 || !string.IsNullOrEmpty(result.CommittedDelta)))
+                bool canRefreshFinalPreview = result.IsFinal
+                    && result.BackspaceCount == 0
+                    && !string.IsNullOrEmpty(result.CommittedDelta);
+                bool shouldRefreshPreview = !result.IsFinal || canRefreshFinalPreview;
+                var previewText = !string.IsNullOrEmpty(targetText)
+                    ? targetText
+                    : rawTranscript.ToString();
+
+                if (shouldRefreshPreview && !string.IsNullOrEmpty(previewText))
                 {
-                    var targetPreview = ApplySessionSubstitutions(rawTranscript.ToString());
+                    var targetPreview = ApplySessionSubstitutions(previewText);
                     await TryReplaceVisiblePreviewAsync(
                         visiblePreview,
                         targetPreview,
@@ -287,7 +474,15 @@ public sealed class DictationSession : IDictationSession
             }
         }
 
-        if (!string.Equals(visiblePreview.ToString(), finalText, StringComparison.Ordinal))
+        bool requiresFinalSynchronization = preferOutputFullBufferFinalReplacement
+            || await ShouldUseFullBufferFinalSynchronizationAsync(
+                allowFullBufferFinalReplacement,
+                targetWindow,
+                finalText,
+                visiblePreview.ToString(),
+                CancellationToken.None);
+        if (requiresFinalSynchronization
+            || !string.Equals(visiblePreview.ToString(), finalText, StringComparison.Ordinal))
         {
             bool replaced = await TryReplaceVisiblePreviewAsync(
                 visiblePreview,
@@ -296,7 +491,9 @@ public sealed class DictationSession : IDictationSession
                 CancellationToken.None,
                 restoreForeground: true,
                 skipModifierRestore: false,
-                boundLargeReplacementToCurrentLine: true);
+                boundLargeReplacementToCurrentLine: true,
+                allowFullBufferReplacement: requiresFinalSynchronization,
+                replacementKind: TextReplacementKind.FinalSynchronization);
 
             if (!replaced)
             {
@@ -311,6 +508,75 @@ public sealed class DictationSession : IDictationSession
             _sessionAccumulated.Append(finalText);
     }
 
+    private async Task<bool> CanUseFullBufferFinalReplacementAsync(
+        TargetWindowGuard.Handle targetWindow,
+        CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows()
+            || targetWindow.IsEmpty
+            || !ForegroundWindowDetector.IsTsfProblematic(targetWindow.Hwnd)
+            || !TargetWindowGuard.TryEnsureForeground(targetWindow))
+        {
+            return false;
+        }
+
+        var initialValue = await WindowsAutomationTextReplacer.TryReadFocusedValueAsync(
+            cancellationToken,
+            _logger);
+        bool canUseFullBuffer = initialValue is { Length: 0 };
+        if (canUseFullBuffer)
+            _logger.LogDebug("Clean-mode final replacement can use full-buffer UIA synchronization.");
+
+        return canUseFullBuffer;
+    }
+
+    private async Task<bool> ShouldUseFullBufferFinalSynchronizationAsync(
+        bool initialFullBufferSynchronizationAllowed,
+        TargetWindowGuard.Handle targetWindow,
+        string finalText,
+        string visiblePreviewText,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(finalText))
+            return false;
+
+        if (initialFullBufferSynchronizationAllowed)
+            return true;
+
+        if (!OperatingSystem.IsWindows()
+            || targetWindow.IsEmpty
+            || !ForegroundWindowDetector.IsTsfProblematic(targetWindow.Hwnd)
+            || !TargetWindowGuard.TryEnsureForeground(targetWindow))
+        {
+            return false;
+        }
+
+        var currentValue = await WindowsAutomationTextReplacer.TryReadFocusedValueAsync(
+            cancellationToken,
+            _logger);
+        if (currentValue is { Length: 0 })
+        {
+            _logger.LogDebug("Clean-mode final replacement will use full-buffer UIA synchronization for an empty TSF target.");
+            return true;
+        }
+
+        if (!string.IsNullOrEmpty(visiblePreviewText)
+            && currentValue is not null
+            && WindowsAutomationTextReplacer.TryCreateReplacementValue(
+                currentValue,
+                visiblePreviewText,
+                finalText,
+                allowFullBufferReplacement: false,
+                out _,
+                out _))
+        {
+            _logger.LogDebug("Clean-mode final replacement will use UIA synchronization for a divergent TSF preview.");
+            return true;
+        }
+
+        return false;
+    }
+
     private async Task<Task?> StartCleanProcessingSpinnerAsync(
         StringBuilder visiblePreview,
         TargetWindowGuard.Handle targetWindow,
@@ -318,6 +584,12 @@ public sealed class DictationSession : IDictationSession
     {
         if (!TargetWindowGuard.IsStillForeground(targetWindow))
             return null;
+
+        if (OperatingSystem.IsWindows() && ForegroundWindowDetector.IsTsfProblematic(targetWindow.Hwnd))
+        {
+            _logger.LogDebug("Skipping in-target clean-mode spinner for TSF-backed foreground window.");
+            return null;
+        }
 
         await _output.TypeTextAsync(SpinnerFrames[0].ToString(), CancellationToken.None, skipModifierRestore: true);
         visiblePreview.Append(SpinnerFrames[0]);
@@ -358,10 +630,13 @@ public sealed class DictationSession : IDictationSession
         CancellationToken cancellationToken,
         bool restoreForeground,
         bool skipModifierRestore,
-        bool boundLargeReplacementToCurrentLine = false)
+        bool boundLargeReplacementToCurrentLine = false,
+        bool allowFullBufferReplacement = false,
+        TextReplacementKind replacementKind = TextReplacementKind.Preview)
     {
         var currentText = visiblePreview.ToString();
-        if (string.Equals(currentText, targetText, StringComparison.Ordinal))
+        if (!allowFullBufferReplacement
+            && string.Equals(currentText, targetText, StringComparison.Ordinal))
             return true;
 
         bool hasForeground = restoreForeground
@@ -370,16 +645,41 @@ public sealed class DictationSession : IDictationSession
         if (!hasForeground)
             return false;
 
+        if (replacementKind == TextReplacementKind.Preview
+            && _output is IPreviewTextReplacementOutputService previewReplacementOutput)
+        {
+            try
+            {
+                await previewReplacementOutput.ReplacePreviewTextAsync(
+                    currentText,
+                    targetText,
+                    cancellationToken,
+                    skipModifierRestore);
+                visiblePreview.Clear();
+                visiblePreview.Append(targetText);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Best-effort preview replacement failed; falling back to delta typing.");
+            }
+        }
+
         int commonPrefixLength = CommonPrefixLength(currentText, targetText);
         int backspaceCount = visiblePreview.Length - commonPrefixLength;
         var delta = targetText[commonPrefixLength..];
-        bool boundToCurrentLine = ShouldBoundReplacementToCurrentLine(
-            boundLargeReplacementToCurrentLine,
-            backspaceCount,
-            currentText,
-            targetText);
+        bool useReplacementService = replacementKind == TextReplacementKind.FinalSynchronization
+            && (allowFullBufferReplacement || ShouldBoundReplacementToCurrentLine(
+                boundLargeReplacementToCurrentLine,
+                backspaceCount,
+                currentText,
+                targetText));
 
-        if (boundToCurrentLine)
+        if (useReplacementService)
         {
             await _output.ReplaceTextAsync(
                 currentText.Length,
@@ -387,7 +687,9 @@ public sealed class DictationSession : IDictationSession
                 cancellationToken,
                 skipModifierRestore,
                 boundToCurrentLine: true,
-                expectedExistingText: currentText);
+                expectedExistingText: currentText,
+                allowFullBufferReplacement: allowFullBufferReplacement,
+                replacementKind: replacementKind);
             visiblePreview.Clear();
             visiblePreview.Append(targetText);
             return true;
@@ -405,12 +707,23 @@ public sealed class DictationSession : IDictationSession
 
         if (!string.IsNullOrEmpty(delta))
         {
-            await _output.TypeTextAsync(delta, cancellationToken, skipModifierRestore);
+            if (replacementKind == TextReplacementKind.Preview)
+                await TypeVisiblePreviewTextAsync(delta, cancellationToken, skipModifierRestore);
+            else
+                await _output.TypeTextAsync(delta, cancellationToken, skipModifierRestore);
             visiblePreview.Append(delta);
         }
 
         return true;
     }
+
+    private Task TypeVisiblePreviewTextAsync(
+        string text,
+        CancellationToken cancellationToken,
+        bool skipModifierRestore)
+        => _output is IPreviewTextOutputService previewOutput
+            ? previewOutput.TypePreviewTextAsync(text, cancellationToken, skipModifierRestore)
+            : _output.TypeTextAsync(text, cancellationToken, skipModifierRestore);
 
     private static bool ShouldBoundReplacementToCurrentLine(
         bool enabled,
@@ -659,33 +972,40 @@ public sealed class DictationSession : IDictationSession
     /// <inheritdoc/>
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        _capture.AudioLevelChanged -= _audioLevelForwarder;
-        _capture.Stop();
-        await _engine.StopSessionAsync(cancellationToken);
-
-        if (_transcriptionLoop is not null)
+        try
         {
-            // Wait for the loop to flush remaining committed chunks
-            // (or type buffered text in spinner mode).
-            await _transcriptionLoop.WaitAsync(cancellationToken);
-            _transcriptionLoop = null;
-        }
+            _capture.AudioLevelChanged -= _audioLevelForwarder;
+            _capture.Stop();
+            await _engine.StopSessionAsync(cancellationToken);
 
-        if (_sessionAccumulated.Length > 0)
+            if (_transcriptionLoop is not null)
+            {
+                // Wait for the loop to flush remaining committed chunks
+                // (or type buffered text in spinner mode).
+                await _transcriptionLoop.WaitAsync(cancellationToken);
+                _transcriptionLoop = null;
+            }
+
+            if (_sessionAccumulated.Length > 0)
+            {
+                _transcriptBuffer?.Push(_sessionAccumulated.ToString());
+                _sessionAccumulated.Clear();
+            }
+
+            if (_autoSubmitKey != AutoSubmitKey.None)
+                await _output.SendKeyAsync(_autoSubmitKey, CancellationToken.None);
+
+            _logger.LogInformation("Dictation session stopped.");
+            OnSessionStopped?.Invoke();
+        }
+        finally
         {
-            _transcriptBuffer?.Push(_sessionAccumulated.ToString());
-            _sessionAccumulated.Clear();
+            RestoreStreamingCommitPolicy();
+
+            _loopCts?.Cancel();
+            _loopCts?.Dispose();
+            _loopCts = null;
         }
-
-        if (_autoSubmitKey != AutoSubmitKey.None)
-            await _output.SendKeyAsync(_autoSubmitKey, CancellationToken.None);
-
-        _loopCts?.Cancel();
-        _loopCts?.Dispose();
-        _loopCts = null;
-
-        _logger.LogInformation("Dictation session stopped.");
-        OnSessionStopped?.Invoke();
     }
 
     /// <inheritdoc/>

@@ -30,4 +30,20 @@ public sealed class TranscriptionResultTests
         Assert.True(result.IsFinal);
         Assert.NotEmpty(result.CommittedDelta);
     }
+
+    [Fact]
+    public void DraftPreviewText_IsOptionalAndNonDurable()
+    {
+        var result = new TranscriptionResult(
+            DisplayText: "the quick brown",
+            CommittedDelta: string.Empty,
+            IsFinal: false)
+        {
+            DraftPreviewText = "the quick brow"
+        };
+
+        Assert.Equal("the quick brow", result.DraftPreviewText);
+        Assert.Empty(result.CommittedDelta);
+        Assert.Equal("the quick brown", result.DisplayText);
+    }
 }

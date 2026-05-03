@@ -150,6 +150,115 @@ public sealed class KeystrokeTypingServiceTests
         Assert.False(replaced);
     }
 
+    [Fact]
+    public void TryCreateReplacementValue_ReplacesFuzzyCurrentLineWhenNotepadPreviewDiverged()
+    {
+        const string expected = "Um, I think we should move the design review to Thursday morning. Actually wait Thursday afternoon is better because the partner meeting is already on the calendar";
+        const string actual = "Um, I move the review to ning wait noon because the on the";
+        const string replacement = "I think we should move the design review to Thursday afternoon because the partner meeting is already on the calendar.";
+        const string document = "previous line\r\n" + actual;
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            document,
+            expected,
+            replacement,
+            out var replacementValue,
+            out int replaceStart);
+
+        Assert.True(replaced);
+        Assert.Equal("previous line\r\n" + replacement, replacementValue);
+        Assert.Equal("previous line\r\n".Length, replaceStart);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_DoesNotFuzzyReplaceUnrelatedCurrentLine()
+    {
+        const string expected = "Um, I think we should move the design review to Thursday morning.";
+        const string replacement = "I think we should move the design review to Thursday afternoon.";
+        const string document = "previous line\r\nBudget notes for next quarter and travel planning";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            document,
+            expected,
+            replacement,
+            out _,
+            out _);
+
+        Assert.False(replaced);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_FullBufferAllowed_OverwritesUnexpectedCurrentValue()
+    {
+        const string expected = "Clean command";
+        const string replacement = "Clean command";
+        const string contaminatedDocument = "https://contoso.sharepoint.com/sites/stale-clipboard";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            contaminatedDocument,
+            expected,
+            replacement,
+            allowFullBufferReplacement: true,
+            out var replacementValue,
+            out int replaceStart);
+
+        Assert.True(replaced);
+        Assert.Equal(replacement, replacementValue);
+        Assert.Equal(0, replaceStart);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_FullBufferDisallowed_DoesNotOverwriteUnexpectedCurrentValue()
+    {
+        const string expected = "Clean command";
+        const string replacement = "Clean command";
+        const string contaminatedDocument = "https://contoso.sharepoint.com/sites/stale-clipboard";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            contaminatedDocument,
+            expected,
+            replacement,
+            allowFullBufferReplacement: false,
+            out _,
+            out _);
+
+        Assert.False(replaced);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_EmptyExpected_ReplacesEmptyDocument()
+    {
+        const string replacement = "First live preview";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            string.Empty,
+            string.Empty,
+            replacement,
+            allowFullBufferReplacement: false,
+            out var replacementValue,
+            out int replaceStart);
+
+        Assert.True(replaced);
+        Assert.Equal(replacement, replacementValue);
+        Assert.Equal(0, replaceStart);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_EmptyExpected_DoesNotOverwriteExistingDocument()
+    {
+        const string replacement = "First live preview";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            "existing user note",
+            string.Empty,
+            replacement,
+            allowFullBufferReplacement: true,
+            out _,
+            out _);
+
+        Assert.False(replaced);
+    }
+
     // ── Platform dispatch (only testable on current platform) ────────────
 
     [Fact]

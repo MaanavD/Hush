@@ -107,6 +107,7 @@ public sealed class HushSettings
                 "Rules:\n" +
                 "- Remove filler words: \"um\", \"uh\", \"er\", \"ah\", \"like\" (when used as filler), \"you know\", \"I mean\" (when filler), \"sort of\", \"kind of\" (when filler), and stutter repetitions.\n" +
                 "- Honor self-corrections: if the speaker says \"I mean X\", \"no wait Y\", \"scratch that Z\", \"actually Z\", keep only the corrected version.\n" +
+                "- If the speaker gives two alternatives and then says the second is better, remove the first alternative entirely. For example, \"Thursday morning, actually wait, Thursday afternoon is better\" becomes only \"Thursday afternoon is better\".\n" +
                 "- Add correct punctuation, capitalization, and sentence breaks.\n" +
                 "- Fix obvious transcription errors from context (e.g. their/there/they're, or filler words misheard as fellow words/failure word) but do NOT invent facts or change meaning.\n" +
                 "- Cleanup rules override preservation for filler words, stutters, and self-corrections.\n" +

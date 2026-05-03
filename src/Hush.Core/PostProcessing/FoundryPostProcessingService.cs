@@ -25,6 +25,9 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
     private static readonly Regex CleanDictationRepeatedIRegex = new(
         @"\bI\s+I\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex CleanDictationBetterAlternativeInputRegex = new(
+        @"\bto\s+(?<old>[a-z0-9][a-z0-9\s-]{0,60}?)\s*[.!?]\s*actually,?\s*wait,?\s*(?<new>[a-z0-9][a-z0-9\s-]{0,60}?)\s+is\s+better\s+because\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex WhitespaceRegex = new(
         @"\s+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -96,7 +99,10 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
             _chatClient.Settings.RandomSeed = CleanupRandomSeed;
             _chatClient.Settings.MaxTokens = MaxPostProcessingTokens;
 
-            var promptMessages = BuildPromptMessages(rawTranscript, systemPrompt);
+            var transcriptForPrompt = IsBuiltInCleanDictationPrompt(systemPrompt)
+                ? ApplyCleanDictationInputSafeguards(rawTranscript)
+                : rawTranscript;
+            var promptMessages = BuildPromptMessages(transcriptForPrompt, systemPrompt);
             var messages = new[]
             {
                 ChatMessage.FromSystem(promptMessages.SystemMessage),
@@ -142,6 +148,17 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
         cleaned = CleanDictationRepeatedIRegex.Replace(cleaned, "I");
         cleaned = NormalizeCleanDictationOutput(cleaned);
         return CapitalizeFirstAsciiLetter(cleaned);
+    }
+
+    internal static string ApplyCleanDictationInputSafeguards(string rawTranscript)
+    {
+        if (string.IsNullOrWhiteSpace(rawTranscript))
+            return rawTranscript;
+
+        var cleaned = CleanDictationBetterAlternativeInputRegex.Replace(
+            rawTranscript,
+            match => $"to {match.Groups["new"].Value.Trim()} because");
+        return NormalizeCleanDictationOutput(cleaned);
     }
 
     private static bool IsBuiltInCleanDictationPrompt(string systemPrompt)

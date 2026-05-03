@@ -57,3 +57,19 @@ public interface ITranscriptionEngine : IAsyncDisposable
     IAsyncEnumerable<TranscriptionResult> GetResultStreamAsync(
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Optional tuning surface for engines that can adjust how aggressively
+/// non-final streaming text is committed.
+/// </summary>
+public interface IStreamingCommitPolicy
+{
+    /// <summary>
+    /// Number of trailing words to withhold from non-final streaming commits.
+    /// Stable-commit-only streaming sessions may set this to zero to type the
+    /// first usable interim immediately. Preview-rendering sessions should keep
+    /// the holdback so visible text can be low-latency without making partial
+    /// words durable committed transcript.
+    /// </summary>
+    int StreamingTrailingWordHoldback { get; set; }
+}
