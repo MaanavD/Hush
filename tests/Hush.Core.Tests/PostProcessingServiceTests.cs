@@ -99,12 +99,26 @@ public sealed class PostProcessingServiceTests
     }
 
     [Fact]
+    public void ApplyCleanDictationInputSafeguards_CollapsesBetterAlternativeSelfCorrection()
+    {
+        const string rawTranscript =
+            "Um, I think we should move the design review to Thursday morning. Actually wait Thursday afternoon is better because the partner meeting is already on the calendar";
+
+        var cleaned = FoundryPostProcessingService.ApplyCleanDictationInputSafeguards(rawTranscript);
+
+        Assert.Equal(
+            "Um, I think we should move the design review to Thursday afternoon because the partner meeting is already on the calendar",
+            cleaned);
+    }
+
+    [Fact]
     public void BuiltInCleanPrompt_PrioritizesFillerCleanupOverWordPreservation()
     {
         var prompt = Configuration.HushSettings.BuiltInPrompts[0].Prompt;
 
         Assert.Contains("Cleanup rules override preservation", prompt);
         Assert.Contains("verify no standalone filler phrases", prompt);
+        Assert.Contains("the second is better", prompt);
         Assert.Contains("fellow words/failure word", prompt);
     }
 

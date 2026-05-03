@@ -13,7 +13,7 @@ namespace Hush.Core.Transcription;
 /// Wraps Foundry Local live transcription while preserving the app-level
 /// <see cref="TranscriptionResult"/> abstraction.
 /// </summary>
-public sealed class TranscriptionEngine : ITranscriptionEngine
+public sealed class TranscriptionEngine : ITranscriptionEngine, IStreamingCommitPolicy
 {
     private readonly ILogger<TranscriptionEngine> _logger;
     private readonly ILiveAudioSessionFactory _liveSessionFactory;
@@ -53,13 +53,15 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     private TimeSpan? _lastCommittedEndTime;
     private bool _disposed;
 
-    // In streaming mode, commit the full monotonic interim hypothesis. Non-final
-    // rewrites are already blocked below, so this favors responsive live typing
-    // while still deferring corrections to final chunks.
-    private const int StreamingTrailingWordHoldback = 1;
+    // By default, keep one trailing word buffered so direct engine use avoids
+    // typing partial tokens. DictationSession lowers this to zero only for
+    // stable-commit output paths that cannot render display-only preview text.
+    private const int DefaultStreamingTrailingWordHoldback = 1;
     // Allow a small timestamp overlap when the SDK rolls windows forward so a
     // later chunk can still be treated as additive speech instead of a rewrite.
     private static readonly TimeSpan DetachedChunkOverlapTolerance = TimeSpan.FromMilliseconds(150);
+
+    public int StreamingTrailingWordHoldback { get; set; } = DefaultStreamingTrailingWordHoldback;
 
     // ASR hallucination / silence tokens that should never be typed or shown.
     private static readonly HashSet<string> NoiseTokens =
@@ -448,8 +450,6 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         _unloadTimerCts?.Cancel();
         _unloadTimerCts?.Dispose();
         await StopSessionAsync();
-        if (FoundryLocalManager.IsInitialized)
-            FoundryLocalManager.Instance.Dispose();
     }
 
     private bool TryNormalizeChunk(LiveAudioSessionChunk chunk, out TranscriptionResult result)
@@ -553,12 +553,10 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
             if (_streamingCommit)
             {
-                // Always hold back the last word — it may still be a partial token
-                // that the model hasn't extended yet. stableCount is used in batch
-                // mode but must NOT override the holdback here: if the model repeats
-                // the same partial word token across two chunks it would be counted
-                // as "stable" and committed before it is complete.
-                safeCount = Math.Max(0, segmentWords.Length - StreamingTrailingWordHoldback);
+                // DictationSession can lower the holdback to zero for
+                // low-latency streaming sessions. Non-final rewrites remain
+                // monotonic and corrections are deferred until a final chunk.
+                safeCount = Math.Max(0, segmentWords.Length - Math.Max(0, StreamingTrailingWordHoldback));
             }
             else
             {

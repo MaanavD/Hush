@@ -200,6 +200,71 @@ public sealed class TranscriptionEngineTests
     }
 
     [Fact]
+    public async Task LiveSession_StreamingMode_WithZeroTrailingHoldback_CommitsFirstInterimImmediately()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory)
+        {
+            StreamingTrailingWordHoldback = 0
+        };
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "hello", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.2)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        var result = Assert.Single(results);
+        Assert.Equal("hello", result.DisplayText);
+        Assert.Equal("hello", result.CommittedDelta);
+        Assert.False(result.IsFinal);
+        Assert.Equal(0, result.BackspaceCount);
+    }
+
+    [Fact]
+    public async Task LiveSession_StreamingMode_WithZeroTrailingHoldback_AppendsMonotonicDeltasWithoutOverlap()
+    {
+        var factory = new FakeLiveAudioSessionFactory();
+        var engine = new TranscriptionEngine(new NullLogger<TranscriptionEngine>(), factory)
+        {
+            StreamingTrailingWordHoldback = 0
+        };
+        SetModelId(engine, "nemotron-test");
+
+        await engine.StartSessionAsync(language: "en", streamingCommit: true);
+
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "see you jason", false, TimeSpan.Zero, TimeSpan.FromSeconds(0.8)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "have fun", false, TimeSpan.FromSeconds(0.82), TimeSpan.FromSeconds(1.2)));
+        factory.Session.Emit(new LiveAudioSessionChunk(
+            "we'll miss you", true, TimeSpan.FromSeconds(1.22), TimeSpan.FromSeconds(1.7)));
+
+        await engine.StopSessionAsync();
+        var results = await CollectAsync(engine.GetResultStreamAsync());
+
+        Assert.Equal(3, results.Count);
+
+        Assert.Equal("see you jason", results[0].DisplayText);
+        Assert.Equal("see you jason", results[0].CommittedDelta);
+        Assert.Equal(0, results[0].BackspaceCount);
+
+        Assert.Equal("see you jason have fun", results[1].DisplayText);
+        Assert.Equal(" have fun", results[1].CommittedDelta);
+        Assert.Equal(0, results[1].BackspaceCount);
+
+        Assert.Equal("see you jason have fun we'll miss you", results[2].DisplayText);
+        Assert.Equal(" we'll miss you", results[2].CommittedDelta);
+        Assert.Equal(0, results[2].BackspaceCount);
+        Assert.True(results[2].IsFinal);
+
+        Assert.Equal("see you jason have fun we'll miss you", string.Concat(results.Select(r => r.CommittedDelta)));
+    }
+
+    [Fact]
     public async Task LiveSession_StreamingMode_AdvancesThroughGrowingPartialWords()
     {
         var factory = new FakeLiveAudioSessionFactory();

@@ -15,7 +15,7 @@ namespace Hush.Core.Output;
 /// automatically for apps whose TSF layer garbles Unicode input events
 /// (e.g. Windows 11 Notepad, WinUI3 TextBox), or when <c>ClipboardFallback = true</c>.
 /// </summary>
-public sealed class KeystrokeTypingService : ITextOutputService
+public sealed class KeystrokeTypingService : IPreviewTextReplacementOutputService
 {
     private readonly ILogger<KeystrokeTypingService> _logger;
     private readonly bool _useClipboardFallback;
@@ -40,11 +40,12 @@ public sealed class KeystrokeTypingService : ITextOutputService
 
         if (OperatingSystem.IsWindows())
         {
-            bool useClipboard = _useClipboardFallback || ForegroundWindowDetector.IsTsfProblematic();
+            bool isTsfProblematic = ForegroundWindowDetector.IsTsfProblematic();
+            bool useClipboard = _useClipboardFallback || isTsfProblematic;
             if (useClipboard)
                 _logger.LogDebug("TypeText: using clipboard paste (TSF-problematic window detected)");
             return useClipboard
-                ? WindowsClipboardTyper.TypeAsync(text, cancellationToken)
+                ? WindowsClipboardTyper.TypeAsync(text, cancellationToken, isTsfProblematic)
                 : WindowsKeystrokeTyper.TypeAsync(text, cancellationToken, skipModifierRestore, _logger);
         }
 
@@ -56,6 +57,68 @@ public sealed class KeystrokeTypingService : ITextOutputService
 
         throw new PlatformNotSupportedException(
             $"Text output is not supported on this platform ({RuntimeInformation.OSDescription}).");
+    }
+
+    public Task TypePreviewTextAsync(
+        string text,
+        CancellationToken cancellationToken = default,
+        bool skipModifierRestore = false)
+    {
+        if (string.IsNullOrEmpty(text))
+            return Task.CompletedTask;
+
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled(cancellationToken);
+
+        _logger.LogDebug("TypePreviewText: len={Len} skip={Skip} text={Text}",
+            text.Length, skipModifierRestore, text);
+
+        if (OperatingSystem.IsWindows())
+        {
+            bool isTsfProblematic = ForegroundWindowDetector.IsTsfProblematic();
+            bool useClipboard = _useClipboardFallback || isTsfProblematic;
+            if (useClipboard)
+                _logger.LogDebug("TypePreviewText: using best-effort clipboard paste");
+            return useClipboard
+                ? WindowsClipboardTyper.TypeAsync(text, cancellationToken, requireDelayedPasteProtection: false)
+                : WindowsKeystrokeTyper.TypeAsync(text, cancellationToken, skipModifierRestore, _logger);
+        }
+
+        return TypeTextAsync(text, cancellationToken, skipModifierRestore);
+    }
+
+    public async Task ReplacePreviewTextAsync(
+        string currentText,
+        string targetText,
+        CancellationToken cancellationToken = default,
+        bool skipModifierRestore = false)
+    {
+        if (string.Equals(currentText, targetText, StringComparison.Ordinal))
+            return;
+
+        if (cancellationToken.IsCancellationRequested)
+            await Task.FromCanceled(cancellationToken);
+
+        if (OperatingSystem.IsWindows()
+            && ForegroundWindowDetector.IsTsfProblematic()
+            && await WindowsAutomationTextReplacer.TryReplaceFocusedValueAsync(
+                currentText,
+                targetText,
+                allowFullBufferReplacement: false,
+                cancellationToken,
+                _logger))
+        {
+            return;
+        }
+
+        int commonPrefixLength = CommonPrefixLength(currentText, targetText);
+        int backspaceCount = currentText.Length - commonPrefixLength;
+        var delta = targetText[commonPrefixLength..];
+
+        if (backspaceCount > 0)
+            await SendBackspacesAsync(backspaceCount, cancellationToken, skipModifierRestore);
+        if (!string.IsNullOrEmpty(delta))
+            await TypePreviewTextAsync(delta, cancellationToken, skipModifierRestore);
     }
 
     /// <inheritdoc/>
@@ -89,25 +152,37 @@ public sealed class KeystrokeTypingService : ITextOutputService
         CancellationToken cancellationToken = default,
         bool skipModifierRestore = false,
         bool boundToCurrentLine = false,
-        string? expectedExistingText = null)
+        string? expectedExistingText = null,
+        bool allowFullBufferReplacement = false,
+        TextReplacementKind replacementKind = TextReplacementKind.FinalSynchronization)
     {
         if (cancellationToken.IsCancellationRequested)
             await Task.FromCanceled(cancellationToken);
 
         if (OperatingSystem.IsWindows()
+            && replacementKind == TextReplacementKind.FinalSynchronization
             && boundToCurrentLine
-            && ForegroundWindowDetector.IsTsfProblematic())
+            && (allowFullBufferReplacement || ForegroundWindowDetector.IsTsfProblematic()))
         {
             _logger.LogDebug(
                 "ReplaceText: current-line bounded replacement len={Len} expectedLen={ExpectedLen}",
                 replacementText.Length,
                 expectedExistingText?.Length ?? 0);
-            if (await WindowsAutomationTextReplacer.TryReplaceFocusedSuffixAsync(
+            if (await WindowsAutomationTextReplacer.TryReplaceFocusedValueAsync(
                     expectedExistingText,
                     replacementText,
+                    allowFullBufferReplacement,
                     cancellationToken,
                     _logger))
             {
+                return;
+            }
+
+            if (allowFullBufferReplacement)
+            {
+                await WindowsClipboardTyper.ReplaceFullBufferAsync(
+                    replacementText,
+                    cancellationToken);
                 return;
             }
 
@@ -119,7 +194,10 @@ public sealed class KeystrokeTypingService : ITextOutputService
         }
 
         await SendBackspacesAsync(backspaceCount, cancellationToken, skipModifierRestore);
-        await TypeTextAsync(replacementText, cancellationToken, skipModifierRestore);
+        if (replacementKind == TextReplacementKind.Preview)
+            await TypePreviewTextAsync(replacementText, cancellationToken, skipModifierRestore);
+        else
+            await TypeTextAsync(replacementText, cancellationToken, skipModifierRestore);
     }
 
     /// <inheritdoc/>
@@ -141,6 +219,15 @@ public sealed class KeystrokeTypingService : ITextOutputService
             $"Text output is not supported on this platform ({RuntimeInformation.OSDescription}).");
     }
 
+    private static int CommonPrefixLength(string left, string right)
+    {
+        int length = Math.Min(left.Length, right.Length);
+        int index = 0;
+        while (index < length && left[index] == right[index])
+            index++;
+        return index;
+    }
+
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -155,11 +242,16 @@ public sealed class KeystrokeTypingService : ITextOutputService
 
 internal static class ForegroundWindowDetector
 {
+    private const uint GA_ROOT = 2;
+
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int GetClassName(nint hWnd, char[] lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetAncestor(nint hwnd, uint gaFlags);
 
     // Known window class names whose TSF layer garbles KEYEVENTF_UNICODE events.
     private static readonly string[] TsfProblematicClasses =
@@ -177,6 +269,24 @@ internal static class ForegroundWindowDetector
         nint hwnd = GetForegroundWindow();
         if (hwnd == 0) return false;
 
+        return IsTsfProblematic(hwnd);
+    }
+
+    internal static bool IsTsfProblematic(nint hwnd)
+    {
+        if (hwnd == 0) return false;
+
+        if (IsTsfProblematicClass(hwnd))
+            return true;
+
+        var root = GetAncestor(hwnd, GA_ROOT);
+        return root != 0
+            && root != hwnd
+            && IsTsfProblematicClass(root);
+    }
+
+    private static bool IsTsfProblematicClass(nint hwnd)
+    {
         var buf = new char[256];
         int len = GetClassName(hwnd, buf, buf.Length);
         if (len <= 0) return false;
@@ -212,6 +322,9 @@ internal static class WindowsAutomationTextReplacer
     private const ushort VK_END = 0x23;
     private const int UIA_ValuePatternId = 10002;
     private const int MinPrefixAnchorLength = 16;
+    private const int MinFuzzyLineTokens = 4;
+    private const double MinFuzzyCurrentLineOverlap = 0.45;
+    private const double MinFuzzyExpectedOverlap = 0.20;
     private const int CaretRestoreSettleMs = 50;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -245,8 +358,21 @@ internal static class WindowsAutomationTextReplacer
         string replacementText,
         CancellationToken cancellationToken,
         ILogger? logger = null)
+        => TryReplaceFocusedValueAsync(
+            expectedExistingText,
+            replacementText,
+            allowFullBufferReplacement: false,
+            cancellationToken,
+            logger);
+
+    internal static Task<bool> TryReplaceFocusedValueAsync(
+        string? expectedExistingText,
+        string replacementText,
+        bool allowFullBufferReplacement,
+        CancellationToken cancellationToken,
+        ILogger? logger = null)
     {
-        if (string.IsNullOrEmpty(expectedExistingText))
+        if (expectedExistingText is null && !allowFullBufferReplacement)
             return Task.FromResult(false);
 
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -255,7 +381,11 @@ internal static class WindowsAutomationTextReplacer
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                tcs.TrySetResult(TryReplaceFocusedSuffix(expectedExistingText, replacementText, logger));
+                tcs.TrySetResult(TryReplaceFocusedValue(
+                    expectedExistingText,
+                    replacementText,
+                    allowFullBufferReplacement,
+                    logger));
             }
             catch (OperationCanceledException ex)
             {
@@ -275,7 +405,120 @@ internal static class WindowsAutomationTextReplacer
         return tcs.Task;
     }
 
+    internal static Task<string?> TryReadFocusedValueAsync(
+        CancellationToken cancellationToken,
+        ILogger? logger = null)
+    {
+        var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var t = new Thread(() =>
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                tcs.TrySetResult(TryReadFocusedValue(logger));
+            }
+            catch (OperationCanceledException ex)
+            {
+                tcs.TrySetCanceled(ex.CancellationToken);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "UI Automation focused-value read failed.");
+                tcs.TrySetResult(null);
+            }
+        });
+
+        t.SetApartmentState(ApartmentState.STA);
+        t.IsBackground = true;
+        t.Name = "Hush.UIARead";
+        t.Start();
+        return tcs.Task;
+    }
+
     internal static bool TryCreateReplacementValue(
+        string currentValue,
+        string expectedExistingText,
+        string replacementText,
+        out string replacementValue,
+        out int replaceStart)
+        => TryCreateReplacementValue(
+            currentValue,
+            expectedExistingText,
+            replacementText,
+            allowFullBufferReplacement: false,
+            out replacementValue,
+            out replaceStart);
+
+    internal static bool TryCreateReplacementValue(
+        string currentValue,
+        string? expectedExistingText,
+        string replacementText,
+        bool allowFullBufferReplacement,
+        out string replacementValue,
+        out int replaceStart)
+    {
+        replacementValue = currentValue;
+        replaceStart = -1;
+
+        if (expectedExistingText is { Length: 0 })
+        {
+            if (currentValue.Length != 0)
+                return false;
+
+            replacementValue = replacementText;
+            replaceStart = 0;
+            return true;
+        }
+
+        if (!string.IsNullOrEmpty(expectedExistingText)
+            && currentValue.EndsWith(expectedExistingText, StringComparison.Ordinal))
+        {
+            replaceStart = currentValue.Length - expectedExistingText.Length;
+            replacementValue = currentValue[..replaceStart] + replacementText;
+            return true;
+        }
+
+        if (!string.IsNullOrEmpty(expectedExistingText))
+        {
+            int exactIndex = currentValue.LastIndexOf(expectedExistingText, StringComparison.Ordinal);
+            if (exactIndex >= 0)
+            {
+                replaceStart = exactIndex;
+                replacementValue = currentValue[..exactIndex] + replacementText;
+                return true;
+            }
+
+            var anchor = expectedExistingText[..Math.Min(expectedExistingText.Length, MinPrefixAnchorLength)];
+            int anchorIndex = currentValue.LastIndexOf(anchor, StringComparison.Ordinal);
+            if (anchorIndex >= 0 && IsLineSuffix(currentValue, anchorIndex))
+            {
+                replaceStart = anchorIndex;
+                replacementValue = currentValue[..anchorIndex] + replacementText;
+                return true;
+            }
+
+            if (TryCreateFuzzyLineReplacement(
+                    currentValue,
+                    expectedExistingText,
+                    replacementText,
+                    out replacementValue,
+                    out replaceStart))
+            {
+                return true;
+            }
+        }
+
+        if (allowFullBufferReplacement)
+        {
+            replaceStart = 0;
+            replacementValue = replacementText;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryCreateFuzzyLineReplacement(
         string currentValue,
         string expectedExistingText,
         string replacementText,
@@ -285,34 +528,81 @@ internal static class WindowsAutomationTextReplacer
         replacementValue = currentValue;
         replaceStart = -1;
 
-        if (string.IsNullOrEmpty(expectedExistingText))
+        int lineStart = LastLineStart(currentValue);
+        var currentLine = currentValue[lineStart..];
+        if (currentLine.Length < MinPrefixAnchorLength)
             return false;
 
-        if (currentValue.EndsWith(expectedExistingText, StringComparison.Ordinal))
+        if (!string.Equals(FirstToken(currentLine), FirstToken(expectedExistingText), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var currentTokens = TokenizeDistinct(currentLine);
+        var expectedTokens = TokenizeDistinct(expectedExistingText);
+        if (currentTokens.Count < MinFuzzyLineTokens || expectedTokens.Count < MinFuzzyLineTokens)
+            return false;
+
+        int shared = 0;
+        foreach (var token in currentTokens)
         {
-            replaceStart = currentValue.Length - expectedExistingText.Length;
-            replacementValue = currentValue[..replaceStart] + replacementText;
-            return true;
+            if (expectedTokens.Contains(token))
+                shared++;
         }
 
-        int exactIndex = currentValue.LastIndexOf(expectedExistingText, StringComparison.Ordinal);
-        if (exactIndex >= 0)
+        double currentOverlap = (double)shared / currentTokens.Count;
+        double expectedOverlap = (double)shared / expectedTokens.Count;
+        if (shared < MinFuzzyLineTokens
+            || currentOverlap < MinFuzzyCurrentLineOverlap
+            || expectedOverlap < MinFuzzyExpectedOverlap)
         {
-            replaceStart = exactIndex;
-            replacementValue = currentValue[..exactIndex] + replacementText;
-            return true;
+            return false;
         }
 
-        var anchor = expectedExistingText[..Math.Min(expectedExistingText.Length, MinPrefixAnchorLength)];
-        int anchorIndex = currentValue.LastIndexOf(anchor, StringComparison.Ordinal);
-        if (anchorIndex >= 0 && IsLineSuffix(currentValue, anchorIndex))
+        replaceStart = lineStart;
+        replacementValue = currentValue[..lineStart] + replacementText;
+        return true;
+    }
+
+    private static int LastLineStart(string text)
+    {
+        int lastLf = text.LastIndexOf('\n');
+        if (lastLf >= 0)
+            return lastLf + 1;
+
+        int lastCr = text.LastIndexOf('\r');
+        return lastCr >= 0 ? lastCr + 1 : 0;
+    }
+
+    private static string FirstToken(string text)
+    {
+        int index = 0;
+        while (index < text.Length && !char.IsLetterOrDigit(text[index]))
+            index++;
+
+        int start = index;
+        while (index < text.Length && (char.IsLetterOrDigit(text[index]) || text[index] == '\''))
+            index++;
+
+        return index > start ? text[start..index] : string.Empty;
+    }
+
+    private static HashSet<string> TokenizeDistinct(string text)
+    {
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int index = 0;
+        while (index < text.Length)
         {
-            replaceStart = anchorIndex;
-            replacementValue = currentValue[..anchorIndex] + replacementText;
-            return true;
+            while (index < text.Length && !char.IsLetterOrDigit(text[index]))
+                index++;
+
+            int start = index;
+            while (index < text.Length && (char.IsLetterOrDigit(text[index]) || text[index] == '\''))
+                index++;
+
+            if (index > start)
+                tokens.Add(text[start..index]);
         }
 
-        return false;
+        return tokens;
     }
 
     private static bool IsLineSuffix(string text, int index)
@@ -328,9 +618,10 @@ internal static class WindowsAutomationTextReplacer
         return true;
     }
 
-    private static bool TryReplaceFocusedSuffix(
-        string expectedExistingText,
+    private static bool TryReplaceFocusedValue(
+        string? expectedExistingText,
         string replacementText,
+        bool allowFullBufferReplacement,
         ILogger? logger)
     {
         Type? automationType = Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e"));
@@ -380,13 +671,14 @@ internal static class WindowsAutomationTextReplacer
                     currentValue,
                     expectedExistingText,
                     replacementText,
+                    allowFullBufferReplacement,
                     out var replacementValue,
                     out int replaceStart))
             {
                 logger?.LogDebug(
                     "UI Automation clean replacement skipped: expected preview not found (docLen={DocLen}, expectedLen={ExpectedLen}).",
                     currentValue.Length,
-                    expectedExistingText.Length);
+                    expectedExistingText?.Length ?? 0);
                 return false;
             }
 
@@ -394,6 +686,17 @@ internal static class WindowsAutomationTextReplacer
             if (hr != 0)
             {
                 logger?.LogDebug("UI Automation clean replacement SetValue failed hr={Hr}.", hr);
+                return false;
+            }
+
+            hr = valuePattern.get_CurrentValue(out string? verifiedValue);
+            if (hr != 0 || !string.Equals(verifiedValue, replacementValue, StringComparison.Ordinal))
+            {
+                logger?.LogDebug(
+                    "UI Automation clean replacement verification failed hr={Hr} expectedLen={ExpectedLen} actualLen={ActualLen}.",
+                    hr,
+                    replacementValue.Length,
+                    verifiedValue?.Length ?? 0);
                 return false;
             }
 
@@ -409,10 +712,56 @@ internal static class WindowsAutomationTextReplacer
             logger?.LogDebug(
                 "UI Automation clean replacement succeeded: docLen={DocLen} expectedLen={ExpectedLen} replacementLen={ReplacementLen} start={Start}.",
                 currentValue.Length,
-                expectedExistingText.Length,
+                expectedExistingText?.Length ?? 0,
                 replacementText.Length,
                 replaceStart);
             return true;
+        }
+        finally
+        {
+            if (valuePatternObject is not null && Marshal.IsComObject(valuePatternObject))
+                Marshal.ReleaseComObject(valuePatternObject);
+            if (automationObject is not null && Marshal.IsComObject(automationObject))
+                Marshal.ReleaseComObject(automationObject);
+        }
+    }
+
+    private static string? TryReadFocusedValue(ILogger? logger)
+    {
+        Type? automationType = Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e"));
+        if (automationType is null)
+            return null;
+
+        object? automationObject = null;
+        object? valuePatternObject = null;
+        try
+        {
+            automationObject = Activator.CreateInstance(automationType);
+            if (automationObject is not IUIAutomation automation)
+                return null;
+
+            int hr = automation.GetFocusedElement(out var focusedElement);
+            if (hr != 0 || focusedElement is null)
+            {
+                logger?.LogDebug("UI Automation focused-value read skipped: GetFocusedElement hr={Hr}.", hr);
+                return null;
+            }
+
+            hr = focusedElement.GetCurrentPattern(UIA_ValuePatternId, out valuePatternObject);
+            if (hr != 0 || valuePatternObject is not IUIAutomationValuePattern valuePattern)
+            {
+                logger?.LogDebug("UI Automation focused-value read skipped: ValuePattern hr={Hr}.", hr);
+                return null;
+            }
+
+            hr = valuePattern.get_CurrentValue(out string? currentValue);
+            if (hr != 0)
+            {
+                logger?.LogDebug("UI Automation focused-value read skipped: CurrentValue hr={Hr}.", hr);
+                return null;
+            }
+
+            return currentValue ?? string.Empty;
         }
         finally
         {
@@ -938,6 +1287,7 @@ internal static class WindowsClipboardTyper
     private const ushort VK_SHIFT      = 0x10;
     private const ushort VK_HOME       = 0x24;
     private const ushort VK_LEFT       = 0x25;
+    private const ushort VK_A          = 0x41;
     private const ushort VK_V          = 0x56;
     private const uint CF_UNICODETEXT  = 13;
     private const uint GMEM_MOVEABLE   = 0x0002;
@@ -953,6 +1303,10 @@ internal static class WindowsClipboardTyper
     private const int SelectionPasteSettleMaxMs = 900;
     private const int SelectionCharacterBatchSize = 8;
     private const int SelectionCharacterBatchDelayMs = 8;
+    private const int ClipboardOpenRetryCount = 25;
+    private const int ClipboardOpenRetryDelayMs = 40;
+    private const int ClipboardVerifyRetryCount = 10;
+    private const int ClipboardVerifyRetryDelayMs = 20;
     private const ushort VK_LSHIFT     = 0xA0;
     private const ushort VK_RSHIFT     = 0xA1;
     private const ushort VK_LCONTROL   = 0xA2;
@@ -1003,7 +1357,10 @@ internal static class WindowsClipboardTyper
     [DllImport("kernel32.dll")] private static extern bool GlobalUnlock(nint hMem);
     [DllImport("kernel32.dll")] private static extern nint GlobalFree(nint hMem);
 
-    internal static Task TypeAsync(string text, CancellationToken cancellationToken)
+    internal static Task TypeAsync(
+        string text,
+        CancellationToken cancellationToken,
+        bool requireDelayedPasteProtection = false)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1019,13 +1376,18 @@ internal static class WindowsClipboardTyper
                     SendKeys(pressedModifiers, KEYEVENTF_KEYUP);
 
                 string? savedText = TryGetClipboardText();
-                if (!TrySetClipboardText(text))
+                if (!TrySetClipboardTextAndVerify(text))
                     throw new InvalidOperationException("Unable to set clipboard text before typing into a TSF-backed target.");
 
                 Thread.Sleep(ClipboardSettleBeforePasteMs);
+                if (!string.Equals(TryGetClipboardText(), text, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Clipboard changed before text could be pasted.");
+
                 SendCtrlV();
 
-                Thread.Sleep(CalculateClipboardRestoreDelayMs(text.Length));
+                Thread.Sleep(requireDelayedPasteProtection
+                    ? CalculateReplacementClipboardRestoreDelayMs(text.Length, selectedCharacterCount: 0)
+                    : CalculateClipboardRestoreDelayMs(text.Length));
                 TrySetClipboardText(savedText ?? string.Empty);
 
                 if (pressedModifiers.Count > 0)
@@ -1083,7 +1445,7 @@ internal static class WindowsClipboardTyper
                     SendKeys(pressedModifiers, KEYEVENTF_KEYUP);
 
                 string? savedText = TryGetClipboardText();
-                if (!TrySetClipboardText(replacementText))
+                if (!TrySetClipboardTextAndVerify(replacementText))
                     throw new InvalidOperationException("Unable to set clipboard text before replacing clean-mode preview.");
 
                 Thread.Sleep(ClipboardSettleBeforePasteMs);
@@ -1097,6 +1459,9 @@ internal static class WindowsClipboardTyper
                 {
                     Thread.Sleep(CalculateSelectionPasteSettleDelayMs(selectedCharacterCount));
                 }
+
+                if (!string.Equals(TryGetClipboardText(), replacementText, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Clipboard changed before clean-mode preview replacement could be pasted.");
 
                 SendCtrlV();
 
@@ -1141,6 +1506,75 @@ internal static class WindowsClipboardTyper
         return tcs.Task;
     }
 
+    internal static Task ReplaceFullBufferAsync(
+        string replacementText,
+        CancellationToken cancellationToken)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var t = new Thread(() =>
+        {
+            List<ushort>? pressedModifiers = null;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                pressedModifiers = GetPressedModifierVks();
+                if (pressedModifiers.Count > 0)
+                    SendKeys(pressedModifiers, KEYEVENTF_KEYUP);
+
+                string? savedText = TryGetClipboardText();
+                if (!TrySetClipboardTextAndVerify(replacementText))
+                    throw new InvalidOperationException("Unable to set clipboard text before replacing the focused editor buffer.");
+
+                Thread.Sleep(ClipboardSettleBeforePasteMs);
+                SendCtrlA();
+                Thread.Sleep(CalculateSelectionPasteSettleDelayMs(CountSelectionCharacters(replacementText)));
+
+                if (!string.Equals(TryGetClipboardText(), replacementText, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Clipboard changed before the focused editor buffer could be replaced.");
+
+                SendCtrlV();
+
+                Thread.Sleep(CalculateFullBufferClipboardRestoreDelayMs(replacementText.Length));
+                TrySetClipboardText(savedText ?? string.Empty);
+
+                if (pressedModifiers.Count > 0)
+                {
+                    var modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(pressedModifiers);
+                    if (modifiersToRestore.Count > 0)
+                        SendKeys(modifiersToRestore, 0);
+                }
+
+                tcs.TrySetResult();
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    if (pressedModifiers is { Count: > 0 })
+                    {
+                        var modifiersToRestore = WindowsKeystrokeTyper.GetModifiersToRestore(pressedModifiers);
+                        if (modifiersToRestore.Count > 0)
+                            SendKeys(modifiersToRestore, 0);
+                    }
+                }
+                catch
+                {
+                    // Best effort only; preserve the original replacement exception.
+                }
+
+                tcs.TrySetException(ex);
+            }
+        });
+
+        t.SetApartmentState(ApartmentState.STA);
+        t.IsBackground = true;
+        t.Name = "Hush.ClipboardFullReplace";
+        t.Start();
+        return tcs.Task;
+    }
+
     internal static int CountSelectionCharacters(string? text)
     {
         if (string.IsNullOrEmpty(text))
@@ -1169,9 +1603,14 @@ internal static class WindowsClipboardTyper
             ReplacementClipboardRestoreBaseMs,
             ReplacementClipboardRestoreMaxMs);
 
+    internal static int CalculateFullBufferClipboardRestoreDelayMs(int replacementLength)
+        => Math.Max(
+            ReplacementClipboardRestoreMaxMs,
+            CalculateReplacementClipboardRestoreDelayMs(replacementLength, replacementLength));
+
     private static string? TryGetClipboardText()
     {
-        for (int attempt = 0; attempt < 5; attempt++)
+        for (int attempt = 0; attempt < ClipboardOpenRetryCount; attempt++)
         {
             if (OpenClipboard(0))
             {
@@ -1189,7 +1628,7 @@ internal static class WindowsClipboardTyper
                 }
                 finally { CloseClipboard(); }
             }
-            Thread.Sleep(20);
+            Thread.Sleep(ClipboardOpenRetryDelayMs);
         }
         return null;
     }
@@ -1212,7 +1651,7 @@ internal static class WindowsClipboardTyper
         Marshal.WriteInt16(ptr + text.Length * 2, 0);
         GlobalUnlock(hGlobal);
 
-        for (int attempt = 0; attempt < 5; attempt++)
+        for (int attempt = 0; attempt < ClipboardOpenRetryCount; attempt++)
         {
             if (OpenClipboard(0))
             {
@@ -1227,10 +1666,26 @@ internal static class WindowsClipboardTyper
                 }
                 finally { CloseClipboard(); }
             }
-            Thread.Sleep(20);
+            Thread.Sleep(ClipboardOpenRetryDelayMs);
         }
 
         GlobalFree(hGlobal);
+        return false;
+    }
+
+    private static bool TrySetClipboardTextAndVerify(string text)
+    {
+        if (!TrySetClipboardText(text))
+            return false;
+
+        for (int attempt = 0; attempt < ClipboardVerifyRetryCount; attempt++)
+        {
+            if (string.Equals(TryGetClipboardText(), text, StringComparison.Ordinal))
+                return true;
+
+            Thread.Sleep(ClipboardVerifyRetryDelayMs);
+        }
+
         return false;
     }
 
@@ -1241,6 +1696,19 @@ internal static class WindowsClipboardTyper
             MakeKey(VK_CONTROL, 0),
             MakeKey(VK_V, 0),
             MakeKey(VK_V, KEYEVENTF_KEYUP),
+            MakeKey(VK_CONTROL, KEYEVENTF_KEYUP),
+        ];
+
+        SendInputs(inputs);
+    }
+
+    private static void SendCtrlA()
+    {
+        INPUT[] inputs =
+        [
+            MakeKey(VK_CONTROL, 0),
+            MakeKey(VK_A, 0),
+            MakeKey(VK_A, KEYEVENTF_KEYUP),
             MakeKey(VK_CONTROL, KEYEVENTF_KEYUP),
         ];
 
