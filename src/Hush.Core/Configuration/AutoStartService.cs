@@ -77,14 +77,22 @@ public sealed class AutoStartService : IAutoStartService
     [SupportedOSPlatform("windows")]
     private static void SetWindowsAutoStart(bool enable)
     {
-        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true)
-            ?? throw new InvalidOperationException("Cannot open registry Run key.");
+        const string runKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
         if (enable)
+        {
+            // OpenSubKey returns null if the key doesn't exist; ?? ensures we create it instead.
+            // Only one of the two calls executes, so a single `using` safely disposes the result.
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(runKeyPath, writable: true)
+                ?? Microsoft.Win32.Registry.CurrentUser.CreateSubKey(runKeyPath);
             key.SetValue(AppName, GetExecutablePath());
+        }
         else
-            key.DeleteValue(AppName, throwOnMissingValue: false);
+        {
+            // When disabling, a missing key means the app was never registered — treat as no-op.
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(runKeyPath, writable: true);
+            key?.DeleteValue(AppName, throwOnMissingValue: false);
+        }
     }
 
     [SupportedOSPlatform("windows")]

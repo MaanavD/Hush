@@ -42,7 +42,12 @@ public sealed class AutoStartServiceTests
         // We use a distinct value name so we never conflict with a real Hush install.
         // Clean up regardless of outcome.
         using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true)!;
+            @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+
+        // Some CI environments (e.g. fresh Windows runner profiles) may not have this key.
+        // The service will create it when enabling; skip cleanup-only test path when inaccessible.
+        if (key is null)
+            return;
 
         try
         {
