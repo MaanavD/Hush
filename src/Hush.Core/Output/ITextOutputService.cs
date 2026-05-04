@@ -26,6 +26,67 @@ public interface ITextOutputService
     /// </summary>
     Task SendBackspacesAsync(int count, CancellationToken cancellationToken = default, bool skipModifierRestore = false);
 
+    /// <summary>
+    /// Replaces recently typed text with <paramref name="replacementText"/>.
+    /// Implementations may use platform-specific safer replacement strategies
+    /// when <paramref name="boundToCurrentLine"/> is requested.
+    /// </summary>
+    /// <param name="allowFullBufferReplacement">
+    /// When <see langword="true"/>, the caller has verified that the focused
+    /// editor buffer is Hush-owned, so a platform implementation may replace the
+    /// entire buffer if the expected preview cannot be reconciled safely.
+    /// </param>
+    Task ReplaceTextAsync(
+        int backspaceCount,
+        string replacementText,
+        CancellationToken cancellationToken = default,
+        bool skipModifierRestore = false,
+        bool boundToCurrentLine = false,
+        string? expectedExistingText = null,
+        bool allowFullBufferReplacement = false,
+        TextReplacementKind replacementKind = TextReplacementKind.FinalSynchronization);
+
     /// <summary>Sends a single well-known key combination to the focused application.</summary>
     Task SendKeyAsync(AutoSubmitKey key, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Optional output-service capability for editors whose test harness owns the
+/// whole target buffer and can safely replace it during final synchronization.
+/// </summary>
+public interface IFullBufferFinalReplacementOutputService : ITextOutputService
+{
+    bool PreferFullBufferFinalReplacement { get; }
+}
+
+public enum TextReplacementKind
+{
+    Preview,
+    FinalSynchronization,
+}
+
+/// <summary>
+/// Optional output-service capability for best-effort, low-latency live preview
+/// typing where final synchronization will correct any drift.
+/// </summary>
+public interface IPreviewTextOutputService : ITextOutputService
+{
+    Task TypePreviewTextAsync(
+        string text,
+        CancellationToken cancellationToken = default,
+        bool skipModifierRestore = false);
+}
+
+/// <summary>
+/// Optional output-service capability for replacing live preview text in one
+/// best-effort operation. Final synchronization remains responsible for
+/// verified, durable output.
+/// </summary>
+public interface IPreviewTextReplacementOutputService : IPreviewTextOutputService
+{
+    Task ReplacePreviewTextAsync(
+        string currentText,
+        string targetText,
+        CancellationToken cancellationToken = default,
+        bool skipModifierRestore = false);
 }

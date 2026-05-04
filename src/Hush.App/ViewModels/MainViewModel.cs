@@ -339,7 +339,9 @@ public sealed partial class MainViewModel : ObservableObject
                 _settings.Language,
                 _settings.StreamingCommit,
                 showSpinner: !_settings.StreamingCommit,
-                postProcessingPrompt: postProcessingPrompt);
+                postProcessingPrompt: postProcessingPrompt,
+                autoSubmitKey: _settings.AutoSubmitKey,
+                outputMode: _settings.StreamingCommit ? DictationOutputMode.Streaming : DictationOutputMode.Spinner);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -424,9 +426,10 @@ public sealed partial class MainViewModel : ObservableObject
 
             await _dictationSession.StartAsync(
                 _settings.Language,
-                streamingCommit: false,
-                showSpinner: true,
-                postProcessingPrompt: prompt);
+                streamingCommit: true,
+                showSpinner: false,
+                postProcessingPrompt: prompt,
+                outputMode: DictationOutputMode.CleanStreamingPreview);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

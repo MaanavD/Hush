@@ -49,6 +49,216 @@ public sealed class KeystrokeTypingServiceTests
         Assert.Empty(modifiersToRestore);
     }
 
+    [Theory]
+    [InlineData(0, 120)]
+    [InlineData(5, 125)]
+    [InlineData(67, 187)]
+    [InlineData(1000, 350)]
+    public void CalculateClipboardRestoreDelayMs_ScalesWithPasteSize(int textLength, int expectedDelayMs)
+    {
+        Assert.Equal(expectedDelayMs, WindowsClipboardTyper.CalculateClipboardRestoreDelayMs(textLength));
+    }
+
+    [Theory]
+    [InlineData("Uh today is Monday and I want to talk to my cow|", 48)]
+    [InlineData("I'm testing the real-time transcription.", 40)]
+    [InlineData("今天是周一。", 6)]
+    public void CountSelectionCharacters_CountsExpectedReplacementCharacters(string text, int expected)
+    {
+        Assert.Equal(expected, WindowsClipboardTyper.CountSelectionCharacters(text));
+    }
+
+    [Theory]
+    [InlineData(0, 120)]
+    [InlineData(47, 214)]
+    [InlineData(130, 380)]
+    [InlineData(1000, 900)]
+    public void CalculateSelectionPasteSettleDelayMs_ScalesWithSelectionSize(int characterCount, int expectedDelayMs)
+    {
+        Assert.Equal(expectedDelayMs, WindowsClipboardTyper.CalculateSelectionPasteSettleDelayMs(characterCount));
+    }
+
+    [Theory]
+    [InlineData(0, 0, 1200)]
+    [InlineData(90, 271, 1741)]
+    [InlineData(1000, 1000, 3000)]
+    public void CalculateReplacementClipboardRestoreDelayMs_WaitsForTargetPaste(
+        int replacementLength,
+        int selectedCharacterCount,
+        int expectedDelayMs)
+    {
+        Assert.Equal(
+            expectedDelayMs,
+            WindowsClipboardTyper.CalculateReplacementClipboardRestoreDelayMs(
+                replacementLength,
+                selectedCharacterCount));
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_ReplacesExactDocumentSuffix()
+    {
+        const string expected = "Um, so here is the live preview|";
+        const string replacement = "这是最终输出。";
+        const string document = "previous line 1234567890\r\n" + expected;
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            document,
+            expected,
+            replacement,
+            out var replacementValue,
+            out int replaceStart);
+
+        Assert.True(replaced);
+        Assert.Equal("previous line 1234567890\r\n" + replacement, replacementValue);
+        Assert.Equal("previous line 1234567890\r\n".Length, replaceStart);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_ReplacesFromLineAnchorWhenPreviewDiverged()
+    {
+        const string expected = "Um, so here is the live preview text Hush expected|";
+        const string actual = "Um, so here is the live preview text Notepad actually has|";
+        const string replacement = "这是最终输出。";
+        const string document = "previous line 1234567890\r\n" + actual;
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            document,
+            expected,
+            replacement,
+            out var replacementValue,
+            out int replaceStart);
+
+        Assert.True(replaced);
+        Assert.Equal("previous line 1234567890\r\n" + replacement, replacementValue);
+        Assert.Equal("previous line 1234567890\r\n".Length, replaceStart);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_DoesNotUseAnchorInMiddleOfPreviousLine()
+    {
+        const string expected = "Um, so here is the live preview text Hush expected|";
+        const string replacement = "这是最终输出。";
+        const string document = "previous line 1234567890 Um, so here is unrelated";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            document,
+            expected,
+            replacement,
+            out _,
+            out _);
+
+        Assert.False(replaced);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_ReplacesFuzzyCurrentLineWhenNotepadPreviewDiverged()
+    {
+        const string expected = "Um, I think we should move the design review to Thursday morning. Actually wait Thursday afternoon is better because the partner meeting is already on the calendar";
+        const string actual = "Um, I move the review to ning wait noon because the on the";
+        const string replacement = "I think we should move the design review to Thursday afternoon because the partner meeting is already on the calendar.";
+        const string document = "previous line\r\n" + actual;
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            document,
+            expected,
+            replacement,
+            out var replacementValue,
+            out int replaceStart);
+
+        Assert.True(replaced);
+        Assert.Equal("previous line\r\n" + replacement, replacementValue);
+        Assert.Equal("previous line\r\n".Length, replaceStart);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_DoesNotFuzzyReplaceUnrelatedCurrentLine()
+    {
+        const string expected = "Um, I think we should move the design review to Thursday morning.";
+        const string replacement = "I think we should move the design review to Thursday afternoon.";
+        const string document = "previous line\r\nBudget notes for next quarter and travel planning";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            document,
+            expected,
+            replacement,
+            out _,
+            out _);
+
+        Assert.False(replaced);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_FullBufferAllowed_OverwritesUnexpectedCurrentValue()
+    {
+        const string expected = "Clean command";
+        const string replacement = "Clean command";
+        const string contaminatedDocument = "https://contoso.sharepoint.com/sites/stale-clipboard";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            contaminatedDocument,
+            expected,
+            replacement,
+            allowFullBufferReplacement: true,
+            out var replacementValue,
+            out int replaceStart);
+
+        Assert.True(replaced);
+        Assert.Equal(replacement, replacementValue);
+        Assert.Equal(0, replaceStart);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_FullBufferDisallowed_DoesNotOverwriteUnexpectedCurrentValue()
+    {
+        const string expected = "Clean command";
+        const string replacement = "Clean command";
+        const string contaminatedDocument = "https://contoso.sharepoint.com/sites/stale-clipboard";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            contaminatedDocument,
+            expected,
+            replacement,
+            allowFullBufferReplacement: false,
+            out _,
+            out _);
+
+        Assert.False(replaced);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_EmptyExpected_ReplacesEmptyDocument()
+    {
+        const string replacement = "First live preview";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            string.Empty,
+            string.Empty,
+            replacement,
+            allowFullBufferReplacement: false,
+            out var replacementValue,
+            out int replaceStart);
+
+        Assert.True(replaced);
+        Assert.Equal(replacement, replacementValue);
+        Assert.Equal(0, replaceStart);
+    }
+
+    [Fact]
+    public void TryCreateReplacementValue_EmptyExpected_DoesNotOverwriteExistingDocument()
+    {
+        const string replacement = "First live preview";
+
+        bool replaced = WindowsAutomationTextReplacer.TryCreateReplacementValue(
+            "existing user note",
+            string.Empty,
+            replacement,
+            allowFullBufferReplacement: true,
+            out _,
+            out _);
+
+        Assert.False(replaced);
+    }
+
     // ── Platform dispatch (only testable on current platform) ────────────
 
     [Fact]

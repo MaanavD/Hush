@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using System.Text.RegularExpressions;
 using Betalgo.Ranul.OpenAI.ObjectModels.RequestModels;
+using Hush.Core.Configuration;
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,10 +15,34 @@ namespace Hush.Core.PostProcessing;
 /// </summary>
 public sealed class FoundryPostProcessingService : IPostProcessingService
 {
+    private const string InputPlaceholder = "{input}";
+
     private readonly ILogger<FoundryPostProcessingService> _logger;
     private OpenAIChatClient? _chatClient;
+    private static readonly Regex CleanDictationFillerRegex = new(
+        @"\s*,?\s*\b(?:um+|uh+|er+|ah+|you\s+know)\b\s*,?\s*",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex CleanDictationRepeatedIRegex = new(
+        @"\bI\s+I\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex CleanDictationBetterAlternativeInputRegex = new(
+        @"\bto\s+(?<old>[a-z0-9][a-z0-9\s-]{0,60}?)\s*[.!?]\s*actually,?\s*wait,?\s*(?<new>[a-z0-9][a-z0-9\s-]{0,60}?)\s+is\s+better\s+because\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex WhitespaceRegex = new(
+        @"\s+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex SpaceBeforePunctuationRegex = new(
+        @"\s+([,.;:!?])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex SpaceAfterPunctuationRegex = new(
+        @"([,.;:!?])(?=\S)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public const string DefaultModelAlias = "qwen3-0.6b";
+    internal const float CleanupTemperature = 0.0f;
+    internal const float CleanupTopP = 1.0f;
+    internal const int CleanupRandomSeed = 0;
+    internal const int MaxPostProcessingTokens = 1024;
 
     public FoundryPostProcessingService(ILogger<FoundryPostProcessingService>? logger = null)
         => _logger = logger ?? NullLogger<FoundryPostProcessingService>.Instance;
@@ -65,28 +91,96 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
 
         try
         {
-            // Set recommended non-thinking parameters for Qwen3.
+            // Dictation cleanup should be deterministic and bounded; small local
+            // models can otherwise echo instructions until the backend limit.
             // These must be applied before each call because Settings is shared state.
-            _chatClient.Settings.Temperature = 0.7f;
-            _chatClient.Settings.TopP = 0.8f;
+            _chatClient.Settings.Temperature = CleanupTemperature;
+            _chatClient.Settings.TopP = CleanupTopP;
+            _chatClient.Settings.RandomSeed = CleanupRandomSeed;
+            _chatClient.Settings.MaxTokens = MaxPostProcessingTokens;
 
+            var transcriptForPrompt = IsBuiltInCleanDictationPrompt(systemPrompt)
+                ? ApplyCleanDictationInputSafeguards(rawTranscript)
+                : rawTranscript;
+            var promptMessages = BuildPromptMessages(transcriptForPrompt, systemPrompt);
             var messages = new[]
             {
-                ChatMessage.FromSystem(systemPrompt),
-                // /no_think is Qwen3's soft switch to disable chain-of-thought.
-                // It must appear in the user message; prepend it before the transcript.
-                ChatMessage.FromUser("/no_think\n" + rawTranscript)
+                ChatMessage.FromSystem(promptMessages.SystemMessage),
+                ChatMessage.FromUser(promptMessages.UserMessage)
             };
 
             var response = await _chatClient.CompleteChatAsync(messages, ct);
             var raw = response?.Choices?[0]?.Message?.Content?.Trim();
-            return raw is null ? null : StripThinking(raw);
+            if (raw is null)
+                return null;
+
+            return ApplyCleanDictationSafeguards(StripThinking(raw), systemPrompt);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Post-processing rewrite failed — returning null.");
             return null;
         }
+    }
+
+    internal static PromptMessages BuildPromptMessages(string rawTranscript, string systemPrompt)
+    {
+        if (systemPrompt.Contains(InputPlaceholder, StringComparison.OrdinalIgnoreCase))
+        {
+            return new PromptMessages(
+                "You are Hush's post-processing assistant. Follow the user's prompt exactly and output only the final transformed text.",
+                WithNoThink(systemPrompt.Replace(InputPlaceholder, rawTranscript, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return new PromptMessages(systemPrompt, WithNoThink(rawTranscript));
+    }
+
+    private static string WithNoThink(string text) => "/no_think\n" + text;
+
+    internal readonly record struct PromptMessages(string SystemMessage, string UserMessage);
+
+    internal static string ApplyCleanDictationSafeguards(string text, string systemPrompt)
+    {
+        if (!IsBuiltInCleanDictationPrompt(systemPrompt) || string.IsNullOrWhiteSpace(text))
+            return text;
+
+        var cleaned = CleanDictationFillerRegex.Replace(text, " ");
+        cleaned = CleanDictationRepeatedIRegex.Replace(cleaned, "I");
+        cleaned = NormalizeCleanDictationOutput(cleaned);
+        return CapitalizeFirstAsciiLetter(cleaned);
+    }
+
+    internal static string ApplyCleanDictationInputSafeguards(string rawTranscript)
+    {
+        if (string.IsNullOrWhiteSpace(rawTranscript))
+            return rawTranscript;
+
+        var cleaned = CleanDictationBetterAlternativeInputRegex.Replace(
+            rawTranscript,
+            match => $"to {match.Groups["new"].Value.Trim()} because");
+        return NormalizeCleanDictationOutput(cleaned);
+    }
+
+    private static bool IsBuiltInCleanDictationPrompt(string systemPrompt)
+    {
+        var cleanPrompt = HushSettings.BuiltInPrompts.First(p => p.Id == "clean-dictation").Prompt;
+        return string.Equals(systemPrompt, cleanPrompt, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeCleanDictationOutput(string text)
+    {
+        var normalized = WhitespaceRegex.Replace(text, " ");
+        normalized = SpaceBeforePunctuationRegex.Replace(normalized, "$1");
+        normalized = SpaceAfterPunctuationRegex.Replace(normalized, "$1 ");
+        return normalized.Trim().TrimStart(',', ';', ':').TrimStart();
+    }
+
+    private static string CapitalizeFirstAsciiLetter(string text)
+    {
+        if (text.Length == 0 || text[0] < 'a' || text[0] > 'z')
+            return text;
+
+        return char.ToUpperInvariant(text[0]) + text[1..];
     }
 
     /// <summary>
