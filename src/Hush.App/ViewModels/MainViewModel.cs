@@ -30,6 +30,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly OverlayViewModel _overlayVm;
     private readonly ILogger<MainViewModel> _logger;
     private readonly IPostProcessingService? _postProcessor;
+    private string? _lastPostProcessingWarmupError;
 
     [ObservableProperty]
     private bool _isModelReady;
@@ -169,18 +170,7 @@ public sealed partial class MainViewModel : ObservableObject
             // If PostProcessingEnabled, warm up the LLM rewrite model in the background.
             if (_settings.PostProcessingEnabled && _postProcessor is not null)
             {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _postProcessor.InitializeAsync(_settings.PostProcessingModel, cancellationToken);
-                        _logger.LogInformation("Post-processing model '{Model}' ready.", _settings.PostProcessingModel);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Post-processing model init failed; clean mode will use plain transcript.");
-                    }
-                });
+                _ = Task.Run(() => WarmUpPostProcessorAsync(_settings.PostProcessingModel, cancellationToken));
             }
 
             // Warm up first-press code paths so the JIT doesn't stall the
@@ -274,18 +264,7 @@ public sealed partial class MainViewModel : ObservableObject
             && _postProcessor is not null
             && !string.Equals(previousPostProcessingModel, _settings.PostProcessingModel, StringComparison.Ordinal))
         {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _postProcessor.InitializeAsync(_settings.PostProcessingModel, cancellationToken);
-                    _logger.LogInformation("Post-processing model updated to '{Model}'.", _settings.PostProcessingModel);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Post-processing model re-init failed.");
-                }
-            });
+            _ = Task.Run(() => WarmUpPostProcessorAsync(_settings.PostProcessingModel, cancellationToken));
         }
 
         if (hotkeyError is not null)
@@ -400,6 +379,21 @@ public sealed partial class MainViewModel : ObservableObject
         if (!IsModelReady)
             return;
 
+        if (_settings.PostProcessingEnabled && _postProcessor?.IsReady != true)
+        {
+            var detail = string.IsNullOrWhiteSpace(_lastPostProcessingWarmupError)
+                ? $"'{_settings.PostProcessingModel}' is still loading or failed to load."
+                : _lastPostProcessingWarmupError;
+            var message = $"Clean mode is not ready: {detail}";
+            _logger.LogWarning("Clean hotkey ignored because post-processing model is not ready: {Detail}", detail);
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _overlayVm.ErrorMessage = message;
+                StatusMessage = message;
+            });
+            return;
+        }
+
         // Drop duplicate presses while a clean session is already starting or live.
         if (System.Threading.Interlocked.CompareExchange(ref _cleanSessionBusy, 1, 0) != 0)
         {
@@ -420,7 +414,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (_settings.SoundEffects)
                 _ = _soundEffects.PlayStartAsync();
 
-            var prompt = (_settings.PostProcessingEnabled && _postProcessor?.IsReady == true)
+            var prompt = _settings.PostProcessingEnabled
                 ? _settings.GetActivePrompt().Prompt
                 : null;
 
@@ -563,6 +557,98 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    private string BuildReadyStatusMessage() =>
-        $"Ready — hold {_settings.Hotkey} (raw) or {_settings.CleanHotkey} (clean)";
+    /// <summary>
+    /// Background warmup for the cleaning (post-processing) model. Surfaces
+    /// progress via <see cref="StatusMessage"/> (tray tooltip + main window
+    /// status) and the overlay's cleaning-model banner so the user can see
+    /// what's happening during the (potentially multi-GB) first-run download.
+    /// Errors are logged but never thrown — clean mode is optional.
+    /// </summary>
+    private async Task WarmUpPostProcessorAsync(string modelAlias, CancellationToken cancellationToken)
+    {
+        if (_postProcessor is null)
+            return;
+
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            _overlayVm.IsCleaningModelLoading = true;
+            _overlayVm.CleaningModelDownloadProgress = 0.0;
+            _overlayVm.CleaningModelStatus = $"Resolving '{modelAlias}'…";
+            _lastPostProcessingWarmupError = null;
+        });
+
+        var downloadProgress = new Progress<double>(p =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.CleaningModelDownloadProgress = p;
+                if (p > 0.0 && p < 1.0)
+                    StatusMessage = $"Downloading cleaning model… {p:P0}";
+            });
+        });
+
+        var statusProgress = new Progress<string>(s =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.CleaningModelStatus = s;
+                // Only overwrite the main StatusMessage when not actively
+                // showing a download-percent line (avoids flicker between
+                // "Downloading… 42%" and "Downloading cleaning model…").
+                if (_overlayVm.CleaningModelDownloadProgress <= 0.0
+                    || _overlayVm.CleaningModelDownloadProgress >= 1.0)
+                    StatusMessage = s;
+            });
+        });
+
+        try
+        {
+            await _postProcessor.InitializeAsync(
+                modelAlias,
+                downloadProgress: downloadProgress,
+                statusProgress: statusProgress,
+                ct: cancellationToken);
+
+            if (_postProcessor.IsReady)
+            {
+                _logger.LogInformation("Post-processing model '{Model}' ready.", modelAlias);
+            }
+            else
+            {
+                _lastPostProcessingWarmupError = $"'{modelAlias}' failed to load. Check ~/.Hush/logs for Foundry Local details.";
+                _logger.LogWarning("Post-processing model '{Model}' did not become ready after warmup.", modelAlias);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Post-processing model warmup failed; clean mode will use plain transcript.");
+            _lastPostProcessingWarmupError = ex.Message;
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.CleaningModelStatus = $"Cleaning model failed: {ex.Message}";
+            });
+        }
+        finally
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _overlayVm.IsCleaningModelLoading = false;
+                _overlayVm.CleaningModelDownloadProgress = 0.0;
+                if (IsModelReady && _postProcessor?.IsReady == true)
+                    StatusMessage = BuildReadyStatusMessage();
+                else if (IsModelReady && _settings.PostProcessingEnabled)
+                    StatusMessage = $"Ready — hold {_settings.Hotkey} (raw); clean mode unavailable";
+                else if (IsModelReady)
+                    StatusMessage = BuildReadyStatusMessage();
+            });
+        }
+    }
+
+    private string BuildReadyStatusMessage()
+    {
+        var rawReady = $"Ready — hold {_settings.Hotkey} (raw)";
+        return _settings.PostProcessingEnabled && _postProcessor?.IsReady == true
+            ? $"{rawReady} or {_settings.CleanHotkey} (clean)"
+            : rawReady;
+    }
 }

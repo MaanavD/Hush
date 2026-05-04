@@ -153,6 +153,8 @@ The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifyi
 - **Elevated windows** on Windows: `SendInput` is blocked by UIPI when the target app runs as administrator. Run Hush as admin to type into admin windows.
 - **Code signing** is not yet set up. Windows SmartScreen or macOS Gatekeeper may show warnings on first launch.
 - **Pre-release SDK dependency.** Hush depends on pre-release `Microsoft.AI.Foundry.Local` packages that are not yet published to nuget.org. See the [Build Prerequisites](#build-prerequisites) section for setup instructions.
+- **Temporary catalog filter.** The default Foundry Local catalog hides several Qwen3.5 / Qwen3-VL models we are evaluating. To make them visible, `FoundryRuntimeConfiguration.Create` (in `src/Hush.Core/Transcription/`) sets `AdditionalSettings["AzureCatalogFilter"] = "'',test"` on the SDK `Configuration`. **Remove this once those models are promoted to the public catalog** — search the codebase for `TemporaryAzureCatalogFilter` / `AzureCatalogFilter` to find every spot.
+- **Qwen3.5 cleanup model blocked.** `qwen3.5-0.8b` is visible and can download, but the current Foundry/ONNX Runtime stack fails to load it with `CausalConvWithState` missing. Hush uses `qwen3-0.6b` for clean mode until a compatible runtime is available.
 - **No auto-update.** Check the GitHub releases page for new versions.
 - All inference is on-device.
 

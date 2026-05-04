@@ -52,7 +52,28 @@ public sealed partial class OverlayViewModel : ObservableObject
     /// <summary>True once the model is loaded and dictation is possible.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsPreparing))]
+    [NotifyPropertyChangedFor(nameof(ShowCleaningModelBanner))]
     private bool _isModelReady;
+
+    /// <summary>
+    /// True while the cleaning (post-processing) model is being resolved /
+    /// downloaded / loaded after the main transcription model is already
+    /// ready. Drives a small banner so the user can see what's happening
+    /// during the (potentially large) background download.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowCleaningModelBanner))]
+    [NotifyPropertyChangedFor(nameof(ShowCleaningModelDownloadProgress))]
+    private bool _isCleaningModelLoading;
+
+    /// <summary>Cleaning model download progress 0–1 during background warmup.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowCleaningModelDownloadProgress))]
+    private double _cleaningModelDownloadProgress;
+
+    /// <summary>Sub-stage text for the cleaning model warmup ("Downloading…", "Loading…", etc.).</summary>
+    [ObservableProperty]
+    private string _cleaningModelStatus = string.Empty;
 
     [ObservableProperty]
     private string _overlayPosition = "bottom-center";
@@ -108,6 +129,13 @@ public sealed partial class OverlayViewModel : ObservableObject
     /// "Connecting" / "Loading" phases the value is 0 and would be misleading.
     /// </summary>
     public bool ShowPreparingProgress => ModelDownloadProgress > 0.0 && ModelDownloadProgress < 1.0;
+
+    /// <summary>Show the cleaning-model banner only after the main model is ready and the cleaning model is still loading.</summary>
+    public bool ShowCleaningModelBanner => IsModelReady && IsCleaningModelLoading;
+
+    /// <summary>Only show the cleaning-model % pill while a download is actually in progress.</summary>
+    public bool ShowCleaningModelDownloadProgress =>
+        IsCleaningModelLoading && CleaningModelDownloadProgress > 0.0 && CleaningModelDownloadProgress < 1.0;
 
     /// <summary>Listening in raw (purple) mode.</summary>
     public bool IsListeningRaw => IsListening && !IsCleanMode;

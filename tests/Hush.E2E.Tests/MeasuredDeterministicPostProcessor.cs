@@ -35,7 +35,11 @@ internal sealed class MeasuredDeterministicPostProcessor : IMeasuredPostProcesso
 
     public TimeSpan RewriteDuration { get; private set; }
 
-    public Task InitializeAsync(string modelAlias, CancellationToken ct = default) => Task.CompletedTask;
+    public Task InitializeAsync(
+        string modelAlias,
+        IProgress<double>? downloadProgress = null,
+        IProgress<string>? statusProgress = null,
+        CancellationToken ct = default) => Task.CompletedTask;
 
     public async Task<string?> RewriteAsync(string rawTranscript, string systemPrompt, CancellationToken ct = default)
     {

@@ -33,7 +33,16 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 Console.Write("Initializing Foundry Local runtime... ");
 var initSw = Stopwatch.StartNew();
 await FoundryLocalManager.CreateAsync(
-    new Configuration { AppName = "TranscriptionBenchmark" },
+    new Configuration
+    {
+        AppName = "TranscriptionBenchmark",
+        // TEMPORARY: matches Hush.Core's FoundryRuntimeConfiguration so pre-release / test
+        // models (qwen3.5-*, qwen3-vl-*) are visible. Drop once they ship in the default catalog.
+        AdditionalSettings = new Dictionary<string, string>
+        {
+            { "AzureCatalogFilter", "'',test" },
+        },
+    },
     NullLogger.Instance);
 var manager = FoundryLocalManager.Instance;
 initSw.Stop();

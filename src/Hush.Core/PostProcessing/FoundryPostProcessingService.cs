@@ -51,32 +51,68 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
     public bool IsReady => _chatClient is not null;
 
     /// <inheritdoc/>
-    public async Task InitializeAsync(string modelAlias, CancellationToken ct = default)
+    public async Task InitializeAsync(
+        string modelAlias,
+        IProgress<double>? downloadProgress = null,
+        IProgress<string>? statusProgress = null,
+        CancellationToken ct = default)
     {
         if (_chatClient is not null)
+        {
+            statusProgress?.Report("Cleaning model ready");
             return;
+        }
 
         try
         {
+            statusProgress?.Report($"Resolving cleaning model '{modelAlias}'…");
             var manager = FoundryLocalManager.Instance;
             var catalog = await manager.GetCatalogAsync(ct);
             var model = await catalog.GetModelAsync(modelAlias, ct);
             if (model is null)
             {
                 _logger.LogWarning("Post-processing model '{Alias}' not found in catalog.", modelAlias);
+                statusProgress?.Report($"Cleaning model '{modelAlias}' not found");
                 return;
             }
 
-            if (!await model.IsCachedAsync())
-                await model.DownloadAsync(null);
+            statusProgress?.Report($"Checking cache for '{modelAlias}'…");
+            var alreadyCached = await model.IsCachedAsync();
+            if (!alreadyCached)
+            {
+                _logger.LogInformation("Downloading post-processing model '{Alias}'…", modelAlias);
+                bool announcedDownload = false;
+                Action<float> sdkProgress = pct =>
+                {
+                    if (!announcedDownload && pct > 0.01f)
+                    {
+                        announcedDownload = true;
+                        statusProgress?.Report($"Downloading cleaning model '{modelAlias}'…");
+                    }
+                    downloadProgress?.Report(pct / 100.0);
+                    if (pct > 0.01f)
+                        statusProgress?.Report($"Downloading cleaning model… {pct / 100.0:P0}");
+                };
+                await model.DownloadAsync(sdkProgress);
+                downloadProgress?.Report(1.0);
+                _logger.LogInformation("Downloaded post-processing model '{Alias}'.", modelAlias);
+            }
+            else
+            {
+                _logger.LogDebug("Post-processing model '{Alias}' already cached.", modelAlias);
+                downloadProgress?.Report(1.0);
+            }
 
+            statusProgress?.Report("Loading cleaning model into runtime…");
             await model.LoadAsync();
             _chatClient = await model.GetChatClientAsync(ct);
-            _logger.LogDebug("Post-processing model '{Alias}' loaded.", modelAlias);
+            statusProgress?.Report("Cleaning model ready");
+            _logger.LogInformation("Post-processing model '{Alias}' loaded.", modelAlias);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to initialise post-processing model '{Alias}'.", modelAlias);
+            statusProgress?.Report($"Cleaning model failed to load: {ex.Message}");
         }
     }
 

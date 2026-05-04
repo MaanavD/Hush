@@ -10,8 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AI.Foundry.Local" Version="1.0.0-dev.202604071256" />
-    <PackageReference Include="Microsoft.AI.Foundry.Local.Core" Version="1.0.0-dev-202604071256-f3a8039f" />
+    <PackageReference Include="Microsoft.AI.Foundry.Local" Version="1.1.0-dev.202605010202" />
+    <PackageReference Include="Microsoft.AI.Foundry.Local.Core" Version="1.1.0-dev-202605010202-f53975ac" />
     <PackageReference Include="NAudio" Version="2.3.0" />
   </ItemGroup>
 

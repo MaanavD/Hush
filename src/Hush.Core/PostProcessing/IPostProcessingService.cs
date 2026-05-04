@@ -13,8 +13,14 @@ public interface IPostProcessingService : IAsyncDisposable
     /// No-op if the model is already loaded.
     /// </summary>
     /// <param name="modelAlias">Foundry Local model alias, e.g. <c>"qwen3-0.6b"</c>.</param>
+    /// <param name="downloadProgress">Optional progress reporter (0–1) for the SDK download phase.</param>
+    /// <param name="statusProgress">Optional human-readable sub-stage reporter (e.g. "Resolving…", "Downloading…", "Loading…", "Ready").</param>
     /// <param name="ct">Cancellation token.</param>
-    Task InitializeAsync(string modelAlias, CancellationToken ct = default);
+    Task InitializeAsync(
+        string modelAlias,
+        IProgress<double>? downloadProgress = null,
+        IProgress<string>? statusProgress = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Rewrites <paramref name="rawTranscript"/> using the provided
