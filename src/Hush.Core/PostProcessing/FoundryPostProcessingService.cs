@@ -18,7 +18,10 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
     private const string InputPlaceholder = "{input}";
 
     private readonly ILogger<FoundryPostProcessingService> _logger;
+    private readonly object _stateGate = new();
     private OpenAIChatClient? _chatClient;
+    private string? _loadedModelAlias;
+    private int _initializationVersion;
     private static readonly Regex CleanDictationFillerRegex = new(
         @"\s*,?\s*\b(?:um+|uh+|er+|ah+|you\s+know)\b\s*,?\s*",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -48,7 +51,16 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
         => _logger = logger ?? NullLogger<FoundryPostProcessingService>.Instance;
 
     /// <inheritdoc/>
-    public bool IsReady => _chatClient is not null;
+    public bool IsReady
+    {
+        get
+        {
+            lock (_stateGate)
+            {
+                return _chatClient is not null;
+            }
+        }
+    }
 
     /// <inheritdoc/>
     public async Task InitializeAsync(
@@ -57,10 +69,23 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
         IProgress<string>? statusProgress = null,
         CancellationToken ct = default)
     {
-        if (_chatClient is not null)
+        int initializationVersion;
+        lock (_stateGate)
         {
-            statusProgress?.Report("Cleaning model ready");
-            return;
+            if (_chatClient is not null && string.Equals(_loadedModelAlias, modelAlias, StringComparison.OrdinalIgnoreCase))
+            {
+                statusProgress?.Report("Cleaning model ready");
+                return;
+            }
+
+            if (_chatClient is not null)
+            {
+                statusProgress?.Report($"Switching cleaning model to '{modelAlias}'…");
+                _chatClient = null;
+                _loadedModelAlias = null;
+            }
+
+            initializationVersion = ++_initializationVersion;
         }
 
         try
@@ -77,7 +102,7 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
             }
 
             statusProgress?.Report($"Checking cache for '{modelAlias}'…");
-            var alreadyCached = await model.IsCachedAsync();
+            var alreadyCached = await model.IsCachedAsync(ct);
             if (!alreadyCached)
             {
                 _logger.LogInformation("Downloading post-processing model '{Alias}'…", modelAlias);
@@ -93,7 +118,11 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
                     if (pct > 0.01f)
                         statusProgress?.Report($"Downloading cleaning model… {pct / 100.0:P0}");
                 };
-                await model.DownloadAsync(sdkProgress);
+                await model.DownloadAsync(sdkProgress, ct);
+                ct.ThrowIfCancellationRequested();
+                if (!IsCurrentInitialization(initializationVersion))
+                    return;
+
                 downloadProgress?.Report(1.0);
                 _logger.LogInformation("Downloaded post-processing model '{Alias}'.", modelAlias);
             }
@@ -104,10 +133,20 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
             }
 
             statusProgress?.Report("Loading cleaning model into runtime…");
-            await model.LoadAsync();
-            _chatClient = await model.GetChatClientAsync(ct);
+            await model.LoadAsync(ct);
+            var chatClient = await model.GetChatClientAsync(ct);
+            ct.ThrowIfCancellationRequested();
+
+            if (!TrySetCurrentChatClient(initializationVersion, modelAlias, chatClient))
+                return;
+
             statusProgress?.Report("Cleaning model ready");
             _logger.LogInformation("Post-processing model '{Alias}' loaded.", modelAlias);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            statusProgress?.Report($"Canceled cleaning model '{modelAlias}'");
+            throw;
         }
         catch (Exception ex)
         {
@@ -116,10 +155,37 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
         }
     }
 
+    private bool IsCurrentInitialization(int initializationVersion)
+    {
+        lock (_stateGate)
+        {
+            return _initializationVersion == initializationVersion;
+        }
+    }
+
+    private bool TrySetCurrentChatClient(int initializationVersion, string modelAlias, OpenAIChatClient chatClient)
+    {
+        lock (_stateGate)
+        {
+            if (_initializationVersion != initializationVersion)
+                return false;
+
+            _chatClient = chatClient;
+            _loadedModelAlias = modelAlias;
+            return true;
+        }
+    }
+
     /// <inheritdoc/>
     public async Task<string?> RewriteAsync(string rawTranscript, string systemPrompt, CancellationToken ct = default)
     {
-        if (_chatClient is null)
+        OpenAIChatClient? chatClient;
+        lock (_stateGate)
+        {
+            chatClient = _chatClient;
+        }
+
+        if (chatClient is null)
         {
             _logger.LogDebug("RewriteAsync called but service is not initialised — returning null.");
             return null;
@@ -130,10 +196,10 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
             // Dictation cleanup should be deterministic and bounded; small local
             // models can otherwise echo instructions until the backend limit.
             // These must be applied before each call because Settings is shared state.
-            _chatClient.Settings.Temperature = CleanupTemperature;
-            _chatClient.Settings.TopP = CleanupTopP;
-            _chatClient.Settings.RandomSeed = CleanupRandomSeed;
-            _chatClient.Settings.MaxTokens = MaxPostProcessingTokens;
+            chatClient.Settings.Temperature = CleanupTemperature;
+            chatClient.Settings.TopP = CleanupTopP;
+            chatClient.Settings.RandomSeed = CleanupRandomSeed;
+            chatClient.Settings.MaxTokens = MaxPostProcessingTokens;
 
             var transcriptForPrompt = IsBuiltInCleanDictationPrompt(systemPrompt)
                 ? ApplyCleanDictationInputSafeguards(rawTranscript)
@@ -145,7 +211,7 @@ public sealed class FoundryPostProcessingService : IPostProcessingService
                 ChatMessage.FromUser(promptMessages.UserMessage)
             };
 
-            var response = await _chatClient.CompleteChatAsync(messages, ct);
+            var response = await chatClient.CompleteChatAsync(messages, ct);
             var raw = response?.Choices?[0]?.Message?.Content?.Trim();
             if (raw is null)
                 return null;

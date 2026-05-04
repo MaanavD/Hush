@@ -48,6 +48,9 @@ namespace Hush.App.ViewModels
 
         public ObservableCollection<LanguageModelOptionViewModel> AvailableLanguageModels { get; } = new();
         public bool HasLanguageModelCatalogStatus => !string.IsNullOrWhiteSpace(LanguageModelCatalogStatus);
+        public bool IsPostProcessingModelActivationPending => PostProcessingEnabled
+            && (!string.Equals(_settings.PostProcessingModel, PostProcessingModel, StringComparison.Ordinal)
+                || !_settings.PostProcessingEnabled);
 
         // Prompts
         public ObservableCollection<LlmPromptViewModel> AllPrompts { get; } = new();
@@ -250,6 +253,20 @@ namespace Hush.App.ViewModels
             }
         }
 
+        public LanguageModelOptionViewModel? GetPendingPostProcessingModelDownload()
+        {
+            if (!IsPostProcessingModelActivationPending)
+                return null;
+
+            var option = SelectedPostProcessingLanguageModel
+                ?? AvailableLanguageModels.FirstOrDefault(
+                    model => string.Equals(model.Alias, PostProcessingModel, StringComparison.OrdinalIgnoreCase));
+
+            return option is { IsCatalogModel: true, IsCached: false }
+                ? option
+                : null;
+        }
+
         partial void OnPostProcessingModelChanged(string value)
         {
             if (!_syncingSelectedLanguageModel)
@@ -383,17 +400,27 @@ namespace Hush.App.ViewModels
 
     public sealed record LanguageModelOptionViewModel(string Alias, string Detail, bool IsCatalogModel)
     {
+        public bool IsCached { get; init; } = true;
+        public string DownloadSizeLabel { get; init; } = string.Empty;
+
         public static LanguageModelOptionViewModel FromCatalog(LanguageModelCatalogItem model)
         {
             var cacheLabel = model.IsCached ? "cached" : model.FileSizeLabel;
             return new LanguageModelOptionViewModel(
                 model.Alias,
                 $"{model.ParameterLabel} - {cacheLabel}",
-                IsCatalogModel: true);
+                IsCatalogModel: true)
+            {
+                IsCached = model.IsCached,
+                DownloadSizeLabel = model.FileSizeLabel,
+            };
         }
 
         public static LanguageModelOptionViewModel Custom(string alias)
-            => new(alias, "Current custom alias", IsCatalogModel: false);
+            => new(alias, "Current custom alias", IsCatalogModel: false)
+            {
+                IsCached = true,
+            };
 
         public override string ToString() => Alias;
     }

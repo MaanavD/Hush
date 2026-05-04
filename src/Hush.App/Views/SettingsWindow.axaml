@@ -31,7 +31,7 @@
                            FontSize="18"
                            FontWeight="SemiBold"
                            Foreground="{StaticResource Hush.Text.Primary.Brush}" />
-                <TextBlock Text="Changes are saved when you close this window."
+                <TextBlock Text="Choose Save &amp; Close to apply changes."
                            FontSize="11"
                            Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
             </StackPanel>

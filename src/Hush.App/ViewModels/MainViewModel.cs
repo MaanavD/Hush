@@ -31,6 +31,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly OverlayViewModel _overlayVm;
     private readonly ILogger<MainViewModel> _logger;
     private readonly IPostProcessingService? _postProcessor;
+    private readonly PostProcessingWarmupController _postProcessingWarmup = new();
     private string? _lastPostProcessingWarmupError;
 
     [ObservableProperty]
@@ -172,7 +173,7 @@ public sealed partial class MainViewModel : ObservableObject
             // If PostProcessingEnabled, warm up the LLM rewrite model in the background.
             if (_settings.PostProcessingEnabled && _postProcessor is not null)
             {
-                _ = Task.Run(() => WarmUpPostProcessorAsync(_settings.PostProcessingModel, cancellationToken));
+                StartPostProcessorWarmup(_settings.PostProcessingModel, cancellationToken);
             }
 
             // Warm up first-press code paths so the JIT doesn't stall the
@@ -218,6 +219,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var previousHotkey = _settings.Hotkey;
         var previousCleanHotkey = _settings.CleanHotkey;
+        var previousPostProcessingEnabled = _settings.PostProcessingEnabled;
         var previousPostProcessingModel = _settings.PostProcessingModel;
         SettingsViewModel.Apply();
 
@@ -261,12 +263,13 @@ public sealed partial class MainViewModel : ObservableObject
         _overlayVm.OverlayOpacity = _settings.OverlayOpacity;
         _audioCapture.DeviceIndex = _settings.MicrophoneDeviceIndex;
 
-        // Re-initialize post-processor if the model alias changed.
+        // Re-initialize post-processor if clean mode was enabled or the alias changed.
         if (_settings.PostProcessingEnabled
             && _postProcessor is not null
-            && !string.Equals(previousPostProcessingModel, _settings.PostProcessingModel, StringComparison.Ordinal))
+            && (!previousPostProcessingEnabled
+                || !string.Equals(previousPostProcessingModel, _settings.PostProcessingModel, StringComparison.Ordinal)))
         {
-            _ = Task.Run(() => WarmUpPostProcessorAsync(_settings.PostProcessingModel, cancellationToken));
+            StartPostProcessorWarmup(_settings.PostProcessingModel, cancellationToken);
         }
 
         if (hotkeyError is not null)
@@ -566,13 +569,27 @@ public sealed partial class MainViewModel : ObservableObject
     /// what's happening during the (potentially multi-GB) first-run download.
     /// Errors are logged but never thrown — clean mode is optional.
     /// </summary>
-    private async Task WarmUpPostProcessorAsync(string modelAlias, CancellationToken cancellationToken)
+    private void StartPostProcessorWarmup(string modelAlias, CancellationToken cancellationToken)
     {
         if (_postProcessor is null)
             return;
 
+        var operation = _postProcessingWarmup.Begin(cancellationToken);
+        _ = Task.Run(() => WarmUpPostProcessorAsync(modelAlias, operation), CancellationToken.None);
+    }
+
+    private async Task WarmUpPostProcessorAsync(string modelAlias, PostProcessingWarmupOperation operation)
+    {
+        if (_postProcessor is null)
+            return;
+
+        var cancellationToken = operation.Token;
+
         Avalonia.Threading.Dispatcher.UIThread.Post(() =>
         {
+            if (!operation.IsCurrent)
+                return;
+
             _overlayVm.IsCleaningModelLoading = true;
             _overlayVm.CleaningModelDownloadProgress = 0.0;
             _overlayVm.CleaningModelStatus = $"Resolving '{modelAlias}'…";
@@ -583,6 +600,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
+                if (!operation.IsCurrent)
+                    return;
+
                 _overlayVm.CleaningModelDownloadProgress = p;
                 if (p > 0.0 && p < 1.0)
                     StatusMessage = $"Downloading cleaning model… {p:P0}";
@@ -593,6 +613,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
+                if (!operation.IsCurrent)
+                    return;
+
                 _overlayVm.CleaningModelStatus = s;
                 // Only overwrite the main StatusMessage when not actively
                 // showing a download-percent line (avoids flicker between
@@ -611,6 +634,9 @@ public sealed partial class MainViewModel : ObservableObject
                 statusProgress: statusProgress,
                 ct: cancellationToken);
 
+            if (!operation.IsCurrent)
+                return;
+
             if (_postProcessor.IsReady)
             {
                 _logger.LogInformation("Post-processing model '{Model}' ready.", modelAlias);
@@ -621,12 +647,20 @@ public sealed partial class MainViewModel : ObservableObject
                 _logger.LogWarning("Post-processing model '{Model}' did not become ready after warmup.", modelAlias);
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation("Post-processing model warmup for '{Model}' was canceled.", modelAlias);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Post-processing model warmup failed; clean mode will use plain transcript.");
-            _lastPostProcessingWarmupError = ex.Message;
+            if (operation.IsCurrent)
+                _lastPostProcessingWarmupError = ex.Message;
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
+                if (!operation.IsCurrent)
+                    return;
+
                 _overlayVm.CleaningModelStatus = $"Cleaning model failed: {ex.Message}";
             });
         }
@@ -634,6 +668,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
+                if (!operation.IsLatestVersion)
+                    return;
+
                 _overlayVm.IsCleaningModelLoading = false;
                 _overlayVm.CleaningModelDownloadProgress = 0.0;
                 if (IsModelReady && _postProcessor?.IsReady == true)
@@ -643,6 +680,8 @@ public sealed partial class MainViewModel : ObservableObject
                 else if (IsModelReady)
                     StatusMessage = BuildReadyStatusMessage();
             });
+
+            operation.Dispose();
         }
     }
 

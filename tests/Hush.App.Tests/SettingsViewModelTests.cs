@@ -87,6 +87,80 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public void GetPendingPostProcessingModelDownload_ReturnsUncachedChangedCatalogModel()
+    {
+        var settings = new HushSettings { PostProcessingModel = "qwen3-0.6b" };
+        var vm = new SettingsViewModel(settings);
+        var option = new LanguageModelOptionViewModel("qwen3-4b", "4B - 2,763 MB", IsCatalogModel: true)
+        {
+            IsCached = false,
+            DownloadSizeLabel = "2,763 MB"
+        };
+        vm.AvailableLanguageModels.Add(option);
+
+        vm.SelectedPostProcessingLanguageModel = option;
+
+        Assert.Same(option, vm.GetPendingPostProcessingModelDownload());
+    }
+
+    [Fact]
+    public void GetPendingPostProcessingModelDownload_IgnoresCachedCatalogModel()
+    {
+        var settings = new HushSettings { PostProcessingModel = "qwen3-0.6b" };
+        var vm = new SettingsViewModel(settings);
+        var option = new LanguageModelOptionViewModel("qwen3-4b", "4B - cached", IsCatalogModel: true)
+        {
+            IsCached = true,
+            DownloadSizeLabel = "2,763 MB"
+        };
+        vm.AvailableLanguageModels.Add(option);
+
+        vm.SelectedPostProcessingLanguageModel = option;
+
+        Assert.Null(vm.GetPendingPostProcessingModelDownload());
+    }
+
+    [Fact]
+    public void GetPendingPostProcessingModelDownload_IgnoresDisabledCleanMode()
+    {
+        var settings = new HushSettings { PostProcessingModel = "qwen3-0.6b" };
+        var vm = new SettingsViewModel(settings);
+        var option = new LanguageModelOptionViewModel("qwen3-4b", "4B - 2,763 MB", IsCatalogModel: true)
+        {
+            IsCached = false,
+            DownloadSizeLabel = "2,763 MB"
+        };
+        vm.AvailableLanguageModels.Add(option);
+
+        vm.SelectedPostProcessingLanguageModel = option;
+        vm.PostProcessingEnabled = false;
+
+        Assert.Null(vm.GetPendingPostProcessingModelDownload());
+    }
+
+    [Fact]
+    public void GetPendingPostProcessingModelDownload_ReturnsUncachedModelWhenCleanModeEnabled()
+    {
+        var settings = new HushSettings
+        {
+            PostProcessingEnabled = false,
+            PostProcessingModel = "qwen3-4b"
+        };
+        var vm = new SettingsViewModel(settings);
+        var option = new LanguageModelOptionViewModel("qwen3-4b", "4B - 2,763 MB", IsCatalogModel: true)
+        {
+            IsCached = false,
+            DownloadSizeLabel = "2,763 MB"
+        };
+        vm.AvailableLanguageModels.Add(option);
+
+        vm.SelectedPostProcessingLanguageModel = option;
+        vm.PostProcessingEnabled = true;
+
+        Assert.Same(option, vm.GetPendingPostProcessingModelDownload());
+    }
+
+    [Fact]
     public void Apply_CopiesVmStateBackToSettings()
     {
         var settings = new HushSettings();

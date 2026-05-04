@@ -38,7 +38,8 @@ public sealed class FoundryLanguageModelCatalogService : ILanguageModelCatalogSe
 
         foreach (var model in models)
         {
-            if (TryCreateCatalogItem(model, out var item))
+            var isCached = await model.IsCachedAsync(cancellationToken);
+            if (TryCreateCatalogItem(model, isCached, out var item))
                 candidates.Add(item);
         }
 
@@ -72,7 +73,7 @@ public sealed class FoundryLanguageModelCatalogService : ILanguageModelCatalogSe
         }
     }
 
-    private static bool TryCreateCatalogItem(IModel model, out LanguageModelCatalogItem item)
+    private static bool TryCreateCatalogItem(IModel model, bool isCached, out LanguageModelCatalogItem item)
     {
         var info = model.Info;
         item = null!;
@@ -96,7 +97,7 @@ public sealed class FoundryLanguageModelCatalogService : ILanguageModelCatalogSe
             string.IsNullOrWhiteSpace(info.DisplayName) ? model.Alias : info.DisplayName,
             parameterCount.Value,
             info.FileSizeMb,
-            info.Cached,
+            isCached,
             info.Capabilities);
         return true;
     }

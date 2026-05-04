@@ -122,16 +122,31 @@ public sealed class TrayIcon : IDisposable
         _mainVm.SettingsViewModel.RefreshMicrophones();
         _ = _mainVm.SettingsViewModel.RefreshLanguageModelsAsync();
 
-        _settingsWindow = new SettingsWindow
+        var settingsWindow = new SettingsWindow
         {
             DataContext = _mainVm.SettingsViewModel
         };
-        _settingsWindow.Closed += async (_, _) =>
+        settingsWindow.SaveRequested = () => SaveSettingsFromWindowAsync(settingsWindow);
+        settingsWindow.Closed += (_, _) =>
         {
-            // Auto-save when the settings window is closed.
-            await _mainVm.SaveSettingsAsync();
+            _settingsWindow = null;
         };
-        _settingsWindow.Show();
+        _settingsWindow = settingsWindow;
+        settingsWindow.Show();
+    }
+
+    private async Task<bool> SaveSettingsFromWindowAsync(SettingsWindow settingsWindow)
+    {
+        var pendingDownload = _mainVm.SettingsViewModel.GetPendingPostProcessingModelDownload();
+        if (pendingDownload is not null)
+        {
+            var confirmed = await settingsWindow.ConfirmModelDownloadAsync(pendingDownload);
+            if (!confirmed)
+                return false;
+        }
+
+        await _mainVm.SaveSettingsAsync();
+        return true;
     }
 
     private static global::Avalonia.Controls.WindowIcon? LoadTrayIcon()
