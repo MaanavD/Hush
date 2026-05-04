@@ -11,6 +11,7 @@ using Hush.Core.Audio;
 using Hush.Core.Configuration;
 using Hush.Core.Diagnostics;
 using Hush.Core.Input;
+using Hush.Core.Models;
 using Hush.Core.Output;
 using Hush.Core.PostProcessing;
 using Hush.Core.Session;
@@ -81,6 +82,8 @@ public sealed class App : Application
             var transcriptBuffer = new TranscriptBuffer();
             _postProcessor = new FoundryPostProcessingService(
                 _loggerFactory.CreateLogger<FoundryPostProcessingService>());
+            var languageModelCatalog = new FoundryLanguageModelCatalogService(
+                _loggerFactory.CreateLogger<FoundryLanguageModelCatalogService>());
             _dictationSession = new DictationSession(
                 _transcriptionEngine, _audioCapture, textOutput,
                 _loggerFactory.CreateLogger<DictationSession>(),
@@ -98,7 +101,8 @@ public sealed class App : Application
                 settings, settingsService, _transcriptionEngine,
                 _dictationSession, _hotkeyService, soundEffects, autoStart, _audioCapture, overlayVm,
                 _loggerFactory.CreateLogger<MainViewModel>(),
-                postProcessor: _postProcessor);
+                postProcessor: _postProcessor,
+                languageModelCatalog: languageModelCatalog);
 
             _overlayWindow = new OverlayWindow { DataContext = overlayVm };
             _overlayWindow.Show();   // Show once so visibility changes never re-activate the window.

@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hush.Core.Audio;
 using Hush.Core.Configuration;
+using Hush.Core.Models;
 using Hush.Core.PostProcessing;
 
 namespace Hush.App.ViewModels
@@ -15,6 +16,8 @@ namespace Hush.App.ViewModels
     public sealed partial class SettingsViewModel : ObservableObject
     {
         private readonly HushSettings _settings;
+        private readonly ILanguageModelCatalogService? _languageModelCatalog;
+        private bool _syncingSelectedLanguageModel;
 
         // Input
         [ObservableProperty] private string _hotkey;
@@ -36,7 +39,15 @@ namespace Hush.App.ViewModels
         [ObservableProperty] private string _cleanHotkey = "Ctrl+H";
         [ObservableProperty] private bool _postProcessingEnabled = true;
         [ObservableProperty] private string _postProcessingModel = "qwen3-0.6b";
+        [ObservableProperty] private LanguageModelOptionViewModel? _selectedPostProcessingLanguageModel;
+        [ObservableProperty] private bool _isRefreshingLanguageModels;
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(HasLanguageModelCatalogStatus))]
+        private string _languageModelCatalogStatus = string.Empty;
         [ObservableProperty] private string? _activePostProcessingPromptId;
+
+        public ObservableCollection<LanguageModelOptionViewModel> AvailableLanguageModels { get; } = new();
+        public bool HasLanguageModelCatalogStatus => !string.IsNullOrWhiteSpace(LanguageModelCatalogStatus);
 
         // Prompts
         public ObservableCollection<LlmPromptViewModel> AllPrompts { get; } = new();
@@ -71,9 +82,12 @@ namespace Hush.App.ViewModels
 
         public ObservableCollection<MicrophoneDevice> AvailableMicrophones { get; } = new();
 
-        public SettingsViewModel(HushSettings settings)
+        public SettingsViewModel(
+            HushSettings settings,
+            ILanguageModelCatalogService? languageModelCatalog = null)
         {
             _settings = settings;
+            _languageModelCatalog = languageModelCatalog;
 
             _hotkey = settings.Hotkey;
             _language = settings.Language;
@@ -89,6 +103,7 @@ namespace Hush.App.ViewModels
             _cleanHotkey = settings.CleanHotkey;
             _postProcessingEnabled = settings.PostProcessingEnabled;
             _postProcessingModel = settings.PostProcessingModel;
+            SelectLanguageModel(_postProcessingModel);
 
             // Behavior additions — convert enums to display strings
             _autoSubmitKey = settings.AutoSubmitKey switch
@@ -197,6 +212,91 @@ namespace Hush.App.ViewModels
                 AvailableMicrophones.Add(new MicrophoneDevice(index, name));
         }
 
+        public async Task RefreshLanguageModelsAsync(CancellationToken cancellationToken = default)
+        {
+            if (_languageModelCatalog is null || IsRefreshingLanguageModels)
+                return;
+
+            var selectedAlias = PostProcessingModel;
+            IsRefreshingLanguageModels = true;
+            LanguageModelCatalogStatus = "Loading language models...";
+
+            try
+            {
+                var models = await _languageModelCatalog.ListSmallLanguageModelsAsync(cancellationToken);
+                AvailableLanguageModels.Clear();
+
+                foreach (var model in models)
+                    AvailableLanguageModels.Add(LanguageModelOptionViewModel.FromCatalog(model));
+
+                SelectLanguageModel(selectedAlias);
+                LanguageModelCatalogStatus = models.Count == 0
+                    ? "No compatible language models found."
+                    : $"{models.Count} language models available.";
+            }
+            catch (OperationCanceledException)
+            {
+                LanguageModelCatalogStatus = "Model catalog refresh canceled.";
+                SelectLanguageModel(selectedAlias);
+            }
+            catch (Exception)
+            {
+                LanguageModelCatalogStatus = "Could not load Foundry Local model catalog.";
+                SelectLanguageModel(selectedAlias);
+            }
+            finally
+            {
+                IsRefreshingLanguageModels = false;
+            }
+        }
+
+        partial void OnPostProcessingModelChanged(string value)
+        {
+            if (!_syncingSelectedLanguageModel)
+                SelectLanguageModel(value);
+        }
+
+        partial void OnSelectedPostProcessingLanguageModelChanged(LanguageModelOptionViewModel? value)
+        {
+            if (value is null || _syncingSelectedLanguageModel)
+                return;
+
+            _syncingSelectedLanguageModel = true;
+            try
+            {
+                PostProcessingModel = value.Alias;
+            }
+            finally
+            {
+                _syncingSelectedLanguageModel = false;
+            }
+        }
+
+        private void SelectLanguageModel(string? alias)
+        {
+            if (string.IsNullOrWhiteSpace(alias))
+                return;
+
+            var option = AvailableLanguageModels.FirstOrDefault(
+                model => string.Equals(model.Alias, alias, StringComparison.OrdinalIgnoreCase));
+
+            if (option is null)
+            {
+                option = LanguageModelOptionViewModel.Custom(alias.Trim());
+                AvailableLanguageModels.Insert(0, option);
+            }
+
+            _syncingSelectedLanguageModel = true;
+            try
+            {
+                SelectedPostProcessingLanguageModel = option;
+            }
+            finally
+            {
+                _syncingSelectedLanguageModel = false;
+            }
+        }
+
         private int FindMicIndex(int deviceIndex)
         {
             for (int i = 0; i < AvailableMicrophones.Count; i++)
@@ -279,6 +379,23 @@ namespace Hush.App.ViewModels
     public sealed record MicrophoneDevice(int DeviceIndex, string Name)
     {
         public override string ToString() => Name;
+    }
+
+    public sealed record LanguageModelOptionViewModel(string Alias, string Detail, bool IsCatalogModel)
+    {
+        public static LanguageModelOptionViewModel FromCatalog(LanguageModelCatalogItem model)
+        {
+            var cacheLabel = model.IsCached ? "cached" : model.FileSizeLabel;
+            return new LanguageModelOptionViewModel(
+                model.Alias,
+                $"{model.ParameterLabel} - {cacheLabel}",
+                IsCatalogModel: true);
+        }
+
+        public static LanguageModelOptionViewModel Custom(string alias)
+            => new(alias, "Current custom alias", IsCatalogModel: false);
+
+        public override string ToString() => Alias;
     }
 
 }

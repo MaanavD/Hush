@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using Hush.Core.Audio;
 using Hush.Core.Configuration;
 using Hush.Core.Input;
+using Hush.Core.Models;
 using Hush.Core.Output;
 using Hush.Core.PostProcessing;
 using Hush.Core.Session;
@@ -65,7 +66,8 @@ public sealed partial class MainViewModel : ObservableObject
         IAudioCaptureService audioCapture,
         OverlayViewModel overlayVm,
         ILogger<MainViewModel>? logger = null,
-        IPostProcessingService? postProcessor = null)
+        IPostProcessingService? postProcessor = null,
+        ILanguageModelCatalogService? languageModelCatalog = null)
     {
         _settings = settings;
         _settingsService = settingsService;
@@ -82,7 +84,7 @@ public sealed partial class MainViewModel : ObservableObject
         _overlayVm.OverlayPosition = settings.OverlayPosition;
         _overlayVm.OverlayOpacity = settings.OverlayOpacity;
 
-        SettingsViewModel = new SettingsViewModel(settings);
+        SettingsViewModel = new SettingsViewModel(settings, languageModelCatalog);
 
         _hotkeyService.HotkeyPressed += OnHotkeyPressed;
         _hotkeyService.HotkeyReleased += OnHotkeyReleased;

@@ -2,6 +2,7 @@
 
 using Hush.App.ViewModels;
 using Hush.Core.Configuration;
+using Hush.Core.Models;
 
 namespace Hush.App.Tests;
 
@@ -11,6 +12,20 @@ namespace Hush.App.Tests;
 /// </summary>
 public sealed class SettingsViewModelTests
 {
+    private sealed class StubLanguageModelCatalogService : ILanguageModelCatalogService
+    {
+        private readonly IReadOnlyList<LanguageModelCatalogItem> _models;
+
+        public StubLanguageModelCatalogService(params LanguageModelCatalogItem[] models)
+        {
+            _models = models;
+        }
+
+        public Task<IReadOnlyList<LanguageModelCatalogItem>> ListSmallLanguageModelsAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(_models);
+    }
+
     [Fact]
     public void Constructor_PopulatesFromSettings()
     {
@@ -36,6 +51,39 @@ public sealed class SettingsViewModelTests
         Assert.Equal(0.42, vm.OverlayOpacity);
         Assert.False(vm.SoundEffects);
         Assert.True(vm.AutoStart);
+        Assert.Equal("qwen3-0.6b", vm.SelectedPostProcessingLanguageModel?.Alias);
+    }
+
+    [Fact]
+    public async Task RefreshLanguageModelsAsync_LoadsSmallLanguageModelOptions()
+    {
+        var settings = new HushSettings { PostProcessingModel = "qwen3-0.6b" };
+        var catalog = new StubLanguageModelCatalogService(
+            new LanguageModelCatalogItem("qwen3-0.6b", "qwen3-0.6b-generic-cpu", 0.6, 593, true, "reasoning"),
+            new LanguageModelCatalogItem("qwen3-4b", "qwen3-4b-generic-cpu", 4.0, 2763, false, "reasoning"));
+        var vm = new SettingsViewModel(settings, catalog);
+
+        await vm.RefreshLanguageModelsAsync();
+
+        Assert.Equal(2, vm.AvailableLanguageModels.Count);
+        Assert.Contains(vm.AvailableLanguageModels, model => model.Alias == "qwen3-4b");
+        Assert.Equal("qwen3-0.6b", vm.SelectedPostProcessingLanguageModel?.Alias);
+        Assert.Equal("2 language models available.", vm.LanguageModelCatalogStatus);
+    }
+
+    [Fact]
+    public void SelectedPostProcessingLanguageModel_UpdatesPostProcessingModel()
+    {
+        var settings = new HushSettings();
+        var vm = new SettingsViewModel(settings);
+        var option = new LanguageModelOptionViewModel("qwen3-4b", "4B - 2,763 MB", IsCatalogModel: true);
+        vm.AvailableLanguageModels.Add(option);
+
+        vm.SelectedPostProcessingLanguageModel = option;
+        vm.Apply();
+
+        Assert.Equal("qwen3-4b", vm.PostProcessingModel);
+        Assert.Equal("qwen3-4b", settings.PostProcessingModel);
     }
 
     [Fact]
