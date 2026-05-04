@@ -5,18 +5,40 @@ using Hush.Core.Configuration;
 namespace Hush.Core.Session;
 
 /// <summary>
+/// Controls how committed transcription output is written to the target app.
+/// </summary>
+public enum DictationOutputMode
+{
+    /// <summary>Preserve the legacy behavior implied by the streaming/spinner parameters.</summary>
+    Auto,
+
+    /// <summary>
+    /// Render low-latency raw preview text progressively when the output target
+    /// supports it, while keeping committed transcript state for final sync.
+    /// Falls back to typing stable transcription deltas progressively.
+    /// </summary>
+    Streaming,
+
+    /// <summary>Buffer stable transcription deltas and type the final text after the session ends.</summary>
+    Spinner,
+
+    /// <summary>
+    /// Type stable raw transcription deltas progressively, then replace that preview
+    /// with the post-processed clean result after the session ends.
+    /// </summary>
+    CleanStreamingPreview
+}
+
+/// <summary>
 /// Controls a single push-to-talk dictation session.
 /// </summary>
 public interface IDictationSession : IAsyncDisposable
 {
     /// <summary>
     /// Raised when the transcription engine produces an interim (possibly unstable)
-    /// display text update. The overlay should reflect this immediately.
-    /// <para>
-    /// <b>Important:</b> Do NOT type this text into the target application —
-    /// it may be revised by subsequent interim events. Only committed text
-    /// (see <see cref="OnCommittedChunk"/>) is typed.
-    /// </para>
+    /// display text update. The overlay should reflect this immediately. Output
+    /// modes may also render it as best-effort preview text, but only committed
+    /// text (see <see cref="OnCommittedChunk"/>) is durable transcript state.
     /// </summary>
     event Action<string>? OnInterimText;
 
@@ -42,7 +64,7 @@ public interface IDictationSession : IAsyncDisposable
     /// <see langword="true"/> means the rewrite is in progress and the target
     /// window should not be interacted with; <see langword="false"/> means the
     /// rewrite is complete (the final typing pass may still be in flight).
-    /// Only fires for spinner-mode sessions that have a post-processing prompt.
+    /// Only fires for sessions that have a post-processing prompt.
     /// </summary>
     event Action<bool>? OnPostProcessingStateChanged;
 
@@ -64,6 +86,7 @@ public interface IDictationSession : IAsyncDisposable
     /// this system prompt before being typed into the target application.
     /// </param>
     /// <param name="autoSubmitKey">Key combination to send after dictation ends.</param>
+    /// <param name="outputMode">Explicit output mode. <see cref="DictationOutputMode.Auto"/> preserves legacy behavior.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task StartAsync(
         string language = "en",
@@ -71,7 +94,8 @@ public interface IDictationSession : IAsyncDisposable
         bool showSpinner = false,
         string? postProcessingPrompt = null,
         AutoSubmitKey autoSubmitKey = AutoSubmitKey.None,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        DictationOutputMode outputMode = DictationOutputMode.Auto);
 
     /// <summary>
     /// Stops microphone capture, signals the transcription session to finalise,

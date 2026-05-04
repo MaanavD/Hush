@@ -32,4 +32,11 @@ public sealed record TranscriptionResult(
     /// when the model revises previously committed text.
     /// </summary>
     public int BackspaceCount { get; init; }
+
+    /// <summary>
+    /// Raw, non-durable draft text from the live SDK chunk. Preview renderers may
+    /// show this before normalized text is committed, but transcript state must
+    /// continue to use <see cref="CommittedDelta"/> and <see cref="DisplayText"/>.
+    /// </summary>
+    public string? DraftPreviewText { get; init; }
 }

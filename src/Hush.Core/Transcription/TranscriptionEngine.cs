@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
-using System.Text;
 using System.Threading.Channels;
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
@@ -14,7 +13,7 @@ namespace Hush.Core.Transcription;
 /// Wraps Foundry Local live transcription while preserving the app-level
 /// <see cref="TranscriptionResult"/> abstraction.
 /// </summary>
-public sealed class TranscriptionEngine : ITranscriptionEngine
+public sealed class TranscriptionEngine : ITranscriptionEngine, IStreamingCommitPolicy
 {
     private readonly ILogger<TranscriptionEngine> _logger;
     private readonly ILiveAudioSessionFactory _liveSessionFactory;
@@ -54,14 +53,21 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     private TimeSpan? _lastCommittedEndTime;
     private bool _disposed;
 
-    // In streaming mode, commit the full monotonic interim hypothesis. Non-final
-    // rewrites are already blocked below, so this favors responsive live typing
-    // while still deferring corrections to final chunks.
-    private const int StreamingTrailingWordHoldback = 1;
-    private const int MaxConservativeFinalBackspaces = 16;
+    // By default, keep one trailing word buffered so direct engine use avoids
+    // typing partial tokens. DictationSession lowers this to zero only for
+    // stable-commit output paths that cannot render display-only preview text.
+    private const int DefaultStreamingTrailingWordHoldback = 1;
+    // Keep the Foundry live-audio push queue close to the user's perceptual
+    // latency target instead of the SDK default, which can buffer several seconds
+    // of 50 ms audio chunks before applying backpressure.
+    private const int DefaultLiveAudioPushQueueCapacity = 12;
     // Allow a small timestamp overlap when the SDK rolls windows forward so a
     // later chunk can still be treated as additive speech instead of a rewrite.
     private static readonly TimeSpan DetachedChunkOverlapTolerance = TimeSpan.FromMilliseconds(150);
+
+    public int StreamingTrailingWordHoldback { get; set; } = DefaultStreamingTrailingWordHoldback;
+
+    public int LiveAudioPushQueueCapacity { get; set; } = DefaultLiveAudioPushQueueCapacity;
 
     // ASR hallucination / silence tokens that should never be typed or shown.
     private static readonly HashSet<string> NoiseTokens =
@@ -171,7 +177,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
     /// <inheritdoc/>
     public async Task InitializeAsync(
-        string modelAlias = HushSettings.DefaultTranscriptionModel,
+        string modelAlias = "nemotron-speech-streaming-en-0.6b-generic-cpu",
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
         IProgress<string>? statusProgress = null,
@@ -207,8 +213,11 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
         statusProgress?.Report($"Resolving model '{modelAlias}'…");
         var catalog = await manager.GetCatalogAsync(cancellationToken);
-        var (model, resolvedAlias) = await ResolveModelAsync(catalog, modelAlias, statusProgress, cancellationToken);
-        modelAlias = resolvedAlias;
+        var model = await ResolveModelAsync(catalog, modelAlias, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Model '{modelAlias}' was not found in the Foundry Local catalog. " +
+                "Ensure Foundry Local is installed and the alias is correct.");
+
 
         _logger.LogInformation("Downloading model '{ModelAlias}' (no-op if already cached).", modelAlias);
         statusProgress?.Report($"Checking cache for '{modelAlias}'…");
@@ -239,74 +248,6 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         _modelLoaded = true;
         statusProgress?.Report("Ready");
         _logger.LogInformation("TranscriptionEngine ready.");
-    }
-
-    private async Task<(IModel Model, string Alias)> ResolveModelAsync(
-        ICatalog catalog,
-        string modelAlias,
-        IProgress<string>? statusProgress,
-        CancellationToken cancellationToken)
-    {
-        var aliases = GetModelAliasCandidates(modelAlias).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-
-        for (int i = 0; i < aliases.Length; i++)
-        {
-            var alias = aliases[i];
-            if (i > 0)
-            {
-                _logger.LogWarning(
-                    "Model alias '{RequestedAlias}' was not found; retrying Foundry Local alias '{FallbackAlias}'.",
-                    aliases[0], alias);
-                statusProgress?.Report($"Resolving fallback model '{alias}'…");
-            }
-
-            var model = await catalog.GetModelAsync(alias, cancellationToken).ConfigureAwait(false);
-            if (model is not null)
-                return (model, alias);
-        }
-
-        var availableAliases = await GetAvailableSpeechAliasesAsync(catalog, cancellationToken).ConfigureAwait(false);
-        var tried = string.Join("', '", aliases);
-        var available = availableAliases.Length == 0
-            ? "none"
-            : string.Join(", ", availableAliases);
-        throw new InvalidOperationException(
-            $"Model '{modelAlias}' was not found in the Foundry Local catalog. Tried aliases: '{tried}'. " +
-            $"Available speech aliases: {available}. Ensure Foundry Local is installed and the alias is correct.");
-    }
-
-    private static IEnumerable<string> GetModelAliasCandidates(string modelAlias)
-    {
-        var requested = string.IsNullOrWhiteSpace(modelAlias)
-            ? HushSettings.DefaultTranscriptionModel
-            : modelAlias.Trim();
-
-        yield return requested;
-
-        if (IsLegacyNemotronVariant(requested))
-            yield return HushSettings.DefaultTranscriptionModel;
-    }
-
-    private static bool IsLegacyNemotronVariant(string modelAlias) =>
-        string.Equals(modelAlias, HushSettings.LegacyTranscriptionModelVariant, StringComparison.OrdinalIgnoreCase)
-        || modelAlias.StartsWith(HushSettings.LegacyTranscriptionModelVariant + ":", StringComparison.OrdinalIgnoreCase);
-
-    private static async Task<string[]> GetAvailableSpeechAliasesAsync(ICatalog catalog, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var models = await catalog.ListModelsAsync(cancellationToken).ConfigureAwait(false);
-            return models
-                .Select(m => m.Alias)
-                .Where(alias => alias.Contains("speech", StringComparison.OrdinalIgnoreCase)
-                    || alias.Contains("nemotron", StringComparison.OrdinalIgnoreCase))
-                .Order(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-        catch
-        {
-            return Array.Empty<string>();
-        }
     }
 
     /// <inheritdoc/>
@@ -352,7 +293,12 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
     private async Task StartLiveSessionAsync(int sampleRate, int channels, string language, CancellationToken cancellationToken)
     {
-        await _liveSession!.StartAsync(sampleRate, channels, language, cancellationToken).ConfigureAwait(false);
+        await _liveSession!.StartAsync(
+            sampleRate,
+            channels,
+            language,
+            LiveAudioPushQueueCapacity,
+            cancellationToken).ConfigureAwait(false);
         _resultPumpTask = Task.Run(() => PumpResultsAsync(_liveSession, _resultChannel!), CancellationToken.None);
     }
 
@@ -378,6 +324,10 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
                     "SDK chunk #{Index}: IsFinal={IsFinal} text=\"{Text}\" start={Start} end={End}",
                     chunkIndex, chunk.IsFinal, chunk.Text, chunk.StartTime, chunk.EndTime);
 
+                var draftPreviewText = !chunk.IsFinal && !string.IsNullOrWhiteSpace(chunk.Text)
+                    ? chunk.Text
+                    : null;
+
                 // Track the growing committed text length — key metric for O(n) growth diagnosis.
                 PerformanceProfiler.Gauge("Engine.CommittedTextLen", _committedText.Length);
                 PerformanceProfiler.Gauge("Engine.SegmentBaseLen", _segmentBase.Length);
@@ -389,13 +339,34 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
                 if (emitted)
                 {
+                    if (!string.IsNullOrEmpty(draftPreviewText))
+                        result = result with { DraftPreviewText = draftPreviewText };
+
                     _logger.LogDebug(
-                        "Emitting result #{Index}: display=\"{Display}\" delta=\"{Delta}\" bs={BS} segBase=\"{SegBase}\"",
-                        chunkIndex, result.DisplayText, result.CommittedDelta, result.BackspaceCount, _segmentBase);
+                        "Emitting result #{Index}: display=\"{Display}\" draft=\"{Draft}\" delta=\"{Delta}\" bs={BS} segBase=\"{SegBase}\"",
+                        chunkIndex, result.DisplayText, result.DraftPreviewText, result.CommittedDelta, result.BackspaceCount, _segmentBase);
                     resultChannel.Writer.TryWrite(result);
                 }
                 else
                 {
+                    if (ShouldEmitDraftOnlyResult(chunk))
+                    {
+                        var draftOnlyResult = new TranscriptionResult(
+                            string.Empty,
+                            string.Empty,
+                            IsFinal: false,
+                            chunk.StartTime,
+                            chunk.EndTime)
+                        {
+                            DraftPreviewText = chunk.Text
+                        };
+
+                        _logger.LogDebug(
+                            "Emitting draft-only result #{Index}: draft=\"{Draft}\"",
+                            chunkIndex, draftOnlyResult.DraftPreviewText);
+                        resultChannel.Writer.TryWrite(draftOnlyResult);
+                    }
+
                     _logger.LogDebug("Chunk #{Index} filtered out by TryNormalizeChunk.", chunkIndex);
                 }
             }
@@ -425,6 +396,22 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         (text.StartsWith('[') && text.EndsWith(']')) ||
         (text.StartsWith('(') && text.EndsWith(')')) ||
         IsRepetitionArtifact(text);
+
+    private static bool ShouldEmitDraftOnlyResult(LiveAudioSessionChunk chunk)
+    {
+        if (chunk.IsFinal || string.IsNullOrWhiteSpace(chunk.Text))
+            return false;
+
+        var normalizedText = NormalizeText(chunk.Text);
+        if (string.IsNullOrWhiteSpace(normalizedText) || IsNoiseToken(normalizedText))
+            return false;
+
+        var words = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Any(word =>
+            !IsNoiseToken(word) &&
+            !IsEntirelyDegenerate(word) &&
+            !IsRepetitionArtifact(word));
+    }
 
     /// <inheritdoc/>
     public async Task StopSessionAsync(CancellationToken cancellationToken = default)
@@ -516,8 +503,6 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         _unloadTimerCts?.Cancel();
         _unloadTimerCts?.Dispose();
         await StopSessionAsync();
-        if (FoundryLocalManager.IsInitialized)
-            FoundryLocalManager.Instance.Dispose();
     }
 
     private bool TryNormalizeChunk(LiveAudioSessionChunk chunk, out TranscriptionResult result)
@@ -538,7 +523,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             // Final chunk — commit the full segment and prepare for the next one.
             // Filter any repetition artifacts before committing.
             var finalWords = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            finalWords = MergeAdjacentContinuationWords(FilterArtifactWords(finalWords));
+            finalWords = FilterArtifactWords(finalWords);
             if (finalWords.Length == 0)
             {
                 result = default!;
@@ -558,18 +543,6 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             displayText = BuildFullText(cleanedText);
             using (PerformanceProfiler.MeasureWithContext("Engine.ComputeCommitDelta", _committedText.Length))
                 (backspaceCount, committedDelta) = ComputeCommitDelta(displayText);
-
-            if (ShouldPreferLiveFinalization(backspaceCount, displayText))
-            {
-                var liveText = BuildFullText(_lastFullText);
-                _logger.LogDebug(
-                    "Ignoring destructive final rewrite: committed='{Committed}' final='{Final}' live='{Live}' bs={BS}",
-                    _committedText, displayText, liveText, backspaceCount);
-                displayText = liveText;
-                using (PerformanceProfiler.MeasureWithContext("Engine.ComputeCommitDelta.LiveFinal", _committedText.Length))
-                    (backspaceCount, committedDelta) = ComputeCommitDelta(displayText);
-            }
-
             _committedText = displayText;
             _lastCommittedEndTime = chunk.EndTime ?? _lastCommittedEndTime;
             _lastFullText = string.Empty;
@@ -586,7 +559,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         {
             // Split into words and filter repetition artifacts at any position.
             var rawSegmentWords = normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            rawSegmentWords = MergeAdjacentContinuationWords(FilterArtifactWords(rawSegmentWords));
+            rawSegmentWords = FilterArtifactWords(rawSegmentWords);
             if (rawSegmentWords.Length == 0)
             {
                 result = default!;
@@ -633,12 +606,10 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
             if (_streamingCommit)
             {
-                // Always hold back the last word — it may still be a partial token
-                // that the model hasn't extended yet. stableCount is used in batch
-                // mode but must NOT override the holdback here: if the model repeats
-                // the same partial word token across two chunks it would be counted
-                // as "stable" and committed before it is complete.
-                safeCount = Math.Max(0, segmentWords.Length - StreamingTrailingWordHoldback);
+                // DictationSession can lower the holdback to zero for
+                // low-latency streaming sessions. Non-final rewrites remain
+                // monotonic and corrections are deferred until a final chunk.
+                safeCount = Math.Max(0, segmentWords.Length - Math.Max(0, StreamingTrailingWordHoldback));
             }
             else
             {
@@ -688,30 +659,6 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         return true;
     }
 
-    private bool ShouldPreferLiveFinalization(int finalBackspaceCount, string finalText)
-    {
-        if (!_streamingCommit ||
-            finalBackspaceCount <= MaxConservativeFinalBackspaces ||
-            string.IsNullOrWhiteSpace(_committedText) ||
-            string.IsNullOrWhiteSpace(_lastFullText))
-        {
-            return false;
-        }
-
-        var liveText = BuildFullText(_lastFullText);
-        if (string.IsNullOrWhiteSpace(liveText) ||
-            liveText == _committedText ||
-            !liveText.StartsWith(_committedText, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        if (finalText.StartsWith(_committedText, StringComparison.Ordinal))
-            return false;
-
-        return true;
-    }
-
     /// <summary>
     /// Composes the full transcript text from the segment base and the current
     /// accumulated segment hypothesis.
@@ -732,7 +679,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (overlap > 0)
             return _segmentBase + segmentText[overlap..];
 
-        return JoinStreamingText(_segmentBase, segmentText);
+        return _segmentBase + " " + segmentText;
     }
 
     private void RebaseSegmentToCommittedText(bool includeBufferedTail)
@@ -809,7 +756,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         // may contain degenerate tokens that were held back by the stability
         // mechanism but would otherwise be committed wholesale on session end.
         var flushWords = _lastFullText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        flushWords = MergeAdjacentContinuationWords(FilterArtifactWords(flushWords));
+        flushWords = FilterArtifactWords(flushWords);
         if (flushWords.Length == 0)
             return false;
 
@@ -871,8 +818,8 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
     private static (int BackspaceCount, string Delta) ComputeWordLevelDelta(
         string committedText, string targetText)
     {
-        var cWords = committedText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var tWords = targetText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var cWords = GetComparableWordTokens(committedText);
+        var tWords = GetComparableWordTokens(targetText);
 
         if (cWords.Length == 0 || tWords.Length == 0)
             return (committedText.Length, targetText);
@@ -881,9 +828,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         int commonCount = 0;
         for (int i = 0; i < minLen; i++)
         {
-            var cNorm = NormalizeWordForComparison(cWords[i]);
-            var tNorm = NormalizeWordForComparison(tWords[i]);
-            if (string.IsNullOrEmpty(cNorm) || cNorm != tNorm)
+            if (cWords[i].Normalized != tWords[i].Normalized)
                 break;
             commonCount++;
         }
@@ -891,12 +836,36 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         if (commonCount == 0)
             return (committedText.Length, targetText);
 
-        // Text is space-normalised, so joining the first N words gives the exact
-        // character offset of the end of the last common word in each string.
-        int cPos = string.Join(' ', cWords[..commonCount]).Length;
-        int tPos = string.Join(' ', tWords[..commonCount]).Length;
+        int cPos = cWords[commonCount - 1].EndIndex;
+        int tPos = tWords[commonCount - 1].EndIndex;
 
         return (committedText.Length - cPos, targetText[tPos..]);
+    }
+
+    private readonly record struct ComparableWordToken(string Normalized, int EndIndex);
+
+    private static ComparableWordToken[] GetComparableWordTokens(string text)
+    {
+        var tokens = new List<ComparableWordToken>();
+        int index = 0;
+        while (index < text.Length)
+        {
+            while (index < text.Length && char.IsWhiteSpace(text[index]))
+                index++;
+
+            int start = index;
+            while (index < text.Length && !char.IsWhiteSpace(text[index]))
+                index++;
+
+            if (start == index)
+                continue;
+
+            var normalized = NormalizeWordForComparison(text[start..index]);
+            if (!string.IsNullOrEmpty(normalized))
+                tokens.Add(new ComparableWordToken(normalized, index));
+        }
+
+        return tokens.ToArray();
     }
 
     /// <summary>
@@ -972,129 +941,9 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
             return previousText + currentText[overlap..];
 
         // No overlap found — chunks are sequential, non-overlapping segments
-        // (typical of Nemotron RNN-T). Concatenate to build the full hypothesis,
-        // but do not inject a space when the new chunk starts with a suffix
-        // fragment that completes the previous chunk's trailing token.
-        return JoinStreamingText(previousText, currentText);
+        // (typical of Nemotron RNN-T). Concatenate to build the full hypothesis.
+        return previousText + " " + currentText;
     }
-
-    private static string JoinStreamingText(string previousText, string currentText)
-    {
-        if (string.IsNullOrEmpty(previousText))
-            return currentText;
-
-        if (string.IsNullOrEmpty(currentText))
-            return previousText;
-
-        if (StartsWithAttachedPunctuation(currentText))
-            return previousText + currentText;
-
-        return ShouldJoinStreamingTokenBoundary(previousText, currentText)
-            ? previousText + currentText
-            : previousText + " " + currentText;
-    }
-
-    private static bool ShouldJoinStreamingTokenBoundary(string previousText, string currentText)
-    {
-        string previousToken = GetLastToken(previousText);
-        string currentToken = GetFirstToken(currentText);
-        if (previousToken.Length == 0 || currentToken.Length == 0)
-            return false;
-
-        char left = previousToken[^1];
-        char right = currentToken[0];
-
-        if (IsAttachedPunctuation(right))
-            return true;
-
-        if (right is '\'' or '\u2019')
-            return IsLetterLike(left);
-
-        if (!IsLetterLike(left) || !char.IsAsciiLetter(right) || char.IsUpper(right))
-            return false;
-
-        var currentCore = TrimTokenCore(currentToken);
-        if (currentCore.Length == 0 || IsCommonStandaloneShortWord(currentCore))
-            return false;
-
-        return LooksLikeContinuationSuffix(currentCore);
-    }
-
-    private static string GetLastToken(string text)
-    {
-        var span = text.AsSpan().TrimEnd();
-        int index = span.LastIndexOf(' ');
-        return index < 0
-            ? span.ToString()
-            : span[(index + 1)..].ToString();
-    }
-
-    private static string GetFirstToken(string text)
-    {
-        var span = text.AsSpan().TrimStart();
-        int index = span.IndexOf(' ');
-        return index < 0
-            ? span.ToString()
-            : span[..index].ToString();
-    }
-
-    private static string TrimTokenCore(string token)
-    {
-        int start = 0;
-        int end = token.Length;
-        while (start < end && !char.IsAsciiLetter(token[start])) start++;
-        while (end > start && !char.IsAsciiLetter(token[end - 1])) end--;
-        return start >= end ? string.Empty : token[start..end].ToLowerInvariant();
-    }
-
-    private static bool LooksLikeContinuationSuffix(string token)
-    {
-        if (token.Length >= 3)
-        {
-            string[] suffixes =
-            [
-                "ing", "izing", "ised", "ized", "ated", "ation", "ations",
-                "eness", "veness", "ness",
-                "tion", "tions", "sion", "sions", "ion", "ions", "ment",
-                "ments", "able", "ible", "ally", "ously", "ive", "ives",
-                "ity", "ities", "ous", "age", "ages", "ent", "ence",
-                "ences", "ant", "ance", "ances", "pected", "pect", "ia", "er", "ers",
-                "est", "ly", "ed", "es", "vices", "ices"
-            ];
-
-            foreach (string suffix in suffixes)
-            {
-                if (token.Equals(suffix, StringComparison.Ordinal))
-                    return true;
-            }
-        }
-
-        return token is "s" or "es" or "ed" or "er" or "ly" or "os" or "ia";
-    }
-
-    private static bool IsCommonStandaloneShortWord(string token)
-    {
-        return token is
-            "a" or "i" or "am" or "an" or "as" or "at" or "be" or "by" or
-            "do" or "go" or "he" or "if" or "in" or "is" or "it" or "me" or
-            "my" or "no" or "of" or "on" or "or" or "so" or "to" or "up" or
-            "us" or "we" or "you" or "and" or "are" or "but" or "can" or
-            "for" or "had" or "has" or "her" or "him" or "his" or "how" or
-            "not" or "now" or "our" or "out" or "she" or "the" or "was" or
-            "who" or "why" or "yes" or "yet";
-    }
-
-    private static bool IsLetterLike(char value)
-        => char.IsLetter(value);
-
-    private static bool StartsWithAttachedPunctuation(string text)
-    {
-        var span = text.AsSpan().TrimStart();
-        return span.Length > 0 && IsAttachedPunctuation(span[0]);
-    }
-
-    private static bool IsAttachedPunctuation(char value)
-        => value is '.' or ',' or '!' or '?' or ';' or ':' or ')' or ']' or '}' or '%';
 
     private static int LargestTextSuffixPrefixOverlap(string previousText, string currentText)
     {
@@ -1120,99 +969,43 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         return index <= 0 || index >= text.Length || char.IsWhiteSpace(text[index - 1]) || char.IsWhiteSpace(text[index]);
     }
 
-    private static string[] MergeAdjacentContinuationWords(string[] words)
-    {
-        if (words.Length < 2)
-            return words;
-
-        var merged = new List<string>(words.Length);
-        foreach (string word in words)
-        {
-            if (merged.Count > 0 && ShouldJoinStreamingTokenBoundary(merged[^1], word))
-            {
-                merged[^1] += word;
-                continue;
-            }
-
-            merged.Add(word);
-        }
-
-        return merged.ToArray();
-    }
-
     private static string NormalizeText(string text)
+        => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private async Task<IModel?> ResolveModelAsync(
+        ICatalog catalog,
+        string requestedAlias,
+        CancellationToken cancellationToken)
     {
-        var collapsed = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        if (collapsed.Length == 0)
-            return collapsed;
-
-        return NormalizePunctuationSpacing(collapsed);
-    }
-
-    private static string NormalizePunctuationSpacing(string text)
-    {
-        var builder = new StringBuilder(text.Length);
-
-        for (int i = 0; i < text.Length; i++)
+        var candidates = GetModelAliasCandidates(requestedAlias);
+        foreach (var alias in candidates)
         {
-            char current = text[i];
-            if (IsAttachedPunctuation(current) && builder.Length > 0 && builder[^1] == ' ')
+            var model = await catalog.GetModelAsync(alias, cancellationToken);
+            if (model is not null)
             {
-                builder.Length--;
-                builder.Append(current);
-                continue;
+                if (!alias.Equals(requestedAlias, StringComparison.OrdinalIgnoreCase))
+                    _logger.LogInformation(
+                        "Requested alias '{Requested}' not found; resolved to '{Resolved}'.",
+                        requestedAlias, alias);
+                return model;
             }
-
-            if (current is '\'' or '\u2019')
-            {
-                int previous = PreviousNonSpaceIndex(builder);
-                int next = NextNonSpaceIndex(text, i + 1);
-                if (previous >= 0 &&
-                    next >= 0 &&
-                    char.IsLetter(builder[previous]) &&
-                    char.IsLetter(text[next]) &&
-                    builder.Length > 0 &&
-                    builder[^1] == ' ')
-                {
-                    builder.Length--;
-                }
-            }
-
-            if (current == ' ' &&
-                builder.Length > 0 &&
-                builder[^1] is '\'' or '\u2019' &&
-                NextNonSpaceIndex(text, i + 1) >= 0)
-            {
-                int next = NextNonSpaceIndex(text, i + 1);
-                if (char.IsLetter(text[next]))
-                    continue;
-            }
-
-            builder.Append(current);
         }
-
-        return builder.ToString();
+        return null;
     }
 
-    private static int PreviousNonSpaceIndex(StringBuilder builder)
+    internal static IEnumerable<string> GetModelAliasCandidates(string requestedAlias)
     {
-        for (int i = builder.Length - 1; i >= 0; i--)
-        {
-            if (!char.IsWhiteSpace(builder[i]))
-                return i;
-        }
+        yield return requestedAlias;
 
-        return -1;
+        if (IsDefaultNemotronAlias(requestedAlias))
+            yield return HushSettings.LegacyTranscriptionModelVariant;
+        else if (IsLegacyNemotronVariant(requestedAlias))
+            yield return HushSettings.DefaultTranscriptionModel;
     }
 
-    private static int NextNonSpaceIndex(string text, int start)
-    {
-        for (int i = start; i < text.Length; i++)
-        {
-            if (!char.IsWhiteSpace(text[i]))
-                return i;
-        }
+    private static bool IsDefaultNemotronAlias(string alias)
+        => alias.Equals(HushSettings.DefaultTranscriptionModel, StringComparison.OrdinalIgnoreCase);
 
-        return -1;
-    }
+    private static bool IsLegacyNemotronVariant(string alias)
+        => alias.Equals(HushSettings.LegacyTranscriptionModelVariant, StringComparison.OrdinalIgnoreCase);
 }
