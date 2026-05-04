@@ -386,7 +386,7 @@
                     </StackPanel>
                     <TextBox Grid.Column="1"
                              Text="{Binding TranscriptionModel}"
-                             Watermark="nemotron-speech-streaming-en-0.6b-generic-cpu"
+                             Watermark="nemotron-speech-streaming-en-0.6b"
                              ToolTip.Tip="Foundry Local model alias. Changing this takes effect on next launch." />
                 </Grid>
                 <TextBlock Text="Changing the model takes effect on next launch."

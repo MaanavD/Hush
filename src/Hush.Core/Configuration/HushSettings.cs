@@ -14,7 +14,8 @@ public enum ModelUnloadTimeout { Never, Min2, Min5, Min15 }
 /// </summary>
 public sealed class HushSettings
 {
-    public const string DefaultTranscriptionModel = "nemotron-speech-streaming-en-0.6b-generic-cpu";
+    public const string DefaultTranscriptionModel = "nemotron-speech-streaming-en-0.6b";
+    public const string LegacyTranscriptionModelVariant = "nemotron-speech-streaming-en-0.6b-generic-cpu";
 
     /// <summary>
     /// Global push-to-talk hotkey. Supports combos like <c>"Ctrl+Shift+H"</c>

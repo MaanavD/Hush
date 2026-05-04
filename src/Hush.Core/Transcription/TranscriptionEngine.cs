@@ -171,7 +171,7 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
     /// <inheritdoc/>
     public async Task InitializeAsync(
-        string modelAlias = "nemotron-speech-streaming-en-0.6b-generic-cpu",
+        string modelAlias = HushSettings.DefaultTranscriptionModel,
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
         IProgress<string>? statusProgress = null,
@@ -207,10 +207,8 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
 
         statusProgress?.Report($"Resolving model '{modelAlias}'…");
         var catalog = await manager.GetCatalogAsync(cancellationToken);
-        var model = await catalog.GetModelAsync(modelAlias, cancellationToken)
-            ?? throw new InvalidOperationException(
-                $"Model '{modelAlias}' was not found in the Foundry Local catalog. " +
-                "Ensure Foundry Local is installed and the alias is correct.");
+        var (model, resolvedAlias) = await ResolveModelAsync(catalog, modelAlias, statusProgress, cancellationToken);
+        modelAlias = resolvedAlias;
 
         _logger.LogInformation("Downloading model '{ModelAlias}' (no-op if already cached).", modelAlias);
         statusProgress?.Report($"Checking cache for '{modelAlias}'…");
@@ -241,6 +239,74 @@ public sealed class TranscriptionEngine : ITranscriptionEngine
         _modelLoaded = true;
         statusProgress?.Report("Ready");
         _logger.LogInformation("TranscriptionEngine ready.");
+    }
+
+    private async Task<(IModel Model, string Alias)> ResolveModelAsync(
+        ICatalog catalog,
+        string modelAlias,
+        IProgress<string>? statusProgress,
+        CancellationToken cancellationToken)
+    {
+        var aliases = GetModelAliasCandidates(modelAlias).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+        for (int i = 0; i < aliases.Length; i++)
+        {
+            var alias = aliases[i];
+            if (i > 0)
+            {
+                _logger.LogWarning(
+                    "Model alias '{RequestedAlias}' was not found; retrying Foundry Local alias '{FallbackAlias}'.",
+                    aliases[0], alias);
+                statusProgress?.Report($"Resolving fallback model '{alias}'…");
+            }
+
+            var model = await catalog.GetModelAsync(alias, cancellationToken).ConfigureAwait(false);
+            if (model is not null)
+                return (model, alias);
+        }
+
+        var availableAliases = await GetAvailableSpeechAliasesAsync(catalog, cancellationToken).ConfigureAwait(false);
+        var tried = string.Join("', '", aliases);
+        var available = availableAliases.Length == 0
+            ? "none"
+            : string.Join(", ", availableAliases);
+        throw new InvalidOperationException(
+            $"Model '{modelAlias}' was not found in the Foundry Local catalog. Tried aliases: '{tried}'. " +
+            $"Available speech aliases: {available}. Ensure Foundry Local is installed and the alias is correct.");
+    }
+
+    private static IEnumerable<string> GetModelAliasCandidates(string modelAlias)
+    {
+        var requested = string.IsNullOrWhiteSpace(modelAlias)
+            ? HushSettings.DefaultTranscriptionModel
+            : modelAlias.Trim();
+
+        yield return requested;
+
+        if (IsLegacyNemotronVariant(requested))
+            yield return HushSettings.DefaultTranscriptionModel;
+    }
+
+    private static bool IsLegacyNemotronVariant(string modelAlias) =>
+        string.Equals(modelAlias, HushSettings.LegacyTranscriptionModelVariant, StringComparison.OrdinalIgnoreCase)
+        || modelAlias.StartsWith(HushSettings.LegacyTranscriptionModelVariant + ":", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<string[]> GetAvailableSpeechAliasesAsync(ICatalog catalog, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var models = await catalog.ListModelsAsync(cancellationToken).ConfigureAwait(false);
+            return models
+                .Select(m => m.Alias)
+                .Where(alias => alias.Contains("speech", StringComparison.OrdinalIgnoreCase)
+                    || alias.Contains("nemotron", StringComparison.OrdinalIgnoreCase))
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
     }
 
     /// <inheritdoc/>

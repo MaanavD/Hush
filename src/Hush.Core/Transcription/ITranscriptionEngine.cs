@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
+using Hush.Core.Configuration;
+
 namespace Hush.Core.Transcription;
 
 /// <summary>
@@ -16,7 +18,7 @@ public interface ITranscriptionEngine : IAsyncDisposable
     /// downloading, loading, ready).
     /// </summary>
     Task InitializeAsync(
-        string modelAlias = "nemotron-speech-streaming-en-0.6b-generic-cpu",
+        string modelAlias = HushSettings.DefaultTranscriptionModel,
         IProgress<double>? downloadProgress = null,
         bool downloadHardwareEPs = false,
         IProgress<string>? statusProgress = null,

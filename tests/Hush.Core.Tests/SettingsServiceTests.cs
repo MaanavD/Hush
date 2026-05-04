@@ -64,12 +64,10 @@ public sealed class SettingsServiceTests
         }
     }
 
-    [Theory]
-    [InlineData("whisper-tiny")]
-    [InlineData("openai-whisper-large-v3-turbo")]
-    [InlineData("nemotron-speech-streaming-en-0.6b")]
-    public void TryMigrateLegacyTranscriptionModel_RewritesObsoleteAliases(string obsoleteAlias)
+    [Fact]
+    public void TryMigrateLegacyTranscriptionModel_RewritesObsoleteAliases()
     {
+        const string obsoleteAlias = "nemotron-speech-streaming-en-0.6b-generic-cpu";
         var settings = new HushSettings { TranscriptionModel = obsoleteAlias };
 
         var migrated = SettingsService.TryMigrateLegacyTranscriptionModel(

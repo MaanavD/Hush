@@ -9,12 +9,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 // ── Hush — Milestone 1: Proof of Life ──────────────────────────────────────
 // Run this console app to verify mic → Foundry Local → text on Windows.
 //   dotnet run -- --list       list available catalog models and exit
-//   dotnet run -- --model <alias>   use a specific model alias (default: nemotron-speech-streaming-en-0.6b-generic-cpu)
+//   dotnet run -- --model <alias>   use a specific model alias (default: nemotron-speech-streaming-en-0.6b)
 //   Press Ctrl+C to stop recording.
 // ───────────────────────────────────────────────────────────────────────────
 
 bool listOnly = args.Contains("--list");
-string modelAlias = "nemotron-speech-streaming-en-0.6b-generic-cpu";
+string modelAlias = Hush.Core.Configuration.HushSettings.DefaultTranscriptionModel;
 int modelIdx = Array.IndexOf(args, "--model");
 if (modelIdx >= 0 && modelIdx + 1 < args.Length)
     modelAlias = args[modelIdx + 1];

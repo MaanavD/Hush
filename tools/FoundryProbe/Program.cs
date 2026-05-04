@@ -11,6 +11,7 @@ var manager = FoundryLocalManager.Instance;
 var catalog = await manager.GetCatalogAsync(default);
 
 foreach (var alias in new[] {
+    "nemotron-speech-streaming-en-0.6b",
     "nemotron-speech-streaming-en-0.6b-generic-cpu",
 })
 {

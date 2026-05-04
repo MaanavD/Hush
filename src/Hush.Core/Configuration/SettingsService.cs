@@ -53,10 +53,9 @@ public sealed class SettingsService
     }
 
     /// <summary>
-    /// Earlier Hush builds shipped with Whisper as the transcription backend,
-    /// and early Nemotron builds used a shorter alias that is no longer in the
-    /// nightly Foundry Local catalog. Stale aliases are upgraded to the current
-    /// Nemotron default so startup warmup can resolve the model.
+    /// An intermediate Nemotron build pinned the concrete CPU variant id
+    /// instead of the public catalog alias. Stale aliases are upgraded to
+    /// the current Nemotron default so startup warmup can resolve the model.
     /// </summary>
     private void MigrateLegacyTranscriptionModel(HushSettings settings)
     {
@@ -79,8 +78,7 @@ public sealed class SettingsService
         newAlias = oldAlias;
         if (string.IsNullOrWhiteSpace(oldAlias)) return false;
         if (string.Equals(oldAlias, HushSettings.DefaultTranscriptionModel, StringComparison.OrdinalIgnoreCase)) return false;
-        if (!oldAlias.Contains("whisper", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(oldAlias, "nemotron-speech-streaming-en-0.6b", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(oldAlias, HushSettings.LegacyTranscriptionModelVariant, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }

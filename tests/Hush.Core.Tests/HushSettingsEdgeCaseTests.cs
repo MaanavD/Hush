@@ -100,7 +100,7 @@ public sealed class HushSettingsEdgeCaseTests
         Assert.Equal("F5", loaded!.Hotkey);
         // All other properties should be defaults
         Assert.Equal("en", loaded.Language);
-        Assert.Equal("nemotron-speech-streaming-en-0.6b-generic-cpu", loaded.TranscriptionModel);
+        Assert.Equal("nemotron-speech-streaming-en-0.6b", loaded.TranscriptionModel);
         Assert.True(loaded.PartialsInOverlay);
         Assert.True(loaded.SoundEffects);
     }

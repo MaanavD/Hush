@@ -1,7 +1,7 @@
 # Hush
 
 > **Private, offline, free, cross-platform, open-source voice-to-text for your desktop.**
-> A C#/.NET alternative to Wispr Flow, Superwhisper, Voibe, VoiceInk, and MacWhisper — powered by [Foundry Local](https://github.com/microsoft/foundry-local).
+> A C#/.NET offline voice-to-text app powered by [Foundry Local](https://github.com/microsoft/foundry-local).
 
 ## Features
 
@@ -81,7 +81,7 @@ Settings are stored in `~/.hush/settings.json`.
 | `postProcessingEnabled` | `true`                                | Enable LLM rewrite on clean-mode sessions (coming soon)        |
 | `postProcessingModel`   | `"qwen3-0.6b"`                        | Foundry Local model alias for post-processing (coming soon)    |
 | `language`              | `"en"`                                | BCP-47 transcription language                                  |
-| `transcriptionModel`    | `"nemotron-speech-streaming-en-0.6b-generic-cpu"` | Foundry Local model alias                                      |
+| `transcriptionModel`    | `"nemotron-speech-streaming-en-0.6b"` | Foundry Local model alias                                      |
 | `overlayOpacity`        | `0.85`                                | Overlay background opacity                                     |
 | `soundEffects`          | `true`                                | Start/stop audio cues                                          |
 | `autoStart`             | `false`                               | Launch at OS login                                             |
