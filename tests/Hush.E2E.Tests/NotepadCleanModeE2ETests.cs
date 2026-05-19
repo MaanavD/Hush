@@ -172,7 +172,7 @@ public sealed class NotepadCleanModeE2ETests
 
         var real = new FoundryPostProcessingService(new NullLogger<FoundryPostProcessingService>());
         var measured = new MeasuredPostProcessor(real);
-        await measured.InitializeAsync(NotepadE2EOptions.PostProcessingModel, cancellationToken);
+        await measured.InitializeAsync(NotepadE2EOptions.PostProcessingModel, ct: cancellationToken);
         Assert.True(measured.IsReady, $"Post-processing model '{NotepadE2EOptions.PostProcessingModel}' was not ready.");
         return measured;
     }
