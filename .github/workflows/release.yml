@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
+      base_version: ${{ steps.resolve.outputs.base_version }}
       assembly_version: ${{ steps.resolve.outputs.assembly_version }}
       checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
       is_release: ${{ steps.resolve.outputs.is_release }}
@@ -61,6 +62,7 @@ jobs:
 
           base_version="${version%%-*}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "base_version=$base_version" >> "$GITHUB_OUTPUT"
           echo "assembly_version=$base_version.0" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
           echo "is_release=$is_release" >> "$GITHUB_OUTPUT"
@@ -226,13 +228,15 @@ jobs:
         shell: bash
         run: |
           version="${{ needs.preflight.outputs.version }}"
+          short_version="${{ needs.preflight.outputs.base_version }}"
           publish="src/Hush.App/bin/publish/osx-arm64"
           app="Hush.app"
           rm -rf "$app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp src/Hush.App/Assets/Info.plist "$app/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $short_version" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :HushSemVer string $version" "$app/Contents/Info.plist"
           cp -R "$publish"/* "$app/Contents/MacOS/"
           chmod +x "$app/Contents/MacOS/Hush.App"
           sips -s format icns src/Hush.App/Assets/hush-icon.png --out "$app/Contents/Resources/hush-icon.icns"

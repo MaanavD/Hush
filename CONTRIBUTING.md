@@ -43,11 +43,11 @@ Before starting a larger feature, open or comment on an issue so maintainers can
 
 ### Reporting Bugs
 
-Use the [Bug Report](https://github.com/maanavdalal/hush/issues/new?template=bug_report.yml) issue template. The more detail you provide — platform, steps to reproduce, and log output — the faster the fix will land.
+Use the [Bug Report](https://github.com/MaanavD/Hush/issues/new?template=bug_report.yml) issue template. The more detail you provide — platform, steps to reproduce, and log output — the faster the fix will land.
 
 ### Suggesting Features
 
-Use the [Feature Request](https://github.com/maanavdalal/hush/issues/new?template=feature_request.yml) issue template. For large changes it is worth opening a discussion first to align on approach before writing code.
+Use the [Feature Request](https://github.com/MaanavD/Hush/issues/new?template=feature_request.yml) issue template. For large changes it is worth opening a discussion first to align on approach before writing code.
 
 ### Submitting Pull Requests
 
@@ -163,4 +163,4 @@ These are intentionally disabled by default because they need a local desktop se
 
 ## Questions?
 
-Open a [Discussion](https://github.com/maanavdalal/hush/discussions) rather than an issue for general questions. Issues are reserved for confirmed bugs and actionable feature requests.
+Open a [Discussion](https://github.com/MaanavD/Hush/discussions) rather than an issue for general questions. Issues are reserved for confirmed bugs and actionable feature requests.
