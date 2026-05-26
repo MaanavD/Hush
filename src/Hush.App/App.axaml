@@ -43,6 +43,7 @@
             <SolidColorBrush x:Key="Hush.Surface.Brush"      Color="{StaticResource Hush.Surface}" />
             <SolidColorBrush x:Key="Hush.Border.Brush"       Color="{StaticResource Hush.Border}" />
             <SolidColorBrush x:Key="Hush.Accent.Brush"       Color="{StaticResource Hush.Accent}" />
+            <SolidColorBrush x:Key="Hush.Accent.Dim.Brush"   Color="{StaticResource Hush.Accent.Dim}" />
             <SolidColorBrush x:Key="Hush.CleanMode.Brush"    Color="{StaticResource Hush.CleanMode}" />
             <SolidColorBrush x:Key="Hush.CleanMode.Dim.Brush" Color="{StaticResource Hush.CleanMode.Dim}" />
             <SolidColorBrush x:Key="Hush.Recording.Brush"    Color="{StaticResource Hush.Recording}" />

@@ -31,9 +31,6 @@
                            FontSize="18"
                            FontWeight="SemiBold"
                            Foreground="{StaticResource Hush.Text.Primary.Brush}" />
-                <TextBlock Text="Choose Save &amp; Close to apply changes."
-                           FontSize="11"
-                           Foreground="{StaticResource Hush.Text.Secondary.Brush}" />
             </StackPanel>
         </Border>
 
@@ -208,8 +205,11 @@
                             <Setter Property="CornerRadius" Value="8" />
                         </Style>
                         <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
-                            <Setter Property="Background" Value="{StaticResource Hush.Accent.Brush}" />
+                            <Setter Property="Background" Value="{StaticResource Hush.Accent.Dim.Brush}" />
                             <Setter Property="CornerRadius" Value="8" />
+                        </Style>
+                        <Style Selector="ListBoxItem:selected /template/ ContentPresenter Border">
+                            <Setter Property="BorderBrush" Value="Transparent" />
                         </Style>
                     </ListBox.Styles>
                     <ListBox.ItemTemplate>
@@ -272,7 +272,7 @@
                         Padding="12"
                         Margin="0 0 0 8">
                     <StackPanel Spacing="6">
-                        <TextBlock Text="PROMPT PREVIEW"
+                        <TextBlock Text="{Binding SelectedPrompt.Name}"
                                    FontSize="9" FontWeight="Bold" LetterSpacing="2"
                                    Foreground="{StaticResource Hush.Text.Muted.Brush}" />
                         <TextBlock Text="{Binding SelectedPrompt.Prompt}"
