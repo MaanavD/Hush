@@ -77,7 +77,7 @@ public sealed class TrayIcon : IDisposable
 
         // 2. Keyboard reminders (non-clickable)
         menu.Add(new NativeMenuItem("Ctrl+H — Dictate") { IsEnabled = false });
-        menu.Add(new NativeMenuItem("Alt+H — Dictate & clean") { IsEnabled = false });
+        menu.Add(new NativeMenuItem("Ctrl+Alt+H — Dictate & clean") { IsEnabled = false });
         menu.Add(new NativeMenuItemSeparator());
 
         // 3. Copy last dictation

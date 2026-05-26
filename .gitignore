@@ -35,8 +35,8 @@ launchSettings.json
 *.nupkg.metadata
 *.snupkg
 .nuget/
-# Allow pre-release packages vendored for CI (not on nuget.org)
-!packages/*.nupkg
+# Optional local package cache. Keep packages/ tracked, but do not commit packages.
+packages/*.nupkg
 
 # Local history for Visual Studio
 .localhistory/
@@ -53,6 +53,24 @@ Thumbs.db
 
 # Node (if used)
 node_modules/
+
+# Local secrets, signing material, and developer-only config
+.env
+.env.*
+*.secret
+*.secrets
+*.pfx
+*.p12
+*.pem
+*.key
+*.cert
+*.crt
+secrets.*
+appsettings.*.json
+!.github/**/*.json
+
+# Local Hush runtime state
+.hush/
 
 # Build outputs
 *.exe
@@ -75,4 +93,3 @@ _inspect/
 
 # Runtime perf-counter dumps
 hush-counters.csv
-

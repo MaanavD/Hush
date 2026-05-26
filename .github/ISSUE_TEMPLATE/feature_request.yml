@@ -49,6 +49,15 @@ body:
         - Linux
         - All platforms
 
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Are you interested in contributing this?
+      options:
+        - Yes, I can open a PR
+        - Maybe, with guidance
+        - No, just requesting
+
   - type: textarea
     id: context
     attributes:

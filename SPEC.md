@@ -22,7 +22,7 @@
 
 ```
 1. User launches Hush → system tray icon appears. If the model is not cached yet, Hush downloads it with visible progress and prepares it in the background.
-2. User focuses the target app and text field, then holds the global hotkey (default: Ctrl+Shift+H) → small overlay shows "Listening…"
+2. User focuses the target app and text field, then holds the global hotkey (default: Ctrl+H) → small overlay shows "Listening…"
 3. User speaks → transcription updates stream in real-time.
 4. The overlay shows live interim text immediately. Hush types committed text segments into the currently focused app via simulated keystrokes with near-live latency.
 5. User releases hotkey → recording stops, final committed text flushes, overlay disappears.
@@ -402,7 +402,7 @@ A small, floating, semi-transparent window that appears during dictation.
 │                                 │
 │  "the quick brown fox jumped…"  │
 │                                 │
-│  [Ctrl+Shift+H to stop]    │
+│  [Ctrl+H to stop]          │
 └─────────────────────────────────┘
 ```
 
@@ -641,7 +641,7 @@ The following items remain valid future work, but they are intentionally deferre
 ```json
 {
   "$schema": "https://hush.dev/settings.schema.json",
-  "hotkey": "Ctrl+Shift+H",
+  "hotkey": "Ctrl+H",
   "language": "en",
   "transcriptionModel": "nemotron",
     "partialsInOverlay": true,
@@ -814,4 +814,3 @@ The model is downloaded automatically on first launch via the Foundry Local SDK.
 - `genai_config.json`, `audio_processor_config.json`, `tokenizer.json`, `tokenizer_config.json`, `vocab.txt`
 
 Legacy `~/.hush/settings.json` files that still reference the old concrete Nemotron CPU variant are migrated automatically at startup to the Nemotron alias — no manual edit is required.
-

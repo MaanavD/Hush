@@ -3,13 +3,17 @@
 > **Private, offline, free, cross-platform, open-source voice-to-text for your desktop.**
 > A C#/.NET offline voice-to-text app powered by [Foundry Local](https://github.com/microsoft/foundry-local).
 
+[![CI](https://github.com/MaanavD/Hush/actions/workflows/ci.yml/badge.svg)](https://github.com/MaanavD/Hush/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/MaanavD/Hush/actions/workflows/codeql.yml/badge.svg)](https://github.com/MaanavD/Hush/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ## Features
 
 - **Private** — all inference runs on-device. No audio or text ever leaves your machine.
 - **Offline** — works without an internet connection after the initial model download.
 - **Free & open-source** — MIT-licensed. No per-token costs, no subscriptions.
 - **Cross-platform** — Windows, macOS (Apple Silicon), and Linux desktop (X11). Hotkey, microphone capture, and text output all work natively on every supported OS.
-- **Push-to-talk** — hold `Ctrl+Shift+H`, speak, release. Text appears in whatever field is active.
+- **Push-to-talk** — hold `Ctrl+H`, speak, release. Text appears in whatever field is active.
 - **Live overlay** — floating window shows the current transcript while you dictate.
 - **Clipboard-safe** — text is typed via `KEYEVENTF_UNICODE` / `SendInput`; your clipboard is never touched.
 - **Single-instance** — only one copy of Hush can run at a time.
@@ -17,14 +21,24 @@
 
 ## Prerequisites
 
-1. **[Foundry Local](https://github.com/microsoft/foundry-local)** — must be installed before running Hush. Hush will show a clear error if it's missing.
-2. **.NET 9 SDK or later** (for building from source).
+- **Packaged releases:** no .NET SDK is required. Download the platform bundle from [GitHub Releases](https://github.com/MaanavD/Hush/releases), verify the checksum, and launch Hush. The first launch downloads the selected Foundry Local models.
+- **Building from source:** install the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0). NuGet restore uses nuget.org plus the public ORT-Nightly feed declared in `NuGet.config`.
 
 ## Quick Start
 
+### Install a release
+
+1. Download the latest bundle for your platform from [Releases](https://github.com/MaanavD/Hush/releases).
+2. Verify the `.sha256` checksum next to the bundle.
+3. Launch Hush and grant microphone/accessibility permissions when your OS prompts.
+
+See [docs/installation.md](docs/installation.md) for platform-specific install notes.
+
+### Build from source
+
 ```bash
-git clone https://github.com/maanavdalal/hush.git
-cd hush
+git clone https://github.com/MaanavD/Hush.git
+cd Hush
 
 dotnet build
 dotnet run --project src/Hush.App
@@ -49,9 +63,9 @@ Progress is shown in the overlay and tray icon tooltip.
 4. Speak — words appear live in the overlay and are typed into your active field.
 5. Release the hotkey — recording stops and the overlay disappears.
 
-For **clean mode** (spinner, no live streaming — LLM rewrite coming soon):
+For **clean mode** (records, rewrites with a local LLM, then commits on release):
 
-- Hold **Alt+H** instead. Audio is recorded with a spinner overlay, and the full transcript is committed on release.
+- Hold **Ctrl+Alt+H** instead. Audio is recorded with a spinner overlay, then the cleaned transcript is committed on release.
 
 Right-click the tray icon to open **Settings** or **Quit**.
 
@@ -63,7 +77,7 @@ While Hush is running you can send commands to it from a terminal or script:
 
 ```bash
 hush --toggle        # start/stop raw dictation (same as Ctrl+H)
-hush --toggle-clean  # start/stop clean-mode dictation (same as Alt+H)
+hush --toggle-clean  # start/stop clean-mode dictation (same as Ctrl+Alt+H)
 hush --cancel        # stop the active session without committing
 hush --copy-last     # copy the last transcript to the clipboard
 ```
@@ -77,9 +91,9 @@ Settings are stored in `~/.hush/settings.json`.
 | Key                     | Default                               | Description                                                    |
 | ----------------------- | ------------------------------------- | -------------------------------------------------------------- |
 | `hotkey`                | `"Ctrl+H"`                            | Global push-to-talk hotkey (raw mode)                          |
-| `cleanHotkey`           | `"Alt+H"`                             | Global push-to-talk hotkey (clean mode)                        |
-| `postProcessingEnabled` | `true`                                | Enable LLM rewrite on clean-mode sessions (coming soon)        |
-| `postProcessingModel`   | `"qwen3-0.6b"`                        | Foundry Local model alias for post-processing (coming soon)    |
+| `cleanHotkey`           | `"Ctrl+Alt+H"`                        | Global push-to-talk hotkey (clean mode)                        |
+| `postProcessingEnabled` | `true`                                | Enable LLM rewrite on clean-mode sessions                      |
+| `postProcessingModel`   | `"qwen3-0.6b"`                        | Foundry Local model alias for post-processing                  |
 | `language`              | `"en"`                                | BCP-47 transcription language                                  |
 | `transcriptionModel`    | `"nemotron-speech-streaming-en-0.6b"` | Foundry Local model alias                                      |
 | `overlayOpacity`        | `0.85`                                | Overlay background opacity                                     |
@@ -89,17 +103,7 @@ Settings are stored in `~/.hush/settings.json`.
 
 ## Build Prerequisites
 
-Hush depends on pre-release NuGet packages from the Foundry Local SDK that are not yet published to nuget.org.
-
-To build from source:
-
-1. Obtain the required `.nupkg` files:
-   - `Microsoft.AI.Foundry.Local` (version `1.0.0-dev.*`)
-   - `Microsoft.AI.Foundry.Local.Core` (version `1.0.0-dev-*`)
-2. Place them in the repository root directory (next to `Hush.sln`).
-3. The `NuGet.config` in the repo root is already configured to resolve packages from `.` (the repo root).
-
-> **Note:** These packages will be published to nuget.org before the stable 1.0 release, eliminating this manual step.
+Hush currently depends on pre-release Foundry Local SDK packages. `NuGet.config` is configured to restore them from the public ORT-Nightly feed. A local `packages/` source is also present for maintainers who need to test a private `.nupkg`, but package files are intentionally ignored and should not be committed.
 
 ## Development
 
@@ -113,6 +117,21 @@ dotnet test -c Release
 # Publish self-contained folder build (Windows)
 dotnet publish src/Hush.App -p:PublishProfile=win-x64
 ```
+
+CI runs build, tests, E2E smoke tests, and publish smoke validation on Windows, macOS, and Linux. Hardware/model-backed E2E suites stay opt-in via environment variables documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [docs/installation.md](docs/installation.md) | Install and verify release artifacts |
+| [docs/usage.md](docs/usage.md) | Hotkeys, settings, CLI remote control, and permissions |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Common runtime, typing, audio, and model issues |
+| [docs/releasing.md](docs/releasing.md) | Maintainer release checklist, signing, and CI/CD notes |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor workflow and local development setup |
+| [SPEC.md](SPEC.md) | Product and implementation specification |
+| [DESIGN.md](DESIGN.md) | Visual design principles |
+| [PRODUCT.md](PRODUCT.md) | Product positioning and goals |
 
 ## Architecture
 
@@ -151,10 +170,9 @@ The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifyi
 - **Linux hotkeys require X11.** Wayland-only sessions are guarded with a startup error instead of silently failing.
 - **macOS hotkeys require Accessibility permission.** Hush now reports that requirement immediately when hotkey registration fails.
 - **Elevated windows** on Windows: `SendInput` is blocked by UIPI when the target app runs as administrator. Run Hush as admin to type into admin windows.
-- **Code signing** is not yet set up. Windows SmartScreen or macOS Gatekeeper may show warnings on first launch.
-- **Pre-release SDK dependency.** Hush depends on pre-release `Microsoft.AI.Foundry.Local` packages that are not yet published to nuget.org. See the [Build Prerequisites](#build-prerequisites) section for setup instructions.
-- **Temporary catalog filter.** The default Foundry Local catalog hides several Qwen3.5 / Qwen3-VL models we are evaluating. To make them visible, `FoundryRuntimeConfiguration.Create` (in `src/Hush.Core/Transcription/`) sets `AdditionalSettings["AzureCatalogFilter"] = "'',test"` on the SDK `Configuration`. **Remove this once those models are promoted to the public catalog** — search the codebase for `TemporaryAzureCatalogFilter` / `AzureCatalogFilter` to find every spot.
-- **Qwen3.5 cleanup model blocked.** `qwen3.5-0.8b` is visible and can download, but the current Foundry/ONNX Runtime stack fails to load it with `CausalConvWithState` missing. Hush uses `qwen3-0.6b` for clean mode until a compatible runtime is available.
+- **Code signing:** release automation supports Windows/macOS/Linux artifacts and documents the required signing secrets. Until the project publishes signed artifacts, Windows SmartScreen or macOS Gatekeeper may show warnings.
+- **Pre-release SDK dependency:** Hush depends on pre-release `Microsoft.AI.Foundry.Local` packages restored from the public ORT-Nightly feed. See [Build Prerequisites](#build-prerequisites).
+- **Model catalog changes:** Foundry Local model aliases can change while the SDK is pre-release. If a configured alias is unavailable, choose another listed model in Settings.
 - **No auto-update.** Check the GitHub releases page for new versions.
 - All inference is on-device.
 

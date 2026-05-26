@@ -14,6 +14,7 @@ Thank you for your interest in contributing! Hush is a small, focused project an
 - [Project Structure](#project-structure)
 - [Coding Conventions](#coding-conventions)
 - [Running Tests](#running-tests)
+- [Release and CI Expectations](#release-and-ci-expectations)
 
 ---
 
@@ -34,6 +35,12 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ## How to Contribute
 
+### First Contributions
+
+If you are new to Hush, start with issues labeled `good first issue`, `documentation`, or `help wanted`. Docs-only improvements, clearer troubleshooting steps, small test cases, and platform-specific install notes are all valuable.
+
+Before starting a larger feature, open or comment on an issue so maintainers can confirm scope and avoid duplicate work.
+
 ### Reporting Bugs
 
 Use the [Bug Report](https://github.com/maanavdalal/hush/issues/new?template=bug_report.yml) issue template. The more detail you provide — platform, steps to reproduce, and log output — the faster the fix will land.
@@ -50,11 +57,13 @@ Use the [Feature Request](https://github.com/maanavdalal/hush/issues/new?templat
    git switch -c feat/my-short-description
    ```
 3. Make your changes and add tests where appropriate.
-4. Ensure `dotnet test` passes locally.
+4. Ensure `dotnet test -c Release` passes locally.
 5. Push your branch and open a pull request against `master`.
 6. Fill in the PR template — link to the related issue, summarize changes, and describe how you tested.
 
 > **Tip:** Keep pull requests small and focused. A PR that does one thing is much easier to review than a PR that does many things.
+
+Branch names should be short and descriptive, for example `fix/linux-hotkey-error`, `docs/release-checks`, or `feat/custom-prompts`. Commit messages do not need to follow a strict convention, but imperative summaries such as `Fix settings validation for duplicate hotkeys` are easiest to review.
 
 ---
 
@@ -65,8 +74,7 @@ Use the [Feature Request](https://github.com/maanavdalal/hush/issues/new?templat
 | Tool                                                        | Version                                                           |
 | ----------------------------------------------------------- | ----------------------------------------------------------------- |
 | [.NET SDK](https://dotnet.microsoft.com/download)           | 9.0 or later                                                      |
-| [Foundry Local](https://github.com/microsoft/foundry-local) | Latest                                                            |
-| Pre-release NuGet packages                                  | See [README § Build Prerequisites](README.md#build-prerequisites) |
+| Foundry Local SDK packages                                  | Restored through `NuGet.config` from nuget.org and ORT-Nightly    |
 
 ### Build
 
@@ -99,6 +107,7 @@ src/
 tests/
   Hush.Core.Tests/ # xUnit unit tests for Hush.Core
   Hush.App.Tests/  # xUnit tests for app-level logic
+  Hush.E2E.Tests/  # xUnit E2E smoke tests and opt-in desktop/model tests
 ```
 
 For a deeper explanation of every component see [SPEC.md](SPEC.md).
@@ -125,13 +134,30 @@ For a deeper explanation of every component see [SPEC.md](SPEC.md).
 dotnet test -c Release
 ```
 
-Tests use xUnit and Moq. No real hardware (microphone, GPU) is needed — all platform services are mocked.
+Tests use xUnit and Moq. Unit tests do not require real hardware; platform services are mocked. The E2E project includes safe smoke tests that run in CI plus opt-in suites for real desktop apps and model-backed audio.
 
 To collect code coverage:
 
 ```bash
 dotnet test -c Release --collect:"XPlat Code Coverage"
 ```
+
+### Opt-in E2E suites
+
+These are intentionally disabled by default because they need a local desktop session, model downloads, or OS-specific permissions:
+
+| Suite | Enable with | Notes |
+| --- | --- | --- |
+| Model-backed audio transcription | `HUSH_RUN_AUDIO_E2E=1` | Downloads/loads the configured Foundry Local transcription model |
+| Windows Notepad E2E | `HUSH_RUN_NOTEPAD_E2E=1` | Requires unlocked Windows desktop session |
+| macOS TextEdit E2E | `HUSH_RUN_MACOS_E2E=1` | Requires macOS Accessibility and microphone permissions |
+
+## Release and CI Expectations
+
+- Every PR should pass the CI workflow, which builds, tests, runs E2E smoke tests, and publish-smoke-validates Windows, macOS, and Linux artifacts.
+- Security scanning runs through CodeQL and Dependabot.
+- Release tags must be semantic versions in the form `vMAJOR.MINOR.PATCH` such as `v1.0.0`.
+- Maintainer release steps, signing requirements, and artifact verification are documented in [docs/releasing.md](docs/releasing.md).
 
 ---
 

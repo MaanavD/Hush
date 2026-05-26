@@ -35,7 +35,7 @@ public interface IGlobalHotkeyService : IDisposable
 
     /// <summary>
     /// Registers the global clean-mode hotkey described by <paramref name="hotkey"/>,
-    /// e.g. <c>"Alt+H"</c>. Can be active simultaneously with the raw hotkey.
+    /// e.g. <c>"Ctrl+Alt+H"</c>. Can be active simultaneously with the raw hotkey.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the hotkey is already in use by another application.

@@ -6,45 +6,93 @@ on:
   pull_request:
     branches: [master, main]
 
-# Cancel in-progress runs for the same branch/PR so new pushes don't queue up.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build & Test (Windows)
-    runs-on: windows-latest
+  build-test-publish:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
 
-    # NOTE: Pre-release NuGet packages not yet on nuget.org are vendored in the
-    # packages/ directory and picked up automatically via NuGet.config.
-    # When the SDK is published to nuget.org the packages/ dir can be removed.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            rid: win-x64
+            publishProfile: win-x64
+            executable: Hush.App.exe
+          - name: macOS arm64
+            os: macos-14
+            rid: osx-arm64
+            publishProfile: osx-arm64
+            executable: Hush.App
+          - name: Linux x64
+            os: ubuntu-latest
+            rid: linux-x64
+            publishProfile: linux-x64
+            executable: Hush.App
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Setup .NET 9
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           dotnet-version: "9.0.x"
 
       - name: Restore dependencies
-        run: dotnet restore --ignore-failed-sources
+        run: dotnet restore Hush.sln --ignore-failed-sources
 
-      - name: Build (Release)
-        run: dotnet build --no-restore -c Release
+      - name: Build
+        run: dotnet build Hush.sln --no-restore -c Release
 
-      - name: Run tests
+      - name: Run tests and E2E smoke tests
         run: >
-          dotnet test --no-build -c Release
-          --logger "trx;LogFileName=TestResults.trx"
+          dotnet test Hush.sln
+          --no-build
+          -c Release
+          --logger "trx;LogFileName=${{ matrix.rid }}.trx"
           --logger "console;verbosity=normal"
 
+      - name: Publish smoke
+        run: >
+          dotnet publish src/Hush.App/Hush.App.csproj
+          -c Release
+          -p:PublishProfile=${{ matrix.publishProfile }}
+          -p:Version=0.0.0-ci
+          -p:AssemblyVersion=0.0.0.0
+          -p:FileVersion=0.0.0.0
+          -p:InformationalVersion=0.0.0-ci
+
+      - name: Validate publish output
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path "src/Hush.App/bin/publish" "${{ matrix.rid }}"
+          if (-not (Test-Path $publishDir)) {
+            throw "Publish directory '$publishDir' was not created."
+          }
+
+          $exePath = Join-Path $publishDir "${{ matrix.executable }}"
+          if (-not (Test-Path $exePath)) {
+            throw "Expected executable '$exePath' was not created."
+          }
+
+          $runtimeFiles = Get-ChildItem -Path $publishDir -File
+          if ($runtimeFiles.Count -eq 0) {
+            throw "Publish directory '$publishDir' is empty."
+          }
+
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: test-results
+          name: test-results-${{ matrix.rid }}
           path: "**/TestResults/*.trx"
           retention-days: 30

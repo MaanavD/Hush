@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -16,6 +16,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hush.App.Tests", "tests\Hush.App.Tests\Hush.App.Tests.csproj", "{F19CAA36-09C2-4137-B000-4D3393E6FD34}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hush.ConsoleDemo", "src\Hush.ConsoleDemo\Hush.ConsoleDemo.csproj", "{148165F2-A2DB-4936-A1FF-BE99F78B08EF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hush.E2E.Tests", "tests\Hush.E2E.Tests\Hush.E2E.Tests.csproj", "{F82A2D17-4ADE-4C95-8942-E614484352AC}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -87,6 +89,18 @@ Global
 		{148165F2-A2DB-4936-A1FF-BE99F78B08EF}.Release|x64.Build.0 = Release|Any CPU
 		{148165F2-A2DB-4936-A1FF-BE99F78B08EF}.Release|x86.ActiveCfg = Release|Any CPU
 		{148165F2-A2DB-4936-A1FF-BE99F78B08EF}.Release|x86.Build.0 = Release|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Debug|x64.Build.0 = Debug|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Debug|x86.Build.0 = Debug|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Release|x64.ActiveCfg = Release|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Release|x64.Build.0 = Release|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Release|x86.ActiveCfg = Release|Any CPU
+		{F82A2D17-4ADE-4C95-8942-E614484352AC}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -97,5 +111,6 @@ Global
 		{DDFD2C72-CC91-4E90-A3C6-0E30CC9012E3} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{F19CAA36-09C2-4137-B000-4D3393E6FD34} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{148165F2-A2DB-4936-A1FF-BE99F78B08EF} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{F82A2D17-4ADE-4C95-8942-E614484352AC} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
