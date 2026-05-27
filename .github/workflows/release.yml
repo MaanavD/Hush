@@ -166,7 +166,7 @@ jobs:
           Write-Host "Packaged $zipName ($hash)"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hush-win-x64
           path: |
@@ -308,7 +308,7 @@ jobs:
           echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hush-osx-arm64
           path: |
@@ -375,7 +375,7 @@ jobs:
           echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hush-linux-x64
           path: |
