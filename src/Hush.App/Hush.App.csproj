@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <!--
@@ -31,16 +31,9 @@
     <RootNamespace>Hush.App</RootNamespace>
     <AssemblyName>Hush.App</AssemblyName>
     <!-- Shown in File Explorer → Properties → Details. -->
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <InformationalVersion>1.0.0</InformationalVersion>
     <Product>Hush</Product>
     <AssemblyTitle>Hush</AssemblyTitle>
     <Description>Private, offline, free voice-to-text for your desktop.</Description>
-    <Company>Maanav Dalal</Company>
-    <Authors>Maanav Dalal</Authors>
-    <Copyright>Copyright © 2026 Maanav Dalal. MIT License.</Copyright>
     <NeutralLanguage>en-US</NeutralLanguage>
     <!-- Windows-only: ship an exe with our own icon and app manifest
          (DPI awareness, supported-OS declarations, asInvoker). -->

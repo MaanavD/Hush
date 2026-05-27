@@ -21,7 +21,19 @@ body:
     id: version
     attributes:
       label: Hush version
-      placeholder: "e.g. 1.0.0"
+      placeholder: "e.g. 1.0.0, or commit SHA if running from source"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - GitHub Release bundle
+        - Built from source
+        - CI artifact
+        - Other
     validations:
       required: true
 
@@ -36,6 +48,26 @@ body:
         - Linux (X11)
     validations:
       required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version/build
+      description: Include Windows build, macOS version, or Linux distro/window manager.
+      placeholder: "e.g. Windows 11 24H2 build 26100, macOS 14.5, Ubuntu 24.04 X11"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: permissions
+    attributes:
+      label: Required OS permissions granted?
+      description: Microphone is required on every platform; Accessibility is required for macOS hotkeys/text output.
+      options:
+        - Yes
+        - No
+        - Not sure
+        - Not applicable
 
   - type: textarea
     id: description
@@ -59,7 +91,7 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. Hold Ctrl+Shift+H
+        1. Hold Ctrl+H
         2. Speak "..."
         3. See error in overlay
     validations:

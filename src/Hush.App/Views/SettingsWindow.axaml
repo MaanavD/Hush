@@ -123,8 +123,8 @@
                     </StackPanel>
                     <TextBox Grid.Column="1"
                              Text="{Binding CleanHotkey}"
-                             Watermark="Alt+H"
-                             ToolTip.Tip="Hold this key for clean-mode dictation. The full transcript is processed by a small language model before being typed. Max 2 keypresses (1 modifier + 1 key)." />
+                             Watermark="Ctrl+Alt+H"
+                             ToolTip.Tip="Hold this key for clean-mode dictation. The full transcript is processed by a small language model before being typed." />
                 </Grid>
 
                 <!-- Post-processing toggle -->

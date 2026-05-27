@@ -2,13 +2,13 @@ namespace Hush.E2E.Tests;
 
 public sealed class TranscriptQualityArtifactTests
 {
-    private const string SharePointUrl =
-        "https://microsoft.sharepoint.com/:p:/t/FoundryPlanningandRelease/cQpzpGGnk_KLT7b57TlZN1YeEgUCipEilQcqihVK80bTswkGHg";
+    private const string ForeignDocumentUrl =
+        "https://contoso.example/share/dictation-fixture/document-123";
 
     [Fact]
     public void ContainsCleanModeSpinnerArtifact_DoesNotFlagUrlSlashes()
     {
-        Assert.False(TranscriptQuality.ContainsCleanModeSpinnerArtifact(SharePointUrl));
+        Assert.False(TranscriptQuality.ContainsCleanModeSpinnerArtifact(ForeignDocumentUrl));
     }
 
     [Theory]
@@ -27,7 +27,7 @@ public sealed class TranscriptQualityArtifactTests
     {
         var analysis = TranscriptQuality.AnalyzeRenderedArtifacts(
             "what time is the design review today",
-            SharePointUrl);
+            ForeignDocumentUrl);
 
         Assert.False(analysis.ContainsSpinnerArtifact);
         Assert.True(analysis.ContainsContaminationArtifact);
@@ -39,7 +39,7 @@ public sealed class TranscriptQualityArtifactTests
     {
         var analysis = TranscriptQuality.AnalyzeRenderedArtifacts(
             "please speak more quietly because the microphone is very sensitive",
-            "please speak more quietly " + SharePointUrl + " because the microphone is very sensitive");
+            "please speak more quietly " + ForeignDocumentUrl + " because the microphone is very sensitive");
 
         Assert.False(analysis.ContainsSpinnerArtifact);
         Assert.True(analysis.ContainsContaminationArtifact);

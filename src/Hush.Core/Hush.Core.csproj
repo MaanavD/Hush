@@ -33,7 +33,6 @@
     <SelfContained>false</SelfContained>
     <RootNamespace>Hush.Core</RootNamespace>
     <AssemblyName>Hush.Core</AssemblyName>
-    <Version>1.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

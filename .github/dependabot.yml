@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    groups:
+      dotnet-runtime-and-test:
+        patterns:
+          - Microsoft.Extensions.*
+          - Microsoft.NET.Test.Sdk
+          - xunit*
+          - coverlet.*
+          - Moq
+      avalonia:
+        patterns:
+          - Avalonia*
+      foundry-local:
+        patterns:
+          - Microsoft.AI.Foundry.Local*
+          - Microsoft.ML.OnnxRuntime*
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5

@@ -1,18 +1,5 @@
 name: Release
 
-# Builds self-contained bundles for Windows, macOS (Apple Silicon), and Linux
-# whenever a `v*` tag is pushed (e.g. `git tag v1.0.0 && git push --tags`).
-#
-# Each platform job builds NATIVELY on its own GitHub-hosted runner — cross-
-# compiling from one host to another is brittle (.NET 9 doesn't auto-propagate
-# RuntimeIdentifier to project refs, and the Windows-only NAudio playback path
-# in SoundEffectService is gated by an MSBuild OS condition).
-#
-# Audio capture is cross-platform via PortAudioSharp2 (PortAudio ships pre-
-# built native libs for win-x64, osx-arm64/x64, linux-x64/arm64 inside the
-# NuGet). Hotkey registration and text output are also implemented on all
-# three OSes.
-
 on:
   push:
     tags:
@@ -20,250 +7,389 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g. v1.0.0). Leave empty to use HEAD."
+        description: "Tag to build, for example v1.0.0. Leave empty to build HEAD as a CI artifact."
         required: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: "9.0.x"
 
 jobs:
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      base_version: ${{ steps.resolve.outputs.base_version }}
+      assembly_version: ${{ steps.resolve.outputs.assembly_version }}
+      checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
+      is_release: ${{ steps.resolve.outputs.is_release }}
+
+    steps:
+      - name: Resolve version and ref
+        id: resolve
+        shell: bash
+        run: |
+          input_tag="${{ github.event.inputs.tag }}"
+          is_release="false"
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            checkout_ref="${GITHUB_REF}"
+            is_release="true"
+          elif [[ -n "$input_tag" ]]; then
+            tag="$input_tag"
+            checkout_ref="$input_tag"
+            is_release="true"
+          else
+            version="0.0.0-dev"
+            checkout_ref="${GITHUB_SHA}"
+          fi
+
+          if [[ "$is_release" == "true" ]]; then
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Release tags must match vMAJOR.MINOR.PATCH, optionally with a prerelease suffix."
+              exit 1
+            fi
+            version="${tag#v}"
+          fi
+
+          base_version="${version%%-*}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "base_version=$base_version" >> "$GITHUB_OUTPUT"
+          echo "assembly_version=$base_version.0" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
+          echo "is_release=$is_release" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+          echo "Checkout ref: $checkout_ref"
+          echo "Release: $is_release"
+
   release-windows:
     name: Windows x64
     runs-on: windows-latest
+    needs: preflight
+    permissions:
+      contents: write
+    env:
+      WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.preflight.outputs.checkout_ref }}
 
       - name: Setup .NET 9
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
-          dotnet-version: "9.0.x"
-
-      - name: Resolve version
-        id: version
-        shell: pwsh
-        run: |
-          $ref = "${{ github.ref }}"
-          if ($ref -like "refs/tags/v*") {
-            $version = $ref.Substring("refs/tags/v".Length)
-          } elseif ("${{ github.event.inputs.tag }}" -like "v*") {
-            $version = "${{ github.event.inputs.tag }}".Substring(1)
-          } else {
-            $version = "0.0.0-dev"
-          }
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Version: $version"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore Hush.sln --runtime win-x64 --ignore-failed-sources
 
-      - name: Publish (win-x64, single-exe, self-contained)
+      - name: Publish
         run: >
           dotnet publish src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=win-x64
-          -p:Version=${{ steps.version.outputs.version }}
-          -p:AssemblyVersion=${{ steps.version.outputs.version }}.0
-          -p:FileVersion=${{ steps.version.outputs.version }}.0
-          -p:InformationalVersion=${{ steps.version.outputs.version }}
+          -p:Version=${{ needs.preflight.outputs.version }}
+          -p:AssemblyVersion=${{ needs.preflight.outputs.assembly_version }}
+          -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
+          -p:InformationalVersion=${{ needs.preflight.outputs.version }}
+
+      - name: Require Windows signing secrets for tagged releases
+        if: needs.preflight.outputs.is_release == 'true'
+        shell: pwsh
+        run: |
+          $missing = @()
+          foreach ($name in "WINDOWS_CERTIFICATE_PFX", "WINDOWS_CERTIFICATE_PASSWORD") {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              $missing += $name
+            }
+          }
+
+          if ($missing.Count -gt 0) {
+            throw "Missing required Windows signing secrets: $($missing -join ', ')"
+          }
+
+      - name: Sign executable
+        if: needs.preflight.outputs.is_release == 'true'
+        shell: pwsh
+        run: |
+          $publishDir = "src\Hush.App\bin\publish\win-x64"
+          $exe = Join-Path $publishDir "Hush.App.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Expected executable '$exe' was not created."
+          }
+
+          $certPath = Join-Path $env:RUNNER_TEMP "hush-signing.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX))
+          $timestampUrl = if ([string]::IsNullOrWhiteSpace($env:WINDOWS_TIMESTAMP_URL)) { "http://timestamp.digicert.com" } else { $env:WINDOWS_TIMESTAMP_URL }
+          $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue)?.Source
+          if ([string]::IsNullOrWhiteSpace($signtool)) {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if ([string]::IsNullOrWhiteSpace($signtool)) {
+            throw "signtool.exe was not found on the runner."
+          }
+
+          & $signtool sign /f $certPath /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd SHA256 /tr $timestampUrl /td SHA256 $exe
+          & $signtool verify /pa /v $exe
 
       - name: Package
         id: package
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          $publishDir = "src/Hush.App/bin/publish/win-x64"
+          $version = "${{ needs.preflight.outputs.version }}"
+          $publishDir = "src\Hush.App\bin\publish\win-x64"
           $zipName = "Hush-$version-win-x64.zip"
-          Compress-Archive -Path "$publishDir/*" -DestinationPath $zipName -Force
+          $exe = Join-Path $publishDir "Hush.App.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Expected executable '$exe' was not created."
+          }
+
+          Compress-Archive -Path "$publishDir\*" -DestinationPath $zipName -Force
           $hash = (Get-FileHash $zipName -Algorithm SHA256).Hash
           "$hash  $zipName" | Out-File -FilePath "$zipName.sha256" -Encoding ascii
-          "zip=$zipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "artifact=$zipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "sha256=$zipName.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Packaged $zipName ($hash)"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: hush-win-x64
           path: |
-            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
 
       - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        if: needs.preflight.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
+          tag_name: v${{ needs.preflight.outputs.version }}
           draft: true
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
-            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
 
   release-macos:
     name: macOS arm64
-    runs-on: macos-14   # Apple Silicon
+    runs-on: macos-14
+    needs: preflight
+    permissions:
+      contents: write
+    env:
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.preflight.outputs.checkout_ref }}
 
       - name: Setup .NET 9
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
-          dotnet-version: "9.0.x"
-
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          ref="${{ github.ref }}"
-          if [[ "$ref" == refs/tags/v* ]]; then
-            version="${ref#refs/tags/v}"
-          elif [[ "${{ github.event.inputs.tag }}" == v* ]]; then
-            version="${{ github.event.inputs.tag }}"
-            version="${version#v}"
-          else
-            version="0.0.0-dev"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Version: $version"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore Hush.sln --runtime osx-arm64 --ignore-failed-sources
 
-      - name: Publish (osx-arm64, single-exe, self-contained)
+      - name: Publish
         run: >
           dotnet publish src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=osx-arm64
-          -p:Version=${{ steps.version.outputs.version }}
-          -p:AssemblyVersion=${{ steps.version.outputs.version }}.0
-          -p:FileVersion=${{ steps.version.outputs.version }}.0
-          -p:InformationalVersion=${{ steps.version.outputs.version }}
+          -p:Version=${{ needs.preflight.outputs.version }}
+          -p:AssemblyVersion=${{ needs.preflight.outputs.assembly_version }}
+          -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
+          -p:InformationalVersion=${{ needs.preflight.outputs.version }}
 
       - name: Build .app bundle
-        id: package
         shell: bash
         run: |
-          version="${{ steps.version.outputs.version }}"
+          version="${{ needs.preflight.outputs.version }}"
+          short_version="${{ needs.preflight.outputs.base_version }}"
           publish="src/Hush.App/bin/publish/osx-arm64"
           app="Hush.app"
           rm -rf "$app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp src/Hush.App/Assets/Info.plist "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $short_version" "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :HushSemVer string $version" "$app/Contents/Info.plist"
           cp -R "$publish"/* "$app/Contents/MacOS/"
           chmod +x "$app/Contents/MacOS/Hush.App"
+          sips -s format icns src/Hush.App/Assets/hush-icon.png --out "$app/Contents/Resources/hush-icon.icns"
 
-          # Bundle the icon (sips converts the PNG to a .icns).
-          sips -s format icns src/Hush.App/Assets/hush-icon.png \
-               --out "$app/Contents/Resources/hush-icon.icns" || true
-
-          # Ad-hoc sign so the binary launches on the build machine. Real
-          # distribution requires Apple Developer ID signing + notarization
-          # (see CONTRIBUTING for the manual steps).
-          codesign --force --deep --sign - "$app" || true
-
-          # Tarball preserves the +x bit and bundle structure.
-          tar="Hush-$version-osx-arm64.tar.gz"
-          tar -czf "$tar" "$app"
-          shasum -a 256 "$tar" > "$tar.sha256"
-          echo "tar=$tar" >> "$GITHUB_OUTPUT"
-          echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
-
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hush-osx-arm64
-          path: |
-            ${{ steps.package.outputs.tar }}
-            ${{ steps.package.outputs.sha256 }}
-
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          generate_release_notes: false
-          files: |
-            ${{ steps.package.outputs.tar }}
-            ${{ steps.package.outputs.sha256 }}
-
-  release-linux:
-    name: Linux x64
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - name: Setup .NET 9
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "9.0.x"
-
-      - name: Resolve version
-        id: version
+      - name: Require macOS signing secrets for tagged releases
+        if: needs.preflight.outputs.is_release == 'true'
         shell: bash
         run: |
-          ref="${{ github.ref }}"
-          if [[ "$ref" == refs/tags/v* ]]; then
-            version="${ref#refs/tags/v}"
-          elif [[ "${{ github.event.inputs.tag }}" == v* ]]; then
-            version="${{ github.event.inputs.tag }}"
-            version="${version#v}"
-          else
-            version="0.0.0-dev"
+          missing=()
+          for name in APPLE_CERTIFICATE_P12 APPLE_CERTIFICATE_PASSWORD APPLE_DEVELOPER_ID_APPLICATION APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required macOS signing/notarization secrets: ${missing[*]}"
+            exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Version: $version"
 
-      - name: Restore
-        run: dotnet restore
+      - name: Import macOS signing certificate
+        if: needs.preflight.outputs.is_release == 'true'
+        shell: bash
+        run: |
+          cert_path="$RUNNER_TEMP/developer-id.p12"
+          keychain_path="$RUNNER_TEMP/hush-signing.keychain-db"
 
-      - name: Publish (linux-x64, single-exe, self-contained)
-        run: >
-          dotnet publish src/Hush.App/Hush.App.csproj
-          -c Release
-          -p:PublishProfile=linux-x64
-          -p:Version=${{ steps.version.outputs.version }}
-          -p:AssemblyVersion=${{ steps.version.outputs.version }}.0
-          -p:FileVersion=${{ steps.version.outputs.version }}.0
-          -p:InformationalVersion=${{ steps.version.outputs.version }}
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$cert_path"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$cert_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security list-keychain -d user -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
+
+      - name: Sign app
+        if: needs.preflight.outputs.is_release == 'true'
+        shell: bash
+        run: |
+          codesign --force --deep --options runtime --timestamp --sign "$APPLE_DEVELOPER_ID_APPLICATION" "Hush.app"
+          codesign --verify --deep --strict --verbose=2 "Hush.app"
+
+      - name: Ad-hoc sign app for workflow artifacts
+        if: needs.preflight.outputs.is_release != 'true'
+        shell: bash
+        run: codesign --force --deep --sign - "Hush.app"
+
+      - name: Notarize app
+        if: needs.preflight.outputs.is_release == 'true'
+        shell: bash
+        run: |
+          ditto -c -k --keepParent "Hush.app" "$RUNNER_TEMP/Hush-notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/Hush-notarize.zip" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "Hush.app"
 
       - name: Package
         id: package
         shell: bash
         run: |
-          version="${{ steps.version.outputs.version }}"
-          publish="src/Hush.App/bin/publish/linux-x64"
-          chmod +x "$publish"/Hush.App || true
-          tar="Hush-$version-linux-x64.tar.gz"
-          tar -C "$publish" -czf "$tar" .
-          sha256sum "$tar" > "$tar.sha256"
-          echo "tar=$tar" >> "$GITHUB_OUTPUT"
+          version="${{ needs.preflight.outputs.version }}"
+          tar="Hush-$version-osx-arm64.tar.gz"
+          tar -czf "$tar" "Hush.app"
+          shasum -a 256 "$tar" > "$tar.sha256"
+          echo "artifact=$tar" >> "$GITHUB_OUTPUT"
           echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: hush-linux-x64
+          name: hush-osx-arm64
           path: |
-            ${{ steps.package.outputs.tar }}
+            ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
 
       - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        if: needs.preflight.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
+          tag_name: v${{ needs.preflight.outputs.version }}
           draft: true
           generate_release_notes: false
+          fail_on_unmatched_files: true
           files: |
-            ${{ steps.package.outputs.tar }}
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.sha256 }}
+
+  release-linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    needs: preflight
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.preflight.outputs.checkout_ref }}
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore Hush.sln --runtime linux-x64 --ignore-failed-sources
+
+      - name: Publish
+        run: >
+          dotnet publish src/Hush.App/Hush.App.csproj
+          -c Release
+          -p:PublishProfile=linux-x64
+          -p:Version=${{ needs.preflight.outputs.version }}
+          -p:AssemblyVersion=${{ needs.preflight.outputs.assembly_version }}
+          -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
+          -p:InformationalVersion=${{ needs.preflight.outputs.version }}
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          version="${{ needs.preflight.outputs.version }}"
+          publish="src/Hush.App/bin/publish/linux-x64"
+          executable="$publish/Hush.App"
+          if [[ ! -x "$executable" ]]; then
+            chmod +x "$executable"
+          fi
+          tar="Hush-$version-linux-x64.tar.gz"
+          tar -C "$publish" -czf "$tar" .
+          sha256sum "$tar" > "$tar.sha256"
+          echo "artifact=$tar" >> "$GITHUB_OUTPUT"
+          echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hush-linux-x64
+          path: |
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.sha256 }}
+
+      - name: Attach to GitHub Release
+        if: needs.preflight.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          tag_name: v${{ needs.preflight.outputs.version }}
+          draft: true
+          generate_release_notes: false
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}

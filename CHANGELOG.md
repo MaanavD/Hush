@@ -11,6 +11,10 @@ Hush uses [semantic versioning](https://semver.org/).
 
 ### Added
 
+- Public open-source readiness pass: install, usage, troubleshooting, and release-maintainer docs.
+- CodeQL workflow and Dependabot configuration for supply-chain and static-analysis coverage.
+- Cross-platform CI matrix that validates restore, build, tests, E2E smoke coverage, and publish profiles on Windows, macOS, and Linux.
+- Release preflight, checksum validation, pinned third-party actions, and signing/notarization hooks for release automation.
 - **Cross-platform microphone capture** via [PortAudioSharp2](https://www.nuget.org/packages/PortAudioSharp2/) — replaces the Windows-only NAudio capture path. PortAudio ships pre-built native libraries for `win-x64`, `osx-arm64`/`osx-x64`, and `linux-x64`/`linux-arm64` inside the NuGet, so no extra system packages are required on Windows or macOS. Linux relies on the system's ALSA library (preinstalled on virtually every desktop distro)
 - Windows application icon (`hush-icon.ico`) embedded in `Hush.App.exe`; shown in File Explorer, taskbar, and Alt-Tab
 - Windows application manifest: Per-Monitor V2 DPI awareness, UTF-8 active code page, long-path aware, Windows 7/8/10/11 `supportedOS` declarations, `asInvoker` execution level (no UAC prompt)
@@ -21,6 +25,8 @@ Hush uses [semantic versioning](https://semver.org/).
 
 ### Changed
 
+- Centralized shared assembly/release metadata in `Directory.Build.props`.
+- Updated public docs and issue templates for the current default hotkeys: `Ctrl+H` and `Ctrl+Alt+H`.
 - `AudioCaptureService` now uses PortAudio process-wide (one-time `Pa_Initialize`, never terminated) instead of NAudio's `WaveInEvent`. Same 16 kHz / 16-bit / mono / ~50 ms PCM contract; `IAudioCaptureService` interface and `AudioLevelChanged` event are unchanged
 - NAudio is now a Windows-only dependency, scoped to `SoundEffectService` (start/stop chimes)
 - `SettingsViewModel` populates the microphone list lazily when the settings window opens, instead of in its constructor — avoids loading native audio libs during process startup or unit tests

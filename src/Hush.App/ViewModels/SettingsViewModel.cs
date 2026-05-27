@@ -36,7 +36,7 @@ namespace Hush.App.ViewModels
         [ObservableProperty] private bool _autoStart;
 
         // Clean Mode
-        [ObservableProperty] private string _cleanHotkey = "Ctrl+H";
+        [ObservableProperty] private string _cleanHotkey = "Ctrl+Alt+H";
         [ObservableProperty] private bool _postProcessingEnabled = true;
         [ObservableProperty] private string _postProcessingModel = "qwen3-0.6b";
         [ObservableProperty] private LanguageModelOptionViewModel? _selectedPostProcessingLanguageModel;
@@ -426,4 +426,3 @@ namespace Hush.App.ViewModels
     }
 
 }
-

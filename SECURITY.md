@@ -8,7 +8,7 @@ Only the latest release of Hush receives security fixes.
 
 Please **do not** open a public GitHub issue for security vulnerabilities.
 
-Instead, email **security@[your-domain]** or use [GitHub private vulnerability reporting](https://github.com/maanavdalal/hush/security/advisories/new).
+Use [GitHub private vulnerability reporting](https://github.com/MaanavD/Hush/security/advisories/new) so the report stays private until a fix is ready. If GitHub private reporting is unavailable, contact the maintainer through the repository owner profile and ask for a private security-reporting channel.
 
 Include:
 - A description of the vulnerability and its potential impact
@@ -19,7 +19,7 @@ You will receive an acknowledgement within 48 hours and a resolution timeline wi
 
 ## Scope
 
-Hush is a local, offline desktop app. All inference runs on-device. There is no server, no API, and no network communication during normal use (the model download in `setup.ps1` is the only outbound request and goes to HuggingFace and Microsoft CDNs).
+Hush is a local, offline desktop app. All inference runs on-device. There is no server and no hosted API. Normal use only performs outbound requests when Foundry Local downloads model files or runtime components from Microsoft-controlled package/model feeds.
 
 Security issues most relevant to this project:
 - Malicious input causing code execution via the hotkey or dictation pipeline
