@@ -23,6 +23,11 @@ updates:
         patterns:
           - Microsoft.AI.Foundry.Local*
           - Microsoft.ML.OnnxRuntime*
+    ignore:
+      # Avalonia.ReactiveUI has no 12.x release yet; a major-version core bump produces a
+      # mismatched, unbuildable package set. Re-enable manually once ReactiveUI 12 ships.
+      - dependency-name: "Avalonia*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /

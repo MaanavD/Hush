@@ -7,6 +7,18 @@
 [![CodeQL](https://github.com/MaanavD/Hush/actions/workflows/codeql.yml/badge.svg)](https://github.com/MaanavD/Hush/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+## Demo
+
+<!--
+  Before launch, add a 10-20s screen capture here. Suggested shot:
+  focus a text field, hold Ctrl+H, speak, show text streaming in live, then release.
+  Optionally follow with a short clip of clean mode (Ctrl+Alt+H) rewriting on release.
+  File names and capture spec: docs/assets/README.md
+-->
+<!-- ![Hush dictating live into a focused text field](docs/assets/demo.gif) -->
+
+> Demo capture pending — see [`docs/assets/README.md`](docs/assets/README.md) for the recording spec.
+
 ## Features
 
 - **Private** — all inference runs on-device. No audio or text ever leaves your machine.
@@ -18,6 +30,17 @@
 - **Clipboard-safe** — text is typed via `KEYEVENTF_UNICODE` / `SendInput`; your clipboard is never touched.
 - **Single-instance** — only one copy of Hush can run at a time.
 - **Logs to file** — diagnostic log at `~/.hush/hush.log` for easy troubleshooting.
+
+## Comparison
+
+|                      | Hush                  | Cloud dictation services | OS built-in dictation |
+| -------------------- | --------------------- | ------------------------ | --------------------- |
+| Inference location   | On-device             | Remote server            | OS-dependent          |
+| Audio leaves machine | Never                 | Yes                      | Sometimes             |
+| Cost                 | Free, MIT-licensed    | Subscription             | Free                  |
+| Platforms            | Windows, macOS, Linux | Varies                   | Single-OS             |
+| Offline              | After model download  | No                       | Varies                |
+| Source available     | Yes                   | No                       | No                    |
 
 ## Prerequisites
 
