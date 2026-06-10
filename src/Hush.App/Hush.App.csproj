@@ -47,9 +47,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Hush.Core\Hush.Core.csproj" />
-    <PackageReference Include="Avalonia" Version="12.0.3" />
-    <PackageReference Include="Avalonia.Desktop" Version="12.0.3" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.3" />
+    <!--
+      Pin the Avalonia core packages to the 11.3.x line. Avalonia.ReactiveUI has no 12.x
+      release yet, so a 12.x core would create a mismatched, unbuildable package set
+      (Avalonia 12 also removed IClipboard.SetTextAsync). Keep these aligned with
+      Avalonia.ReactiveUI until a matching ReactiveUI 12 ships. See dependabot.yml ignore rule.
+    -->
+    <PackageReference Include="Avalonia" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.13" />
     <PackageReference Include="Avalonia.ReactiveUI" Version="11.3.9" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
