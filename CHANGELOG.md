@@ -50,5 +50,5 @@ Hush uses [semantic versioning](https://semver.org/).
 - 18 xUnit test files covering core services, settings, session orchestration, and edge cases
 - MIT license
 
-[Unreleased]: https://github.com/maanavdalal/hush/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/maanavdalal/hush/releases/tag/v1.0.0
+[Unreleased]: https://github.com/MaanavD/Hush/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/MaanavD/Hush/releases/tag/v1.0.0

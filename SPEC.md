@@ -779,8 +779,8 @@ These are NOT in the MVP scope but inform architectural decisions:
 
 ```bash
 # Clone
-git clone https://github.com/maanavdalal/hush.git
-cd hush
+git clone https://github.com/MaanavD/Hush.git
+cd Hush
 
 # Build
 dotnet build
