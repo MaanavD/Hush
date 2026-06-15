@@ -97,64 +97,29 @@
 
 ```
 Hush/
-├── Hush.sln
-├── src/
-│   ├── Hush.Core/                    # Class library — no UI dependency
-│   │   ├── Hush.Core.csproj
-│   │   ├── Audio/
-│   │   │   ├── AudioCaptureService.cs        # Mic capture via backend abstraction (16kHz 16-bit mono PCM)
-│   │   │   └── IAudioCaptureService.cs
-│   │   ├── Transcription/
-│   │   │   ├── TranscriptionEngine.cs        # Wraps Foundry Local live transcription
-│   │   │   ├── ITranscriptionEngine.cs
-│   │   │   └── TranscriptionResult.cs        # DisplayText, CommittedDelta, IsFinal, StartTime, EndTime
-│   │   ├── Input/
-│   │   │   ├── IGlobalHotkeyService.cs
-│   │   │   └── GlobalHotkeyService.cs        # Per-platform hotkey registration
-│   │   ├── Output/
-│   │   │   ├── ITextOutputService.cs
-│   │   │   └── KeystrokeTypingService.cs     # Simulate keystrokes to type text into focused app
-│   │   ├── Models/
-│   │   │   ├── IModelManager.cs
-│   │   │   └── ModelManager.cs               # Download/load/unload Foundry models
-│   │   ├── Configuration/
-│   │   │   └── HushSettings.cs               # User preferences (hotkey, language, etc.)
-│   │   │   └── SettingsService.cs            # Load/save JSON settings
-│   │   └── Session/
-│   │       ├── DictationSession.cs           # Orchestrates: hotkey → capture → transcribe → output
-│   │       └── IDictationSession.cs
-│   │
-│   └── Hush.App/                     # Avalonia desktop app
-│       ├── Hush.App.csproj
-│       ├── App.axaml / App.axaml.cs
-│       ├── Program.cs
-│       ├── ViewModels/
-│       │   ├── MainViewModel.cs              # App-level state (model status)
-│       │   ├── OverlayViewModel.cs           # Live transcription text, recording state
-│       │   └── SettingsViewModel.cs          # Settings bindings
-│       ├── Views/
-│       │   ├── OverlayWindow.axaml           # Floating translucent overlay during dictation
-│       │   ├── SettingsWindow.axaml          # Configuration UI
-│       │   └── TrayIcon.cs                   # System tray icon + context menu
-│       ├── Assets/
-│       │   ├── hush-icon.ico
-│       │   └── hush-icon.png
-│       └── Platforms/
-│           ├── Windows/
-│           │   └── WindowsHotkeyProvider.cs  # Win32 RegisterHotKey
-│           ├── macOS/
-│           │   └── MacHotkeyProvider.cs      # CGEvent tap
-│           └── Linux/
-│               └── LinuxHotkeyProvider.cs    # X11/XGrab or libkeybinder
+├── dotnet/
+│   ├── Hush.sln
+│   ├── src/
+│   │   ├── Hush.Core/                # .NET class library: engine, audio, hotkey, output, settings
+│   │   ├── Hush.App/                 # Avalonia desktop app
+│   │   └── Hush.ConsoleDemo/         # Minimal CLI/demo host
+│   ├── tests/
+│   │   ├── Hush.Core.Tests/
+│   │   ├── Hush.App.Tests/
+│   │   └── Hush.E2E.Tests/
+│   └── tools/
+│       └── TranscriptionBenchmark/   # .NET benchmark CLI
 │
-├── tests/
-│   ├── Hush.Core.Tests/
-│   │   └── Hush.Core.Tests.csproj
-│   └── Hush.App.Tests/
-│       └── Hush.App.Tests.csproj
+├── rust/
+│   ├── Cargo.toml                    # Rust workspace for rewrite spike
+│   └── crates/
+│       ├── hush-app/                 # egui native desktop shell
+│       ├── hush-core/                # Rust core and benchmark abstractions
+│       ├── hush-bench/               # Rust Foundry transcription benchmark
+│       └── hush-cli/                 # Rust CLI entry point
 │
-├── .github/                          # (CI workflows — planned)
-│
+├── benchmarks/                       # Shared benchmark runner and schemas
+├── .github/                          # CI and release workflows
 ├── README.md
 ├── LICENSE                           # MIT
 ├── SPEC.md                           # This file
@@ -756,7 +721,7 @@ These are NOT in the MVP scope but inform architectural decisions:
 
 ## 14  Current State & Known Workarounds
 
-- Hush pins pre-release `Microsoft.AI.Foundry.Local` NuGet packages (see `NuGet.config` for the local package source).
+- Hush pins pre-release `Microsoft.AI.Foundry.Local` NuGet packages (see `dotnet/NuGet.config` for the local package source).
 - The managed Foundry Local SDK handles native-asset resolution and DLL path wiring. Hush supplies an `AppName` via `FoundryRuntimeConfiguration`.
 - macOS and Linux do not yet have validated microphone capture backends. Hotkey and text-output paths work, but audio capture on those platforms is pending.
 - The Nemotron CPU int4 model is the sole supported transcription backend. See `dist/setup.ps1` for the model bootstrap workflow.
@@ -783,13 +748,16 @@ git clone https://github.com/MaanavD/Hush.git
 cd Hush
 
 # Build
-dotnet build
+dotnet build dotnet/Hush.sln
+cargo build --manifest-path rust/Cargo.toml --workspace
 
 # Run (downloads model on first launch)
-dotnet run --project src/Hush.App
+dotnet run --project dotnet/src/Hush.App
+cargo run --manifest-path rust/Cargo.toml -p hush-app
 
 # Test
-dotnet test
+dotnet test dotnet/Hush.sln
+cargo test --manifest-path rust/Cargo.toml --workspace
 ```
 
 ---

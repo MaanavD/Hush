@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Hush Settings</title>
+  </head>
+  <body class="settings-body">
+    <main class="settings-shell">
+      <header class="settings-header">
+        <div>
+          <div class="eyebrow">HUSH RUST</div>
+          <h1>Settings</h1>
+          <p>Local dictation, live preview, clean-mode rewrite.</p>
+        </div>
+        <button id="hide" class="ghost-button">Hide</button>
+      </header>
+
+      <section class="settings-section">
+        <h2>Input</h2>
+        <label class="field-row">
+          <span><strong>Raw hotkey</strong><small>Live preview into focused app</small></span>
+          <input id="hotkey" readonly />
+        </label>
+        <label class="field-row">
+          <span><strong>Clean hotkey</strong><small>LLM rewrite after release</small></span>
+          <input id="clean_hotkey" readonly />
+        </label>
+        <label class="field-row">
+          <span><strong>Microphone</strong><small>Capture device</small></span>
+          <select id="microphone_name"></select>
+        </label>
+        <label class="field-row">
+          <span><strong>Language</strong><small>Foundry language hint</small></span>
+          <select id="language"></select>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h2>Models</h2>
+        <label class="field-row">
+          <span><strong>Transcription</strong><small>Loaded on app start</small></span>
+          <select id="transcription_model"></select>
+        </label>
+        <label class="field-row">
+          <span><strong>Unload model</strong><small>Saved preference</small></span>
+          <select id="model_unload_timeout"></select>
+        </label>
+      </section>
+
+      <section class="settings-section clean">
+        <h2>Clean mode</h2>
+        <label class="field-row">
+          <span><strong>LLM rewrite</strong><small>Clean-mode final pass</small></span>
+          <input id="post_processing_enabled" type="checkbox" />
+        </label>
+        <label class="field-row">
+          <span><strong>LLM model</strong><small>Loaded in background</small></span>
+          <select id="post_processing_model"></select>
+        </label>
+        <label class="field-row tall">
+          <span><strong>Prompt</strong><small>Choose a preset or edit text</small></span>
+          <select id="prompt_preset"></select>
+        </label>
+        <textarea id="active_prompt" spellcheck="false"></textarea>
+      </section>
+
+      <section class="settings-section">
+        <h2>Behavior</h2>
+        <label class="field-row">
+          <span><strong>Show partials</strong><small>Draft text in overlay</small></span>
+          <input id="partials_in_overlay" type="checkbox" />
+        </label>
+        <label class="field-row">
+          <span><strong>Stream text</strong><small>Raw mode types as you talk</small></span>
+          <input id="streaming_commit" type="checkbox" />
+        </label>
+        <label class="field-row">
+          <span><strong>Auto-submit</strong><small>After dictation ends</small></span>
+          <select id="auto_submit_key"></select>
+        </label>
+        <label class="field-row">
+          <span><strong>Sound effects</strong><small>Saved preference</small></span>
+          <input id="sound_effects" type="checkbox" />
+        </label>
+        <label class="field-row">
+          <span><strong>Launch at login</strong><small>Saved preference</small></span>
+          <input id="auto_start" type="checkbox" />
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h2>Dictionary</h2>
+        <div id="dictionary"></div>
+        <button id="add-substitution" class="ghost-button wide">Add substitution</button>
+      </section>
+
+      <footer class="settings-footer">
+        <button id="refresh" class="ghost-button">Refresh microphones</button>
+        <div class="footer-actions">
+          <button id="cancel" class="ghost-button">Cancel</button>
+          <button id="save" class="primary-button">Save</button>
+        </div>
+      </footer>
+    </main>
+    <script src="settings.js"></script>
+  </body>
+</html>

@@ -28,8 +28,8 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 1. **Fork** the repository and clone your fork.
 2. Follow the [Build Prerequisites](README.md#build-prerequisites) section of the README to obtain the pre-release NuGet packages.
-3. Run `dotnet build` to verify your environment.
-4. Run `dotnet test` to confirm all tests pass.
+3. Run `dotnet build dotnet/Hush.sln` to verify the .NET environment.
+4. Run `dotnet test dotnet/Hush.sln` and `cargo test --manifest-path rust/Cargo.toml --workspace` to confirm both stacks pass.
 
 ---
 
@@ -57,7 +57,7 @@ Use the [Feature Request](https://github.com/MaanavD/Hush/issues/new?template=fe
    git switch -c feat/my-short-description
    ```
 3. Make your changes and add tests where appropriate.
-4. Ensure `dotnet test -c Release` passes locally.
+4. Ensure `dotnet test dotnet/Hush.sln -c Release` and `cargo test --manifest-path rust/Cargo.toml --workspace` pass locally.
 5. Push your branch and open a pull request against `master`.
 6. Fill in the PR template — link to the related issue, summarize changes, and describe how you tested.
 
@@ -74,24 +74,39 @@ Branch names should be short and descriptive, for example `fix/linux-hotkey-erro
 | Tool                                                        | Version                                                           |
 | ----------------------------------------------------------- | ----------------------------------------------------------------- |
 | [.NET SDK](https://dotnet.microsoft.com/download)           | 9.0 or later                                                      |
-| Foundry Local SDK packages                                  | Restored through `NuGet.config` from nuget.org and ORT-Nightly    |
+| [Rust](https://www.rust-lang.org/tools/install)             | Stable toolchain                                                  |
+| Foundry Local SDK packages                                  | Restored through `dotnet/NuGet.config` from nuget.org and ORT-Nightly |
 
 ### Build
 
 ```bash
-dotnet build
+dotnet build dotnet/Hush.sln
+cargo build --manifest-path rust/Cargo.toml --workspace
 ```
 
 ### Run (Windows)
 
 ```bash
-dotnet run --project src/Hush.App
+dotnet run --project dotnet/src/Hush.App
+cargo run --manifest-path rust/Cargo.toml -p hush-app
+```
+
+The Rust shell preloads the transcription model on startup, registers `Ctrl+H`
+for raw dictation and `Ctrl+Alt+H` for clean mode on Windows, and persists
+settings to `~/.hush/rust-settings.json`. Focus a target text field, hold the
+hotkey, speak, and release to stop; final text is typed into the focused app via
+Unicode `SendInput`.
+
+### Run the Rust live microphone smoke test
+
+```bash
+cargo run --manifest-path rust/Cargo.toml -p hush-cli -- live --seconds 30
 ```
 
 ### Run the console demo (useful for verifying mic-to-text without the UI)
 
 ```bash
-dotnet run --project src/Hush.ConsoleDemo
+dotnet run --project dotnet/src/Hush.ConsoleDemo
 ```
 
 ---
@@ -99,15 +114,25 @@ dotnet run --project src/Hush.ConsoleDemo
 ## Project Structure
 
 ```
-src/
-  Hush.App/        # Avalonia UI — tray, overlay, settings windows
-  Hush.Core/       # Class library — engine, audio, hotkey, output, settings
-  Hush.ConsoleDemo/# Minimal console app for testing transcription
+dotnet/
+  src/
+    Hush.App/        # Avalonia UI — tray, overlay, settings windows
+    Hush.Core/       # Class library — engine, audio, hotkey, output, settings
+    Hush.ConsoleDemo/# Minimal console app for testing transcription
+  tests/
+    Hush.Core.Tests/ # xUnit unit tests for Hush.Core
+    Hush.App.Tests/  # xUnit tests for app-level logic
+    Hush.E2E.Tests/  # xUnit E2E smoke tests and opt-in desktop/model tests
 
-tests/
-  Hush.Core.Tests/ # xUnit unit tests for Hush.Core
-  Hush.App.Tests/  # xUnit tests for app-level logic
-  Hush.E2E.Tests/  # xUnit E2E smoke tests and opt-in desktop/model tests
+rust/
+  crates/
+    hush-app/        # egui native shell spike
+    hush-core/       # Rust core and benchmark abstractions
+    hush-bench/      # Foundry Local benchmark CLI
+    hush-cli/        # Rust command-line entry point
+
+benchmarks/
+  run-comparison.ps1 # Runs .NET and Rust transcription benchmarks on one WAV
 ```
 
 For a deeper explanation of every component see [SPEC.md](SPEC.md).
@@ -131,7 +156,8 @@ For a deeper explanation of every component see [SPEC.md](SPEC.md).
 ## Running Tests
 
 ```bash
-dotnet test -c Release
+dotnet test dotnet/Hush.sln -c Release
+cargo test --manifest-path rust/Cargo.toml --workspace
 ```
 
 Tests use xUnit and Moq. Unit tests do not require real hardware; platform services are mocked. The E2E project includes safe smoke tests that run in CI plus opt-in suites for real desktop apps and model-backed audio.
@@ -139,7 +165,7 @@ Tests use xUnit and Moq. Unit tests do not require real hardware; platform servi
 To collect code coverage:
 
 ```bash
-dotnet test -c Release --collect:"XPlat Code Coverage"
+dotnet test dotnet/Hush.sln -c Release --collect:"XPlat Code Coverage"
 ```
 
 ### Opt-in E2E suites

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hush transcription benchmark result",
+  "type": "object",
+  "required": [
+    "implementation",
+    "model_alias",
+    "audio_file",
+    "language",
+    "runtime_init_ms",
+    "model_load_ms",
+    "transcription_ms",
+    "transcript_chars",
+    "transcript"
+  ],
+  "properties": {
+    "implementation": { "type": "string" },
+    "model_alias": { "type": "string" },
+    "audio_file": { "type": "string" },
+    "language": { "type": "string" },
+    "runtime_init_ms": { "type": "integer", "minimum": 0 },
+    "model_lookup_ms": { "type": "integer", "minimum": 0 },
+    "model_download_ms": { "type": "integer", "minimum": 0 },
+    "model_load_ms": { "type": "integer", "minimum": 0 },
+    "transcription_ms": { "type": "integer", "minimum": 0 },
+    "streaming_transcription_ms": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "transcript_chars": { "type": "integer", "minimum": 0 },
+    "transcript": { "type": "string" },
+    "streaming_transcript": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

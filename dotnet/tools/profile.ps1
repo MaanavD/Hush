@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Run this script from the Hush repo root:
-        .\tools\profile.ps1
+        .\dotnet\tools\profile.ps1
 
     It will:
     1. Build Hush in Debug mode

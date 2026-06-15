@@ -45,7 +45,7 @@
 ## Prerequisites
 
 - **Packaged releases:** no .NET SDK is required. Download the platform bundle from [GitHub Releases](https://github.com/MaanavD/Hush/releases), verify the checksum, and launch Hush. The first launch downloads the selected Foundry Local models.
-- **Building from source:** install the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0). NuGet restore uses nuget.org plus the public ORT-Nightly feed declared in `NuGet.config`.
+- **Building from source:** install the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0). The Rust rewrite spike additionally requires stable [Rust](https://www.rust-lang.org/tools/install). NuGet restore uses nuget.org plus the public ORT-Nightly feed declared in `dotnet/NuGet.config`.
 
 ## Quick Start
 
@@ -63,8 +63,14 @@ See [docs/installation.md](docs/installation.md) for platform-specific install n
 git clone https://github.com/MaanavD/Hush.git
 cd Hush
 
-dotnet build
-dotnet run --project src/Hush.App
+dotnet build dotnet/Hush.sln
+dotnet run --project dotnet/src/Hush.App
+
+# Rust rewrite spike (preloads models, settings UI, raw and clean hotkeys)
+cargo run --manifest-path rust/Cargo.toml -p hush-app
+
+# Rust live microphone smoke test
+cargo run --manifest-path rust/Cargo.toml -p hush-cli -- live --seconds 30
 ```
 
 On first launch Hush downloads the Nemotron streaming transcription model (~350 MB).
@@ -126,19 +132,27 @@ Settings are stored in `~/.hush/settings.json`.
 
 ## Build Prerequisites
 
-Hush currently depends on pre-release Foundry Local SDK packages. `NuGet.config` is configured to restore them from the public ORT-Nightly feed. A local `packages/` source is also present for maintainers who need to test a private `.nupkg`, but package files are intentionally ignored and should not be committed.
+The .NET implementation currently depends on pre-release Foundry Local SDK packages. `dotnet/NuGet.config` is configured to restore them from the public ORT-Nightly feed. A local `dotnet/packages/` source is also present for maintainers who need to test a private `.nupkg`, but package files are intentionally ignored and should not be committed.
 
 ## Development
 
 ```bash
 # Build
-dotnet build -c Release
+dotnet build dotnet/Hush.sln -c Release
+cargo build --manifest-path rust/Cargo.toml --workspace
 
 # Run tests
-dotnet test -c Release
+dotnet test dotnet/Hush.sln -c Release
+cargo test --manifest-path rust/Cargo.toml --workspace
 
 # Publish self-contained folder build (Windows)
-dotnet publish src/Hush.App -p:PublishProfile=win-x64
+dotnet publish dotnet/src/Hush.App -p:PublishProfile=win-x64
+
+# Compare .NET and Rust transcription benchmarks against one WAV file
+.\benchmarks\run-comparison.ps1 -AudioFile C:\path\to\sample.wav
+
+# Rust live microphone smoke test
+cargo run --manifest-path rust/Cargo.toml -p hush-cli -- live --seconds 30
 ```
 
 CI runs build, tests, E2E smoke tests, and publish smoke validation on Windows, macOS, and Linux. Hardware/model-backed E2E suites stay opt-in via environment variables documented in [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -161,12 +175,18 @@ CI runs build, tests, E2E smoke tests, and publish smoke validation on Windows, 
 See [SPEC.md](SPEC.md) for the full product and implementation specification.
 
 ```
-Hush.App  (Avalonia UI — tray, overlay, settings)
-    └── Hush.Core  (class library — engine, audio, hotkey, output)
-            └── Foundry Local SDK  (on-device Nemotron streaming inference)
+dotnet/
+    Hush.App  (Avalonia UI — tray, overlay, settings)
+        └── Hush.Core  (class library — engine, audio, hotkey, output)
+                └── Foundry Local SDK  (on-device Nemotron streaming inference)
+
+rust/
+    hush-app    (egui native shell with startup model preload, settings, Ctrl+H raw mode, Ctrl+Alt+H clean mode on Windows)
+    hush-core   (Rust benchmark/core abstractions)
+    hush-bench  (Foundry Local transcription benchmark CLI)
 ```
 
-The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifying mic-to-text transcription without the full UI. Useful for development and troubleshooting.
+The .NET solution also includes `Hush.ConsoleDemo`, a minimal console app for verifying mic-to-text transcription without the full UI. The Rust workspace includes a native egui shell, live microphone transcription, startup model lifecycle, clean-mode rewriting, and benchmark tooling.
 
 ## Milestones
 

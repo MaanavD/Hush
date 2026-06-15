@@ -93,11 +93,11 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore
-        run: dotnet restore Hush.sln --runtime win-x64 --ignore-failed-sources
+        run: dotnet restore dotnet/Hush.sln --runtime win-x64 --ignore-failed-sources
 
       - name: Publish
         run: >
-          dotnet publish src/Hush.App/Hush.App.csproj
+          dotnet publish dotnet/src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=win-x64
           -p:Version=${{ needs.preflight.outputs.version }}
@@ -124,7 +124,7 @@ jobs:
         if: needs.preflight.outputs.is_release == 'true'
         shell: pwsh
         run: |
-          $publishDir = "src\Hush.App\bin\publish\win-x64"
+          $publishDir = "dotnet\src\Hush.App\bin\publish\win-x64"
           $exe = Join-Path $publishDir "Hush.App.exe"
           if (-not (Test-Path $exe)) {
             throw "Expected executable '$exe' was not created."
@@ -151,7 +151,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ needs.preflight.outputs.version }}"
-          $publishDir = "src\Hush.App\bin\publish\win-x64"
+          $publishDir = "dotnet\src\Hush.App\bin\publish\win-x64"
           $zipName = "Hush-$version-win-x64.zip"
           $exe = Join-Path $publishDir "Hush.App.exe"
           if (-not (Test-Path $exe)) {
@@ -212,11 +212,11 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore
-        run: dotnet restore Hush.sln --runtime osx-arm64 --ignore-failed-sources
+        run: dotnet restore dotnet/Hush.sln --runtime osx-arm64 --ignore-failed-sources
 
       - name: Publish
         run: >
-          dotnet publish src/Hush.App/Hush.App.csproj
+          dotnet publish dotnet/src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=osx-arm64
           -p:Version=${{ needs.preflight.outputs.version }}
@@ -229,17 +229,17 @@ jobs:
         run: |
           version="${{ needs.preflight.outputs.version }}"
           short_version="${{ needs.preflight.outputs.base_version }}"
-          publish="src/Hush.App/bin/publish/osx-arm64"
+          publish="dotnet/src/Hush.App/bin/publish/osx-arm64"
           app="Hush.app"
           rm -rf "$app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp src/Hush.App/Assets/Info.plist "$app/Contents/Info.plist"
+          cp dotnet/src/Hush.App/Assets/Info.plist "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $short_version" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :HushSemVer string $version" "$app/Contents/Info.plist"
           cp -R "$publish"/* "$app/Contents/MacOS/"
           chmod +x "$app/Contents/MacOS/Hush.App"
-          sips -s format icns src/Hush.App/Assets/hush-icon.png --out "$app/Contents/Resources/hush-icon.icns"
+          sips -s format icns dotnet/src/Hush.App/Assets/hush-icon.png --out "$app/Contents/Resources/hush-icon.icns"
 
       - name: Require macOS signing secrets for tagged releases
         if: needs.preflight.outputs.is_release == 'true'
@@ -346,11 +346,11 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore
-        run: dotnet restore Hush.sln --runtime linux-x64 --ignore-failed-sources
+        run: dotnet restore dotnet/Hush.sln --runtime linux-x64 --ignore-failed-sources
 
       - name: Publish
         run: >
-          dotnet publish src/Hush.App/Hush.App.csproj
+          dotnet publish dotnet/src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=linux-x64
           -p:Version=${{ needs.preflight.outputs.version }}
@@ -363,7 +363,7 @@ jobs:
         shell: bash
         run: |
           version="${{ needs.preflight.outputs.version }}"
-          publish="src/Hush.App/bin/publish/linux-x64"
+          publish="dotnet/src/Hush.App/bin/publish/linux-x64"
           executable="$publish/Hush.App"
           if [[ ! -x "$executable" ]]; then
             chmod +x "$executable"

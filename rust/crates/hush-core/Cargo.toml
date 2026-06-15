@@ -1,0 +1,25 @@
+[package]
+name = "hush-core"
+description = "Rust core library for Hush experiments and benchmarks."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+default = ["foundry"]
+foundry = ["dep:foundry-local-sdk", "dep:tokio-stream"]
+
+[dependencies]
+anyhow.workspace = true
+cpal.workspace = true
+foundry-local-sdk = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-stream = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
