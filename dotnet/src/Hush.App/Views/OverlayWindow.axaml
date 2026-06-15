@@ -4,7 +4,7 @@
         x:Class="Hush.App.Views.OverlayWindow"
         x:DataType="vm:OverlayViewModel"
         Title="Hush Overlay"
-        Width="260" Height="80"
+        Width="304" Height="124"
         SystemDecorations="None"
         Background="Transparent"
         Topmost="True"
@@ -13,184 +13,272 @@
         FontFamily="{StaticResource Hush.Font}">
 
     <Panel>
-
-        <!-- ── Preparing state ── -->
-        <Border CornerRadius="16"
-                Background="#F0FFFFFF"
-                BorderBrush="#30475569"
-                BorderThickness="1"
-                Padding="14 8"
-                IsVisible="{Binding IsPreparing}"
-                BoxShadow="0 1 8 0 #14000000">
-            <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                <Ellipse Width="6" Height="6"
-                         Fill="#9333EA"
-                         VerticalAlignment="Center" />
-                <StackPanel Grid.Column="1" Margin="8 0 0 0" VerticalAlignment="Center" Spacing="1">
-                    <TextBlock Text="Preparing…"
-                               FontSize="11"
+        <!-- Preparing state -->
+        <Border Classes="Bubble"
+                BorderBrush="#9E9B7FEB"
+                IsVisible="{Binding IsPreparing}">
+            <Grid RowDefinitions="Auto,*,Auto">
+                <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                    <Ellipse Classes="StatusDot" Fill="#9B7FEB" />
+                    <StackPanel Grid.Column="1" Margin="8 0 0 0" Spacing="1">
+                        <TextBlock Text="Preparing"
+                                   Classes="BubbleTitle" />
+                        <TextBlock Text="{Binding PreparingDetail}"
+                                   Classes="BubbleDetail"
+                                   IsVisible="{Binding HasPreparingDetail}" />
+                    </StackPanel>
+                    <Border Grid.Column="2"
+                            Classes="ModeChip"
+                            BorderBrush="#669B7FEB"
+                            Background="#1A9B7FEB">
+                        <TextBlock Text="PREP"
+                                   Foreground="#9B7FEB" />
+                    </Border>
+                </Grid>
+                <Border Grid.Row="1" Classes="WaveHost">
+                    <TextBlock Text="{Binding ModelDownloadProgress, StringFormat={}{0:P0}}"
+                               FontSize="12"
                                FontWeight="SemiBold"
-                               Foreground="#475569" />
-                    <TextBlock Text="{Binding PreparingDetail}"
-                               FontSize="10"
-                               Foreground="#64748B"
-                               TextTrimming="CharacterEllipsis"
-                               IsVisible="{Binding HasPreparingDetail}" />
-                </StackPanel>
-                <TextBlock Grid.Column="2"
-                           Text="{Binding ModelDownloadProgress, StringFormat={}{0:P0}}"
-                           FontSize="10"
-                           FontWeight="SemiBold"
-                           Foreground="#7C3AED"
-                           VerticalAlignment="Center"
-                           IsVisible="{Binding ShowPreparingProgress}" />
+                               Foreground="#9B7FEB"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               IsVisible="{Binding ShowPreparingProgress}" />
+                </Border>
+                <TextBlock Grid.Row="2"
+                           Text="Loading local model"
+                           Classes="BubbleHint" />
             </Grid>
         </Border>
 
-        <!-- ── Listening state: raw mode (purple) ── -->
-        <Border CornerRadius="16"
-                Background="#F0FFFFFF"
-                BorderBrush="#309333EA"
-                BorderThickness="1"
-                Padding="14 6"
-                Width="240"
-                HorizontalAlignment="Center" VerticalAlignment="Center"
-                IsVisible="{Binding IsListeningRaw}"
-                BoxShadow="0 1 8 0 #14000000"
-                ClipToBounds="True">
-            <StackPanel Spacing="3">
-                <Canvas x:Name="WaveCanvas" Height="32" />
-                <TextBlock Text="{Binding TranscriptText}"
-                           FontSize="11"
-                           FontWeight="Medium"
-                           Foreground="#334155"
-                           TextTrimming="CharacterEllipsis"
-                           IsVisible="{Binding HasTranscript}" />
-                <TextBlock Text="Listening…"
-                           FontSize="10"
-                           Foreground="#94A3B8"
-                           HorizontalAlignment="Center"
-                           IsVisible="{Binding ShowListeningHint}" />
-            </StackPanel>
+        <!-- Raw listening state -->
+        <Border Classes="Bubble"
+                BorderBrush="#9E9B7FEB"
+                IsVisible="{Binding IsListeningRaw}">
+            <Grid RowDefinitions="Auto,*,Auto">
+                <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                    <Ellipse Classes="StatusDot" Fill="#E05757" />
+                    <StackPanel Grid.Column="1" Margin="8 0 0 0" Spacing="1">
+                        <TextBlock Text="Listening"
+                                   Classes="BubbleTitle" />
+                        <TextBlock Text="{Binding TranscriptText}"
+                                   Classes="BubbleDetail"
+                                   IsVisible="{Binding HasTranscript}" />
+                        <TextBlock Text="Waiting for speech"
+                                   Classes="BubbleDetail"
+                                   IsVisible="{Binding ShowListeningHint}" />
+                    </StackPanel>
+                    <Border Grid.Column="2"
+                            Classes="ModeChip"
+                            BorderBrush="#669B7FEB"
+                            Background="#1A9B7FEB">
+                        <TextBlock Text="RAW"
+                                   Foreground="#9B7FEB" />
+                    </Border>
+                </Grid>
+                <Border Grid.Row="1" Classes="WaveHost">
+                    <Canvas x:Name="WaveCanvas"
+                            Width="252"
+                            Height="40" />
+                </Border>
+                <TextBlock Grid.Row="2"
+                           Text="Typing live into the focused app"
+                           Classes="BubbleHint" />
+            </Grid>
         </Border>
 
-        <!-- ── Listening state: clean mode (amber) ── -->
-        <Border CornerRadius="16"
-                Background="#F0FFFFFF"
-                BorderBrush="#30F59E0B"
-                BorderThickness="1"
-                Padding="14 6"
-                Width="240"
-                HorizontalAlignment="Center" VerticalAlignment="Center"
-                IsVisible="{Binding IsListeningClean}"
-                BoxShadow="0 1 8 0 #14000000"
-                ClipToBounds="True">
-            <StackPanel Spacing="3">
-                <Canvas x:Name="WaveCanvasClean" Height="32" />
-                <TextBlock Text="{Binding TranscriptText}"
-                           FontSize="11"
-                           FontWeight="Medium"
-                           Foreground="#334155"
-                           TextTrimming="CharacterEllipsis"
-                           IsVisible="{Binding HasTranscript}" />
-                <TextBlock Text="Listening…"
-                           FontSize="10"
-                           Foreground="#94A3B8"
-                           HorizontalAlignment="Center"
-                           IsVisible="{Binding ShowListeningHint}" />
-            </StackPanel>
+        <!-- Clean listening state -->
+        <Border Classes="Bubble Clean"
+                BorderBrush="#9EF59E0B"
+                IsVisible="{Binding IsListeningClean}">
+            <Grid RowDefinitions="Auto,*,Auto">
+                <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                    <Ellipse Classes="StatusDot" Fill="#E05757" />
+                    <StackPanel Grid.Column="1" Margin="8 0 0 0" Spacing="1">
+                        <TextBlock Text="Listening clean"
+                                   Classes="BubbleTitle" />
+                        <TextBlock Text="{Binding TranscriptText}"
+                                   Classes="BubbleDetail"
+                                   IsVisible="{Binding HasTranscript}" />
+                        <TextBlock Text="Waiting for speech"
+                                   Classes="BubbleDetail"
+                                   IsVisible="{Binding ShowListeningHint}" />
+                    </StackPanel>
+                    <Border Grid.Column="2"
+                            Classes="ModeChip"
+                            BorderBrush="#66F59E0B"
+                            Background="#1CF59E0B">
+                        <TextBlock Text="CLEAN"
+                                   Foreground="#F59E0B" />
+                    </Border>
+                </Grid>
+                <Border Grid.Row="1" Classes="WaveHost">
+                    <Canvas x:Name="WaveCanvasClean"
+                            Width="252"
+                            Height="40" />
+                </Border>
+                <TextBlock Grid.Row="2"
+                           Text="Release to rewrite into the focused app"
+                           Classes="BubbleHint" />
+            </Grid>
         </Border>
 
-        <!-- ── Finalizing state: LLM rewrite in progress (amber, "Finishing…") ──
-             Warns the user not to click into another window while the cleanse
-             pass is running. If focus moves away the final text is dropped to
-             avoid leaking into the wrong application. -->
-        <Border CornerRadius="16"
-                Background="#F0FFFFFF"
-                BorderBrush="#40F59E0B"
-                BorderThickness="1"
-                Padding="14 8"
-                HorizontalAlignment="Center" VerticalAlignment="Center"
-                IsVisible="{Binding ShowFinalizingHint}"
-                BoxShadow="0 1 8 0 #14000000">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
-                <Ellipse Width="7" Height="7"
-                         Fill="#F59E0B"
-                         VerticalAlignment="Center">
-                    <Ellipse.Transitions>
-                        <Transitions>
-                            <DoubleTransition Property="Opacity" Duration="0:0:0.6" />
-                        </Transitions>
-                    </Ellipse.Transitions>
-                </Ellipse>
-                <TextBlock Text="Rewriting. Stay focused here."
-                           FontSize="11"
-                           FontWeight="SemiBold"
-                           Foreground="#92400E"
-                           VerticalAlignment="Center" />
-            </StackPanel>
+        <!-- Finalizing state -->
+        <Border Classes="Bubble Clean"
+                BorderBrush="#9EF59E0B"
+                IsVisible="{Binding ShowFinalizingHint}">
+            <Grid RowDefinitions="Auto,*,Auto">
+                <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                    <Ellipse Classes="StatusDot" Fill="#F59E0B" />
+                    <StackPanel Grid.Column="1" Margin="8 0 0 0" Spacing="1">
+                        <TextBlock Text="Rewriting"
+                                   Classes="BubbleTitle" />
+                        <TextBlock Text="Clean mode is preparing final text"
+                                   Classes="BubbleDetail" />
+                    </StackPanel>
+                    <Border Grid.Column="2"
+                            Classes="ModeChip"
+                            BorderBrush="#66F59E0B"
+                            Background="#1CF59E0B">
+                        <TextBlock Text="CLEAN"
+                                   Foreground="#F59E0B" />
+                    </Border>
+                </Grid>
+                <Border Grid.Row="1" Classes="WaveHost">
+                    <Canvas x:Name="WaveCanvasFinalizing"
+                            Width="252"
+                            Height="40" />
+                </Border>
+                <TextBlock Grid.Row="2"
+                           Text="Stay focused in the target app"
+                           Classes="BubbleHint" />
+            </Grid>
         </Border>
 
-        <!-- ── Cleaning model warmup ──
-             Shown after the main transcription model is ready but while the
-             post-processing (cleaning) model is still resolving / downloading
-             / loading in the background. Without this banner the user has no
-             idea why a multi-GB download is happening on first launch. -->
-        <Border CornerRadius="16"
-                Background="#F0FFFFFF"
-                BorderBrush="#3014B8A6"
-                BorderThickness="1"
-                Padding="14 8"
-                IsVisible="{Binding ShowCleaningModelBanner}"
-                BoxShadow="0 1 8 0 #14000000">
-            <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                <Ellipse Width="6" Height="6"
-                         Fill="#14B8A6"
-                         VerticalAlignment="Center" />
-                <StackPanel Grid.Column="1" Margin="8 0 0 0" VerticalAlignment="Center" Spacing="1">
-                    <TextBlock Text="Preparing clean mode…"
-                               FontSize="11"
+        <!-- Cleaning model warmup -->
+        <Border Classes="Bubble Clean"
+                BorderBrush="#9EF59E0B"
+                IsVisible="{Binding ShowCleaningModelBanner}">
+            <Grid RowDefinitions="Auto,*,Auto">
+                <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                    <Ellipse Classes="StatusDot" Fill="#F59E0B" />
+                    <StackPanel Grid.Column="1" Margin="8 0 0 0" Spacing="1">
+                        <TextBlock Text="Raw ready"
+                                   Classes="BubbleTitle" />
+                        <TextBlock Text="{Binding CleaningModelStatus}"
+                                   Classes="BubbleDetail" />
+                    </StackPanel>
+                    <Border Grid.Column="2"
+                            Classes="ModeChip"
+                            BorderBrush="#66F59E0B"
+                            Background="#1CF59E0B">
+                        <TextBlock Text="CLEAN"
+                                   Foreground="#F59E0B" />
+                    </Border>
+                </Grid>
+                <Border Grid.Row="1" Classes="WaveHost">
+                    <TextBlock Text="{Binding CleaningModelDownloadProgress, StringFormat={}{0:P0}}"
+                               FontSize="12"
                                FontWeight="SemiBold"
-                               Foreground="#0F766E" />
-                    <TextBlock Text="{Binding CleaningModelStatus}"
-                               FontSize="10"
-                               Foreground="#0D9488"
-                               TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-                <TextBlock Grid.Column="2"
-                           Text="{Binding CleaningModelDownloadProgress, StringFormat={}{0:P0}}"
-                           FontSize="10"
-                           FontWeight="SemiBold"
-                           Foreground="#14B8A6"
-                           VerticalAlignment="Center"
-                           IsVisible="{Binding ShowCleaningModelDownloadProgress}" />
+                               Foreground="#F59E0B"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               IsVisible="{Binding ShowCleaningModelDownloadProgress}" />
+                </Border>
+                <TextBlock Grid.Row="2"
+                           Text="Clean mode is warming up"
+                           Classes="BubbleHint" />
             </Grid>
         </Border>
 
-        <!-- ── Error state ── -->
-        <Border CornerRadius="16"
-                Background="#F0FFFFFF"
-                BorderBrush="#40EF4444"
-                BorderThickness="1"
-                Padding="14 0"
-                IsVisible="{Binding HasError}"
-                BoxShadow="0 1 6 0 #10000000">
-            <Grid ColumnDefinitions="Auto,*" VerticalAlignment="Center">
-                <Ellipse Width="5" Height="5"
-                         Fill="#EF4444"
-                         VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1"
-                           Text="{Binding ErrorMessage}"
-                           FontSize="10"
-                           Foreground="#DC2626"
-                           TextTrimming="CharacterEllipsis"
-                           Margin="8 0 0 0"
-                           VerticalAlignment="Center" />
+        <!-- Error state -->
+        <Border Classes="Bubble Error"
+                BorderBrush="#B8C94040"
+                IsVisible="{Binding HasError}">
+            <Grid RowDefinitions="Auto,*,Auto">
+                <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                    <Ellipse Classes="StatusDot" Fill="#C94040" />
+                    <StackPanel Grid.Column="1" Margin="8 0 0 0" Spacing="1">
+                        <TextBlock Text="Error"
+                                   Classes="BubbleTitle" />
+                        <TextBlock Text="{Binding ErrorMessage}"
+                                   Classes="BubbleDetail" />
+                    </StackPanel>
+                    <Border Grid.Column="2"
+                            Classes="ModeChip"
+                            BorderBrush="#66C94040"
+                            Background="#1FC94040">
+                        <TextBlock Text="ERR"
+                                   Foreground="#F87171" />
+                    </Border>
+                </Grid>
+                <Border Grid.Row="1" Classes="WaveHost">
+                    <TextBlock Text="Open Settings if this persists"
+                               Classes="BubbleHint"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                </Border>
+                <TextBlock Grid.Row="2"
+                           Text="Hush could not continue"
+                           Classes="BubbleHint" />
             </Grid>
         </Border>
-
     </Panel>
 
+    <Window.Styles>
+        <Style Selector="Border.Bubble">
+            <Setter Property="Width" Value="276" />
+            <Setter Property="Height" Value="96" />
+            <Setter Property="Padding" Value="12 10 12 9" />
+            <Setter Property="CornerRadius" Value="18" />
+            <Setter Property="Background" Value="#F411111F" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BoxShadow" Value="0 18 42 0 #6B000000" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ClipToBounds" Value="True" />
+        </Style>
+        <Style Selector="Ellipse.StatusDot">
+            <Setter Property="Width" Value="7" />
+            <Setter Property="Height" Value="7" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.BubbleTitle">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#F8F8FF" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style Selector="TextBlock.BubbleDetail">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="Foreground" Value="#BEBCDA" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style Selector="TextBlock.BubbleHint">
+            <Setter Property="FontSize" Value="9" />
+            <Setter Property="Foreground" Value="#7E7C9C" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style Selector="Border.ModeChip">
+            <Setter Property="MinWidth" Value="42" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Padding" Value="8 3" />
+            <Setter Property="CornerRadius" Value="11" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Border.ModeChip TextBlock">
+            <Setter Property="FontSize" Value="9" />
+            <Setter Property="FontWeight" Value="ExtraBold" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Border.WaveHost">
+            <Setter Property="Width" Value="252" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Background" Value="#0AEEEEF8" />
+            <Setter Property="Margin" Value="0 5 0 2" />
+            <Setter Property="ClipToBounds" Value="True" />
+        </Style>
+    </Window.Styles>
 </Window>
-
-
