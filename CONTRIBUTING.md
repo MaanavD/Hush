@@ -91,11 +91,19 @@ dotnet run --project dotnet/src/Hush.App
 cargo run --manifest-path rust/Cargo.toml -p hush-app
 ```
 
+`dotnet run` starts through the SDK host and may show a console window. To test the same no-console shape users get from releases, publish and launch the app executable directly:
+
+```powershell
+dotnet publish dotnet/src/Hush.App -p:PublishProfile=win-x64
+.\dotnet\src\Hush.App\bin\publish\win-x64\Hush.App.exe
+```
+
 The Rust shell preloads the transcription model on startup, registers `Ctrl+H`
 for raw dictation and `Ctrl+Alt+H` for clean mode on Windows, and persists
 settings to `~/.hush/rust-settings.json`. Focus a target text field, hold the
 hotkey, speak, and release to stop; final text is typed into the focused app via
-Unicode `SendInput`.
+Unicode `SendInput`. The Rust/Tauri release artifact is a single `hush-app.exe`,
+but it requires the Microsoft Edge WebView2 Runtime at run time.
 
 ### Run the Rust live microphone smoke test
 

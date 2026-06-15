@@ -89,6 +89,10 @@ jobs:
             throw "Publish directory '$publishDir' is empty."
           }
 
+          if ("${{ matrix.rid }}" -eq "win-x64" -and ($runtimeFiles.Count -ne 1 -or $runtimeFiles[0].Name -ne "Hush.App.exe")) {
+            throw "Windows publish output must contain only Hush.App.exe, got: $($runtimeFiles.Name -join ', ')"
+          }
+
       - name: Setup Rust
         run: rustup default stable
 

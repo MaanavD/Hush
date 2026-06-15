@@ -20,17 +20,20 @@ Releases are built by `.github/workflows/release.yml` from semantic-version tags
 
 | Platform | Artifact |
 | --- | --- |
-| Windows x64 | `Hush-<version>-win-x64.zip` |
-| macOS Apple Silicon | `Hush-<version>-osx-arm64.tar.gz` |
-| Linux x64 | `Hush-<version>-linux-x64.tar.gz` |
+| Windows x64 (.NET/Avalonia) | `Hush-<version>-win-x64.zip` |
+| Windows x64 (Rust/Tauri) | `Hush-Rust-<version>-win-x64.zip` |
+| macOS Apple Silicon (.NET/Avalonia) | `Hush-<version>-osx-arm64.tar.gz` |
+| Linux x64 (.NET/Avalonia) | `Hush-<version>-linux-x64.tar.gz` |
 
 Each artifact is published with a `.sha256` checksum.
+
+The .NET Windows artifact is expected to contain only `Hush.App.exe`; the publish profile is self-contained and single-file, so users do not need a .NET runtime installed. The Rust/Tauri Windows artifact contains only `hush-app.exe`; its HTML/CSS/JS UI is embedded in the executable, but the app uses the Microsoft Edge WebView2 Runtime provided by Windows/Tauri.
 
 ## Signing and notarization
 
 Tagged public releases should be signed before publishing:
 
-- Windows: code-sign `Hush.App.exe` with an Authenticode certificate before packaging.
+- Windows: code-sign `Hush.App.exe` and `hush-app.exe` with an Authenticode certificate before packaging.
 - macOS: sign `Hush.app` with a Developer ID Application certificate and notarize it with Apple.
 - Linux: checksums are required; package-manager signing can be added when distro packages exist.
 

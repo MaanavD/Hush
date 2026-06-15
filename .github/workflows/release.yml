@@ -105,6 +105,9 @@ jobs:
           -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
           -p:InformationalVersion=${{ needs.preflight.outputs.version }}
 
+      - name: Build Rust/Tauri executable
+        run: cargo build --manifest-path rust/Cargo.toml -p hush-app --release
+
       - name: Require Windows signing secrets for tagged releases
         if: needs.preflight.outputs.is_release == 'true'
         shell: pwsh
@@ -125,9 +128,12 @@ jobs:
         shell: pwsh
         run: |
           $publishDir = "dotnet\src\Hush.App\bin\publish\win-x64"
-          $exe = Join-Path $publishDir "Hush.App.exe"
-          if (-not (Test-Path $exe)) {
-            throw "Expected executable '$exe' was not created."
+          $dotnetExe = Join-Path $publishDir "Hush.App.exe"
+          $rustExe = "rust\target\release\hush-app.exe"
+          foreach ($exe in @($dotnetExe, $rustExe)) {
+            if (-not (Test-Path $exe)) {
+              throw "Expected executable '$exe' was not created."
+            }
           }
 
           $certPath = Join-Path $env:RUNNER_TEMP "hush-signing.pfx"
@@ -143,8 +149,10 @@ jobs:
             throw "signtool.exe was not found on the runner."
           }
 
-          & $signtool sign /f $certPath /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd SHA256 /tr $timestampUrl /td SHA256 $exe
-          & $signtool verify /pa /v $exe
+          foreach ($exe in @($dotnetExe, $rustExe)) {
+            & $signtool sign /f $certPath /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd SHA256 /tr $timestampUrl /td SHA256 $exe
+            & $signtool verify /pa /v $exe
+          }
 
       - name: Package
         id: package
@@ -152,26 +160,46 @@ jobs:
         run: |
           $version = "${{ needs.preflight.outputs.version }}"
           $publishDir = "dotnet\src\Hush.App\bin\publish\win-x64"
-          $zipName = "Hush-$version-win-x64.zip"
-          $exe = Join-Path $publishDir "Hush.App.exe"
-          if (-not (Test-Path $exe)) {
-            throw "Expected executable '$exe' was not created."
+          $dotnetZipName = "Hush-$version-win-x64.zip"
+          $rustZipName = "Hush-Rust-$version-win-x64.zip"
+          $dotnetExe = Join-Path $publishDir "Hush.App.exe"
+          $rustExe = "rust\target\release\hush-app.exe"
+
+          if (-not (Test-Path $dotnetExe)) {
+            throw "Expected executable '$dotnetExe' was not created."
+          }
+          if (-not (Test-Path $rustExe)) {
+            throw "Expected executable '$rustExe' was not created."
           }
 
-          Compress-Archive -Path "$publishDir\*" -DestinationPath $zipName -Force
-          $hash = (Get-FileHash $zipName -Algorithm SHA256).Hash
-          "$hash  $zipName" | Out-File -FilePath "$zipName.sha256" -Encoding ascii
-          "artifact=$zipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "sha256=$zipName.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Packaged $zipName ($hash)"
+          $dotnetFiles = Get-ChildItem -Path $publishDir -File
+          if ($dotnetFiles.Count -ne 1 -or $dotnetFiles[0].Name -ne "Hush.App.exe") {
+            throw "Expected .NET publish output to contain only Hush.App.exe, got: $($dotnetFiles.Name -join ', ')"
+          }
+
+          Compress-Archive -Path $dotnetExe -DestinationPath $dotnetZipName -Force
+          Compress-Archive -Path $rustExe -DestinationPath $rustZipName -Force
+
+          $dotnetHash = (Get-FileHash $dotnetZipName -Algorithm SHA256).Hash
+          $rustHash = (Get-FileHash $rustZipName -Algorithm SHA256).Hash
+          "$dotnetHash  $dotnetZipName" | Out-File -FilePath "$dotnetZipName.sha256" -Encoding ascii
+          "$rustHash  $rustZipName" | Out-File -FilePath "$rustZipName.sha256" -Encoding ascii
+          "dotnet_artifact=$dotnetZipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "dotnet_sha256=$dotnetZipName.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "rust_artifact=$rustZipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "rust_sha256=$rustZipName.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Packaged $dotnetZipName ($dotnetHash)"
+          Write-Host "Packaged $rustZipName ($rustHash)"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hush-win-x64
           path: |
-            ${{ steps.package.outputs.artifact }}
-            ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.dotnet_artifact }}
+            ${{ steps.package.outputs.dotnet_sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
       - name: Attach to GitHub Release
         if: needs.preflight.outputs.is_release == 'true'
@@ -182,8 +210,10 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            ${{ steps.package.outputs.artifact }}
-            ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.dotnet_artifact }}
+            ${{ steps.package.outputs.dotnet_sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
   release-macos:
     name: macOS arm64

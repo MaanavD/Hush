@@ -44,7 +44,8 @@
 
 ## Prerequisites
 
-- **Packaged releases:** no .NET SDK is required. Download the platform bundle from [GitHub Releases](https://github.com/MaanavD/Hush/releases), verify the checksum, and launch Hush. The first launch downloads the selected Foundry Local models.
+- **Packaged .NET releases:** no .NET SDK or .NET runtime is required. Download the platform bundle from [GitHub Releases](https://github.com/MaanavD/Hush/releases), verify the checksum, and launch `Hush.App.exe`. The first launch downloads the selected Foundry Local models.
+- **Packaged Rust/Tauri Windows releases:** download `Hush-Rust-<version>-win-x64.zip` and run `hush-app.exe`. The UI is embedded in the executable, but Tauri uses the Microsoft Edge WebView2 Runtime, which is normally already installed on Windows 10/11.
 - **Building from source:** install the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0). The Rust rewrite spike additionally requires stable [Rust](https://www.rust-lang.org/tools/install). NuGet restore uses nuget.org plus the public ORT-Nightly feed declared in `dotnet/NuGet.config`.
 
 ## Quick Start
@@ -64,6 +65,8 @@ git clone https://github.com/MaanavD/Hush.git
 cd Hush
 
 dotnet build dotnet/Hush.sln
+
+# Dev run. This uses the .NET SDK host and may show a console window.
 dotnet run --project dotnet/src/Hush.App
 
 # Rust rewrite spike (preloads models, settings UI, raw and clean hotkeys)
@@ -145,8 +148,15 @@ cargo build --manifest-path rust/Cargo.toml --workspace
 dotnet test dotnet/Hush.sln -c Release
 cargo test --manifest-path rust/Cargo.toml --workspace
 
-# Publish self-contained folder build (Windows)
+# Publish self-contained single-exe .NET build (Windows)
 dotnet publish dotnet/src/Hush.App -p:PublishProfile=win-x64
+
+# Launch the packaged .NET exe without the SDK/console host
+.\dotnet\src\Hush.App\bin\publish\win-x64\Hush.App.exe
+
+# Build the Rust/Tauri single-exe app. Requires WebView2 runtime at run time.
+cargo build --manifest-path rust/Cargo.toml -p hush-app --release
+.\rust\target\release\hush-app.exe
 
 # Compare .NET and Rust transcription benchmarks against one WAV file
 .\benchmarks\run-comparison.ps1 -AudioFile C:\path\to\sample.wav
@@ -181,12 +191,12 @@ dotnet/
                 └── Foundry Local SDK  (on-device Nemotron streaming inference)
 
 rust/
-    hush-app    (egui native shell with startup model preload, settings, Ctrl+H raw mode, Ctrl+Alt+H clean mode on Windows)
+    hush-app    (Tauri shell with tray, overlay, settings, Ctrl+H raw mode, Ctrl+Alt+H clean mode on Windows)
     hush-core   (Rust benchmark/core abstractions)
     hush-bench  (Foundry Local transcription benchmark CLI)
 ```
 
-The .NET solution also includes `Hush.ConsoleDemo`, a minimal console app for verifying mic-to-text transcription without the full UI. The Rust workspace includes a native egui shell, live microphone transcription, startup model lifecycle, clean-mode rewriting, and benchmark tooling.
+The .NET solution also includes `Hush.ConsoleDemo`, a minimal console app for verifying mic-to-text transcription without the full UI. The Rust workspace includes a Tauri shell, live microphone transcription, startup model lifecycle, clean-mode rewriting, and benchmark tooling.
 
 ## Milestones
 
