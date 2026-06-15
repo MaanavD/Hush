@@ -92,6 +92,9 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Setup Rust
+        run: rustup default stable
+
       - name: Restore
         run: dotnet restore dotnet/Hush.sln --runtime win-x64 --ignore-failed-sources
 
@@ -241,6 +244,9 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Setup Rust
+        run: rustup default stable
+
       - name: Restore
         run: dotnet restore dotnet/Hush.sln --runtime osx-arm64 --ignore-failed-sources
 
@@ -253,6 +259,9 @@ jobs:
           -p:AssemblyVersion=${{ needs.preflight.outputs.assembly_version }}
           -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
           -p:InformationalVersion=${{ needs.preflight.outputs.version }}
+
+      - name: Build Rust/Tauri executable
+        run: cargo build --manifest-path rust/Cargo.toml -p hush-app --release
 
       - name: Build .app bundle
         shell: bash
@@ -332,10 +341,15 @@ jobs:
         run: |
           version="${{ needs.preflight.outputs.version }}"
           tar="Hush-$version-osx-arm64.tar.gz"
+          rust_tar="Hush-Rust-$version-osx-arm64.tar.gz"
           tar -czf "$tar" "Hush.app"
+          tar -C "rust/target/release" -czf "$rust_tar" "hush-app"
           shasum -a 256 "$tar" > "$tar.sha256"
+          shasum -a 256 "$rust_tar" > "$rust_tar.sha256"
           echo "artifact=$tar" >> "$GITHUB_OUTPUT"
           echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
+          echo "rust_artifact=$rust_tar" >> "$GITHUB_OUTPUT"
+          echo "rust_sha256=$rust_tar.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -344,6 +358,8 @@ jobs:
           path: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
       - name: Attach to GitHub Release
         if: needs.preflight.outputs.is_release == 'true'
@@ -356,6 +372,8 @@ jobs:
           files: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
   release-linux:
     name: Linux x64
@@ -375,6 +393,22 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Setup Rust
+        run: rustup default stable
+
+      - name: Install Linux Rust/Tauri dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libx11-dev \
+            libxtst-dev \
+            libasound2-dev \
+            libssl-dev
+
       - name: Restore
         run: dotnet restore dotnet/Hush.sln --runtime linux-x64 --ignore-failed-sources
 
@@ -388,6 +422,9 @@ jobs:
           -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
           -p:InformationalVersion=${{ needs.preflight.outputs.version }}
 
+      - name: Build Rust/Tauri executable
+        run: cargo build --manifest-path rust/Cargo.toml -p hush-app --release
+
       - name: Package
         id: package
         shell: bash
@@ -395,14 +432,23 @@ jobs:
           version="${{ needs.preflight.outputs.version }}"
           publish="dotnet/src/Hush.App/bin/publish/linux-x64"
           executable="$publish/Hush.App"
+          rust_executable="rust/target/release/hush-app"
           if [[ ! -x "$executable" ]]; then
             chmod +x "$executable"
           fi
+          if [[ ! -x "$rust_executable" ]]; then
+            chmod +x "$rust_executable"
+          fi
           tar="Hush-$version-linux-x64.tar.gz"
+          rust_tar="Hush-Rust-$version-linux-x64.tar.gz"
           tar -C "$publish" -czf "$tar" .
+          tar -C "rust/target/release" -czf "$rust_tar" "hush-app"
           sha256sum "$tar" > "$tar.sha256"
+          sha256sum "$rust_tar" > "$rust_tar.sha256"
           echo "artifact=$tar" >> "$GITHUB_OUTPUT"
           echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
+          echo "rust_artifact=$rust_tar" >> "$GITHUB_OUTPUT"
+          echo "rust_sha256=$rust_tar.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -411,6 +457,8 @@ jobs:
           path: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
       - name: Attach to GitHub Release
         if: needs.preflight.outputs.is_release == 'true'
@@ -423,3 +471,5 @@ jobs:
           files: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}

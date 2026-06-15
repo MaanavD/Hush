@@ -23,11 +23,13 @@ Releases are built by `.github/workflows/release.yml` from semantic-version tags
 | Windows x64 (.NET/Avalonia) | `Hush-<version>-win-x64.zip` |
 | Windows x64 (Rust/Tauri) | `Hush-Rust-<version>-win-x64.zip` |
 | macOS Apple Silicon (.NET/Avalonia) | `Hush-<version>-osx-arm64.tar.gz` |
+| macOS Apple Silicon (Rust/Tauri) | `Hush-Rust-<version>-osx-arm64.tar.gz` |
 | Linux x64 (.NET/Avalonia) | `Hush-<version>-linux-x64.tar.gz` |
+| Linux x64 (Rust/Tauri) | `Hush-Rust-<version>-linux-x64.tar.gz` |
 
 Each artifact is published with a `.sha256` checksum.
 
-The .NET Windows artifact is expected to contain only `Hush.App.exe`; the publish profile is self-contained and single-file, so users do not need a .NET runtime installed. The Rust/Tauri Windows artifact contains only `hush-app.exe`; its HTML/CSS/JS UI is embedded in the executable, but the app uses the Microsoft Edge WebView2 Runtime provided by Windows/Tauri.
+The .NET Windows artifact is expected to contain only `Hush.App.exe`; the publish profile is self-contained and single-file, so users do not need a .NET runtime installed. Rust/Tauri artifacts contain `hush-app`/`hush-app.exe` with embedded HTML/CSS/JS. Windows uses Microsoft Edge WebView2 Runtime, macOS requires Accessibility permission for hotkeys/text output, and Linux requires WebKitGTK/X11/XTest runtime packages and an X11 session.
 
 ## Signing and notarization
 
