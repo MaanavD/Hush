@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
 use hush_core::live_audio::{

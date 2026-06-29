@@ -9,8 +9,8 @@ Releases are built by `.github/workflows/release.yml` from semantic-version tags
 3. Create and push a tag:
 
    ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
+   git tag v1.0
+   git push origin v1.0
    ```
 
 4. Wait for the Release workflow to produce draft release artifacts.
@@ -39,7 +39,7 @@ Tagged public releases should be signed before publishing:
 - macOS: sign `Hush.app` with a Developer ID Application certificate and notarize it with Apple.
 - Linux: checksums are required; package-manager signing can be added when distro packages exist.
 
-The release workflow requires signing secrets for tagged Windows and macOS releases.
+The release workflow signs tagged Windows and macOS releases when signing secrets are configured. If signing secrets are missing, Windows artifacts are packaged unsigned and macOS artifacts are ad-hoc signed without notarization.
 
 Windows:
 

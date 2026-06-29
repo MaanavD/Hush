@@ -53,8 +53,8 @@ jobs:
           fi
 
           if [[ "$is_release" == "true" ]]; then
-            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-              echo "::error::Release tags must match vMAJOR.MINOR.PATCH, optionally with a prerelease suffix."
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Release tags must match vMAJOR.MINOR or vMAJOR.MINOR.PATCH, optionally with a prerelease suffix."
               exit 1
             fi
             version="${tag#v}"
@@ -111,8 +111,8 @@ jobs:
       - name: Build Rust/Tauri executable
         run: cargo build --manifest-path rust/Cargo.toml -p hush-app --release
 
-      - name: Require Windows signing secrets for tagged releases
-        if: needs.preflight.outputs.is_release == 'true'
+      - name: Resolve Windows signing availability
+        id: windows_signing
         shell: pwsh
         run: |
           $missing = @()
@@ -123,11 +123,16 @@ jobs:
           }
 
           if ($missing.Count -gt 0) {
-            throw "Missing required Windows signing secrets: $($missing -join ', ')"
+            if ("${{ needs.preflight.outputs.is_release }}" -eq "true") {
+              Write-Warning "Windows executables will be unsigned because these signing secrets are missing: $($missing -join ', ')"
+            }
+            "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "should_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
       - name: Sign executable
-        if: needs.preflight.outputs.is_release == 'true'
+        if: steps.windows_signing.outputs.should_sign == 'true'
         shell: pwsh
         run: |
           $publishDir = "dotnet\src\Hush.App\bin\publish\win-x64"
@@ -280,8 +285,8 @@ jobs:
           chmod +x "$app/Contents/MacOS/Hush.App"
           sips -s format icns dotnet/src/Hush.App/Assets/hush-icon.png --out "$app/Contents/Resources/hush-icon.icns"
 
-      - name: Require macOS signing secrets for tagged releases
-        if: needs.preflight.outputs.is_release == 'true'
+      - name: Resolve macOS signing availability
+        id: macos_signing
         shell: bash
         run: |
           missing=()
@@ -292,12 +297,16 @@ jobs:
           done
 
           if (( ${#missing[@]} > 0 )); then
-            echo "::error::Missing required macOS signing/notarization secrets: ${missing[*]}"
-            exit 1
+            if [[ "${{ needs.preflight.outputs.is_release }}" == "true" ]]; then
+              echo "::warning::macOS artifacts will be ad-hoc signed and not notarized because these signing secrets are missing: ${missing[*]}"
+            fi
+            echo "should_sign=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_sign=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import macOS signing certificate
-        if: needs.preflight.outputs.is_release == 'true'
+        if: steps.macos_signing.outputs.should_sign == 'true'
         shell: bash
         run: |
           cert_path="$RUNNER_TEMP/developer-id.p12"
@@ -312,19 +321,19 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
 
       - name: Sign app
-        if: needs.preflight.outputs.is_release == 'true'
+        if: steps.macos_signing.outputs.should_sign == 'true'
         shell: bash
         run: |
           codesign --force --deep --options runtime --timestamp --sign "$APPLE_DEVELOPER_ID_APPLICATION" "Hush.app"
           codesign --verify --deep --strict --verbose=2 "Hush.app"
 
       - name: Ad-hoc sign app for workflow artifacts
-        if: needs.preflight.outputs.is_release != 'true'
+        if: steps.macos_signing.outputs.should_sign != 'true'
         shell: bash
         run: codesign --force --deep --sign - "Hush.app"
 
       - name: Notarize app
-        if: needs.preflight.outputs.is_release == 'true'
+        if: steps.macos_signing.outputs.should_sign == 'true'
         shell: bash
         run: |
           ditto -c -k --keepParent "Hush.app" "$RUNNER_TEMP/Hush-notarize.zip"
