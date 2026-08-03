@@ -53,8 +53,8 @@ jobs:
           fi
 
           if [[ "$is_release" == "true" ]]; then
-            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-              echo "::error::Release tags must match vMAJOR.MINOR.PATCH, optionally with a prerelease suffix."
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Release tags must match vMAJOR.MINOR or vMAJOR.MINOR.PATCH, optionally with a prerelease suffix."
               exit 1
             fi
             version="${tag#v}"
@@ -92,12 +92,15 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Setup Rust
+        run: rustup default stable
+
       - name: Restore
-        run: dotnet restore Hush.sln --runtime win-x64 --ignore-failed-sources
+        run: dotnet restore dotnet/Hush.sln --runtime win-x64 --ignore-failed-sources
 
       - name: Publish
         run: >
-          dotnet publish src/Hush.App/Hush.App.csproj
+          dotnet publish dotnet/src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=win-x64
           -p:Version=${{ needs.preflight.outputs.version }}
@@ -105,8 +108,11 @@ jobs:
           -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
           -p:InformationalVersion=${{ needs.preflight.outputs.version }}
 
-      - name: Require Windows signing secrets for tagged releases
-        if: needs.preflight.outputs.is_release == 'true'
+      - name: Build Rust/Tauri executable
+        run: cargo build --manifest-path rust/Cargo.toml -p hush-app --release
+
+      - name: Resolve Windows signing availability
+        id: windows_signing
         shell: pwsh
         run: |
           $missing = @()
@@ -117,17 +123,25 @@ jobs:
           }
 
           if ($missing.Count -gt 0) {
-            throw "Missing required Windows signing secrets: $($missing -join ', ')"
+            if ("${{ needs.preflight.outputs.is_release }}" -eq "true") {
+              Write-Warning "Windows executables will be unsigned because these signing secrets are missing: $($missing -join ', ')"
+            }
+            "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "should_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
       - name: Sign executable
-        if: needs.preflight.outputs.is_release == 'true'
+        if: steps.windows_signing.outputs.should_sign == 'true'
         shell: pwsh
         run: |
-          $publishDir = "src\Hush.App\bin\publish\win-x64"
-          $exe = Join-Path $publishDir "Hush.App.exe"
-          if (-not (Test-Path $exe)) {
-            throw "Expected executable '$exe' was not created."
+          $publishDir = "dotnet\src\Hush.App\bin\publish\win-x64"
+          $dotnetExe = Join-Path $publishDir "Hush.App.exe"
+          $rustExe = "rust\target\release\hush-app.exe"
+          foreach ($exe in @($dotnetExe, $rustExe)) {
+            if (-not (Test-Path $exe)) {
+              throw "Expected executable '$exe' was not created."
+            }
           }
 
           $certPath = Join-Path $env:RUNNER_TEMP "hush-signing.pfx"
@@ -143,35 +157,57 @@ jobs:
             throw "signtool.exe was not found on the runner."
           }
 
-          & $signtool sign /f $certPath /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd SHA256 /tr $timestampUrl /td SHA256 $exe
-          & $signtool verify /pa /v $exe
+          foreach ($exe in @($dotnetExe, $rustExe)) {
+            & $signtool sign /f $certPath /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd SHA256 /tr $timestampUrl /td SHA256 $exe
+            & $signtool verify /pa /v $exe
+          }
 
       - name: Package
         id: package
         shell: pwsh
         run: |
           $version = "${{ needs.preflight.outputs.version }}"
-          $publishDir = "src\Hush.App\bin\publish\win-x64"
-          $zipName = "Hush-$version-win-x64.zip"
-          $exe = Join-Path $publishDir "Hush.App.exe"
-          if (-not (Test-Path $exe)) {
-            throw "Expected executable '$exe' was not created."
+          $publishDir = "dotnet\src\Hush.App\bin\publish\win-x64"
+          $dotnetZipName = "Hush-$version-win-x64.zip"
+          $rustZipName = "Hush-Rust-$version-win-x64.zip"
+          $dotnetExe = Join-Path $publishDir "Hush.App.exe"
+          $rustExe = "rust\target\release\hush-app.exe"
+
+          if (-not (Test-Path $dotnetExe)) {
+            throw "Expected executable '$dotnetExe' was not created."
+          }
+          if (-not (Test-Path $rustExe)) {
+            throw "Expected executable '$rustExe' was not created."
           }
 
-          Compress-Archive -Path "$publishDir\*" -DestinationPath $zipName -Force
-          $hash = (Get-FileHash $zipName -Algorithm SHA256).Hash
-          "$hash  $zipName" | Out-File -FilePath "$zipName.sha256" -Encoding ascii
-          "artifact=$zipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "sha256=$zipName.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Packaged $zipName ($hash)"
+          $dotnetFiles = Get-ChildItem -Path $publishDir -File
+          if ($dotnetFiles.Count -ne 1 -or $dotnetFiles[0].Name -ne "Hush.App.exe") {
+            throw "Expected .NET publish output to contain only Hush.App.exe, got: $($dotnetFiles.Name -join ', ')"
+          }
+
+          Compress-Archive -Path $dotnetExe -DestinationPath $dotnetZipName -Force
+          Compress-Archive -Path $rustExe -DestinationPath $rustZipName -Force
+
+          $dotnetHash = (Get-FileHash $dotnetZipName -Algorithm SHA256).Hash
+          $rustHash = (Get-FileHash $rustZipName -Algorithm SHA256).Hash
+          "$dotnetHash  $dotnetZipName" | Out-File -FilePath "$dotnetZipName.sha256" -Encoding ascii
+          "$rustHash  $rustZipName" | Out-File -FilePath "$rustZipName.sha256" -Encoding ascii
+          "dotnet_artifact=$dotnetZipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "dotnet_sha256=$dotnetZipName.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "rust_artifact=$rustZipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "rust_sha256=$rustZipName.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Packaged $dotnetZipName ($dotnetHash)"
+          Write-Host "Packaged $rustZipName ($rustHash)"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hush-win-x64
           path: |
-            ${{ steps.package.outputs.artifact }}
-            ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.dotnet_artifact }}
+            ${{ steps.package.outputs.dotnet_sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
       - name: Attach to GitHub Release
         if: needs.preflight.outputs.is_release == 'true'
@@ -182,8 +218,10 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            ${{ steps.package.outputs.artifact }}
-            ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.dotnet_artifact }}
+            ${{ steps.package.outputs.dotnet_sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
   release-macos:
     name: macOS arm64
@@ -211,12 +249,15 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Setup Rust
+        run: rustup default stable
+
       - name: Restore
-        run: dotnet restore Hush.sln --runtime osx-arm64 --ignore-failed-sources
+        run: dotnet restore dotnet/Hush.sln --runtime osx-arm64 --ignore-failed-sources
 
       - name: Publish
         run: >
-          dotnet publish src/Hush.App/Hush.App.csproj
+          dotnet publish dotnet/src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=osx-arm64
           -p:Version=${{ needs.preflight.outputs.version }}
@@ -224,25 +265,28 @@ jobs:
           -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
           -p:InformationalVersion=${{ needs.preflight.outputs.version }}
 
+      - name: Build Rust/Tauri executable
+        run: cargo build --manifest-path rust/Cargo.toml -p hush-app --release
+
       - name: Build .app bundle
         shell: bash
         run: |
           version="${{ needs.preflight.outputs.version }}"
           short_version="${{ needs.preflight.outputs.base_version }}"
-          publish="src/Hush.App/bin/publish/osx-arm64"
+          publish="dotnet/src/Hush.App/bin/publish/osx-arm64"
           app="Hush.app"
           rm -rf "$app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp src/Hush.App/Assets/Info.plist "$app/Contents/Info.plist"
+          cp dotnet/src/Hush.App/Assets/Info.plist "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $short_version" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :HushSemVer string $version" "$app/Contents/Info.plist"
           cp -R "$publish"/* "$app/Contents/MacOS/"
           chmod +x "$app/Contents/MacOS/Hush.App"
-          sips -s format icns src/Hush.App/Assets/hush-icon.png --out "$app/Contents/Resources/hush-icon.icns"
+          sips -s format icns dotnet/src/Hush.App/Assets/hush-icon.png --out "$app/Contents/Resources/hush-icon.icns"
 
-      - name: Require macOS signing secrets for tagged releases
-        if: needs.preflight.outputs.is_release == 'true'
+      - name: Resolve macOS signing availability
+        id: macos_signing
         shell: bash
         run: |
           missing=()
@@ -253,12 +297,16 @@ jobs:
           done
 
           if (( ${#missing[@]} > 0 )); then
-            echo "::error::Missing required macOS signing/notarization secrets: ${missing[*]}"
-            exit 1
+            if [[ "${{ needs.preflight.outputs.is_release }}" == "true" ]]; then
+              echo "::warning::macOS artifacts will be ad-hoc signed and not notarized because these signing secrets are missing: ${missing[*]}"
+            fi
+            echo "should_sign=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_sign=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import macOS signing certificate
-        if: needs.preflight.outputs.is_release == 'true'
+        if: steps.macos_signing.outputs.should_sign == 'true'
         shell: bash
         run: |
           cert_path="$RUNNER_TEMP/developer-id.p12"
@@ -273,19 +321,19 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
 
       - name: Sign app
-        if: needs.preflight.outputs.is_release == 'true'
+        if: steps.macos_signing.outputs.should_sign == 'true'
         shell: bash
         run: |
           codesign --force --deep --options runtime --timestamp --sign "$APPLE_DEVELOPER_ID_APPLICATION" "Hush.app"
           codesign --verify --deep --strict --verbose=2 "Hush.app"
 
       - name: Ad-hoc sign app for workflow artifacts
-        if: needs.preflight.outputs.is_release != 'true'
+        if: steps.macos_signing.outputs.should_sign != 'true'
         shell: bash
         run: codesign --force --deep --sign - "Hush.app"
 
       - name: Notarize app
-        if: needs.preflight.outputs.is_release == 'true'
+        if: steps.macos_signing.outputs.should_sign == 'true'
         shell: bash
         run: |
           ditto -c -k --keepParent "Hush.app" "$RUNNER_TEMP/Hush-notarize.zip"
@@ -302,10 +350,15 @@ jobs:
         run: |
           version="${{ needs.preflight.outputs.version }}"
           tar="Hush-$version-osx-arm64.tar.gz"
+          rust_tar="Hush-Rust-$version-osx-arm64.tar.gz"
           tar -czf "$tar" "Hush.app"
+          tar -C "rust/target/release" -czf "$rust_tar" "hush-app"
           shasum -a 256 "$tar" > "$tar.sha256"
+          shasum -a 256 "$rust_tar" > "$rust_tar.sha256"
           echo "artifact=$tar" >> "$GITHUB_OUTPUT"
           echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
+          echo "rust_artifact=$rust_tar" >> "$GITHUB_OUTPUT"
+          echo "rust_sha256=$rust_tar.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -314,6 +367,8 @@ jobs:
           path: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
       - name: Attach to GitHub Release
         if: needs.preflight.outputs.is_release == 'true'
@@ -326,6 +381,8 @@ jobs:
           files: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
   release-linux:
     name: Linux x64
@@ -345,12 +402,28 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Setup Rust
+        run: rustup default stable
+
+      - name: Install Linux Rust/Tauri dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libx11-dev \
+            libxtst-dev \
+            libasound2-dev \
+            libssl-dev
+
       - name: Restore
-        run: dotnet restore Hush.sln --runtime linux-x64 --ignore-failed-sources
+        run: dotnet restore dotnet/Hush.sln --runtime linux-x64 --ignore-failed-sources
 
       - name: Publish
         run: >
-          dotnet publish src/Hush.App/Hush.App.csproj
+          dotnet publish dotnet/src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=linux-x64
           -p:Version=${{ needs.preflight.outputs.version }}
@@ -358,21 +431,33 @@ jobs:
           -p:FileVersion=${{ needs.preflight.outputs.assembly_version }}
           -p:InformationalVersion=${{ needs.preflight.outputs.version }}
 
+      - name: Build Rust/Tauri executable
+        run: cargo build --manifest-path rust/Cargo.toml -p hush-app --release
+
       - name: Package
         id: package
         shell: bash
         run: |
           version="${{ needs.preflight.outputs.version }}"
-          publish="src/Hush.App/bin/publish/linux-x64"
+          publish="dotnet/src/Hush.App/bin/publish/linux-x64"
           executable="$publish/Hush.App"
+          rust_executable="rust/target/release/hush-app"
           if [[ ! -x "$executable" ]]; then
             chmod +x "$executable"
           fi
+          if [[ ! -x "$rust_executable" ]]; then
+            chmod +x "$rust_executable"
+          fi
           tar="Hush-$version-linux-x64.tar.gz"
+          rust_tar="Hush-Rust-$version-linux-x64.tar.gz"
           tar -C "$publish" -czf "$tar" .
+          tar -C "rust/target/release" -czf "$rust_tar" "hush-app"
           sha256sum "$tar" > "$tar.sha256"
+          sha256sum "$rust_tar" > "$rust_tar.sha256"
           echo "artifact=$tar" >> "$GITHUB_OUTPUT"
           echo "sha256=$tar.sha256" >> "$GITHUB_OUTPUT"
+          echo "rust_artifact=$rust_tar" >> "$GITHUB_OUTPUT"
+          echo "rust_sha256=$rust_tar.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -381,6 +466,8 @@ jobs:
           path: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}
 
       - name: Attach to GitHub Release
         if: needs.preflight.outputs.is_release == 'true'
@@ -393,3 +480,5 @@ jobs:
           files: |
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.sha256 }}
+            ${{ steps.package.outputs.rust_artifact }}
+            ${{ steps.package.outputs.rust_sha256 }}

@@ -38,10 +38,10 @@ jobs:
           build-mode: manual
 
       - name: Restore dependencies
-        run: dotnet restore Hush.sln --ignore-failed-sources
+        run: dotnet restore dotnet/Hush.sln --ignore-failed-sources
 
       - name: Build
-        run: dotnet build Hush.sln --no-restore -c Release
+        run: dotnet build dotnet/Hush.sln --no-restore -c Release
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e

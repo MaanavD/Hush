@@ -48,14 +48,14 @@ jobs:
           dotnet-version: "9.0.x"
 
       - name: Restore dependencies
-        run: dotnet restore Hush.sln --ignore-failed-sources
+        run: dotnet restore dotnet/Hush.sln --ignore-failed-sources
 
       - name: Build
-        run: dotnet build Hush.sln --no-restore -c Release
+        run: dotnet build dotnet/Hush.sln --no-restore -c Release
 
       - name: Run tests and E2E smoke tests
         run: >
-          dotnet test Hush.sln
+          dotnet test dotnet/Hush.sln
           --no-build
           -c Release
           --logger "trx;LogFileName=${{ matrix.rid }}.trx"
@@ -63,7 +63,7 @@ jobs:
 
       - name: Publish smoke
         run: >
-          dotnet publish src/Hush.App/Hush.App.csproj
+          dotnet publish dotnet/src/Hush.App/Hush.App.csproj
           -c Release
           -p:PublishProfile=${{ matrix.publishProfile }}
           -p:Version=0.0.0-ci
@@ -74,7 +74,7 @@ jobs:
       - name: Validate publish output
         shell: pwsh
         run: |
-          $publishDir = Join-Path "src/Hush.App/bin/publish" "${{ matrix.rid }}"
+          $publishDir = Join-Path "dotnet/src/Hush.App/bin/publish" "${{ matrix.rid }}"
           if (-not (Test-Path $publishDir)) {
             throw "Publish directory '$publishDir' was not created."
           }
@@ -88,6 +88,33 @@ jobs:
           if ($runtimeFiles.Count -eq 0) {
             throw "Publish directory '$publishDir' is empty."
           }
+
+          if ("${{ matrix.rid }}" -eq "win-x64" -and ($runtimeFiles.Count -ne 1 -or $runtimeFiles[0].Name -ne "Hush.App.exe")) {
+            throw "Windows publish output must contain only Hush.App.exe, got: $($runtimeFiles.Name -join ', ')"
+          }
+
+      - name: Setup Rust
+        run: rustup default stable
+
+      - name: Install Linux Rust/Tauri dependencies
+        if: matrix.rid == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libx11-dev \
+            libxtst-dev \
+            libasound2-dev \
+            libssl-dev
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path rust/Cargo.toml --workspace
+
+      - name: Rust build smoke
+        run: cargo build --manifest-path rust/Cargo.toml -p hush-app -p hush-bench --release
 
       - name: Upload test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

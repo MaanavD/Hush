@@ -67,7 +67,7 @@
     The NuGet-shipped onnxruntime-genai (transitive from Foundry Local Core)
     may not support the Nemotron RNN-T model configuration used by Hush.
     If you have a compatible custom build (e.g. from the Foundry Local service),
-    place it at src/Hush.Core/runtimes/win-x64/native/onnxruntime-genai.dll
+    place it at dotnet/src/Hush.Core/runtimes/win-x64/native/onnxruntime-genai.dll
     and these targets will automatically copy it over the NuGet version.
 
     If the file does not exist, these targets are silently skipped (no-op).

@@ -44,8 +44,9 @@
 
 ## Prerequisites
 
-- **Packaged releases:** no .NET SDK is required. Download the platform bundle from [GitHub Releases](https://github.com/MaanavD/Hush/releases), verify the checksum, and launch Hush. The first launch downloads the selected Foundry Local models.
-- **Building from source:** install the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0). NuGet restore uses nuget.org plus the public ORT-Nightly feed declared in `NuGet.config`.
+- **Packaged .NET releases:** no .NET SDK or .NET runtime is required. Download the platform bundle from [GitHub Releases](https://github.com/MaanavD/Hush/releases), verify the checksum, and launch `Hush.App.exe`. The first launch downloads the selected Foundry Local models.
+- **Packaged Rust/Tauri releases:** download the matching `Hush-Rust-<version>-<platform>` artifact. The UI is embedded in the executable. Windows uses the Microsoft Edge WebView2 Runtime, which is normally already installed on Windows 10/11; Linux requires WebKitGTK/X11/XTest runtime packages from the desktop distribution.
+- **Building from source:** install the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0). The Rust rewrite spike additionally requires stable [Rust](https://www.rust-lang.org/tools/install). NuGet restore uses nuget.org plus the public ORT-Nightly feed declared in `dotnet/NuGet.config`.
 
 ## Quick Start
 
@@ -63,8 +64,16 @@ See [docs/installation.md](docs/installation.md) for platform-specific install n
 git clone https://github.com/MaanavD/Hush.git
 cd Hush
 
-dotnet build
-dotnet run --project src/Hush.App
+dotnet build dotnet/Hush.sln
+
+# Dev run. This uses the .NET SDK host and may show a console window.
+dotnet run --project dotnet/src/Hush.App
+
+# Rust/Tauri app (preloads models, settings UI, raw and clean hotkeys)
+cargo run --manifest-path rust/Cargo.toml -p hush-app
+
+# Rust live microphone smoke test
+cargo run --manifest-path rust/Cargo.toml -p hush-cli -- live --seconds 30
 ```
 
 On first launch Hush downloads the Nemotron streaming transcription model (~350 MB).
@@ -72,11 +81,11 @@ Progress is shown in the overlay and tray icon tooltip.
 
 ## Requirements
 
-| Platform | Minimum                            | Audio Capture |
-| -------- | ---------------------------------- | ------------- |
-| Windows  | Windows 10 22H2 or later, 8 GB RAM | ✅ PortAudio  |
-| macOS    | Apple Silicon, macOS 13+, 8 GB RAM | ✅ PortAudio  |
-| Linux    | X11 desktop, 8 GB RAM              | ✅ PortAudio  |
+| Platform | Minimum                            | Audio Capture | Hotkey/Text Output |
+| -------- | ---------------------------------- | ------------- | ------------------ |
+| Windows  | Windows 10 22H2 or later, 8 GB RAM | ✅ PortAudio  | ✅ Win32 `RegisterHotKey` + `SendInput` |
+| macOS    | Apple Silicon, macOS 13+, 8 GB RAM | ✅ PortAudio  | ✅ CoreGraphics event taps/events; requires Accessibility |
+| Linux    | X11 desktop, 8 GB RAM              | ✅ PortAudio  | ✅ X11 `XGrabKey` + XTest; Wayland-only sessions unsupported |
 
 ## Usage
 
@@ -126,19 +135,34 @@ Settings are stored in `~/.hush/settings.json`.
 
 ## Build Prerequisites
 
-Hush currently depends on pre-release Foundry Local SDK packages. `NuGet.config` is configured to restore them from the public ORT-Nightly feed. A local `packages/` source is also present for maintainers who need to test a private `.nupkg`, but package files are intentionally ignored and should not be committed.
+The .NET implementation currently depends on pre-release Foundry Local SDK packages. `dotnet/NuGet.config` is configured to restore them from the public ORT-Nightly feed. A local `dotnet/packages/` source is also present for maintainers who need to test a private `.nupkg`, but package files are intentionally ignored and should not be committed.
 
 ## Development
 
 ```bash
 # Build
-dotnet build -c Release
+dotnet build dotnet/Hush.sln -c Release
+cargo build --manifest-path rust/Cargo.toml --workspace
 
 # Run tests
-dotnet test -c Release
+dotnet test dotnet/Hush.sln -c Release
+cargo test --manifest-path rust/Cargo.toml --workspace
 
-# Publish self-contained folder build (Windows)
-dotnet publish src/Hush.App -p:PublishProfile=win-x64
+# Publish self-contained single-exe .NET build (Windows)
+dotnet publish dotnet/src/Hush.App -p:PublishProfile=win-x64
+
+# Launch the packaged .NET exe without the SDK/console host
+.\dotnet\src\Hush.App\bin\publish\win-x64\Hush.App.exe
+
+# Build the Rust/Tauri single-exe app. Requires WebView2 runtime at run time.
+cargo build --manifest-path rust/Cargo.toml -p hush-app --release
+.\rust\target\release\hush-app.exe
+
+# Compare .NET and Rust transcription benchmarks against one WAV file
+.\benchmarks\run-comparison.ps1 -AudioFile C:\path\to\sample.wav
+
+# Rust live microphone smoke test
+cargo run --manifest-path rust/Cargo.toml -p hush-cli -- live --seconds 30
 ```
 
 CI runs build, tests, E2E smoke tests, and publish smoke validation on Windows, macOS, and Linux. Hardware/model-backed E2E suites stay opt-in via environment variables documented in [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -161,12 +185,18 @@ CI runs build, tests, E2E smoke tests, and publish smoke validation on Windows, 
 See [SPEC.md](SPEC.md) for the full product and implementation specification.
 
 ```
-Hush.App  (Avalonia UI — tray, overlay, settings)
-    └── Hush.Core  (class library — engine, audio, hotkey, output)
-            └── Foundry Local SDK  (on-device Nemotron streaming inference)
+dotnet/
+    Hush.App  (Avalonia UI — tray, overlay, settings)
+        └── Hush.Core  (class library — engine, audio, hotkey, output)
+                └── Foundry Local SDK  (on-device Nemotron streaming inference)
+
+rust/
+    hush-app    (Tauri shell with tray, overlay, settings, Ctrl+H raw mode, Ctrl+Alt+H clean mode)
+    hush-core   (Rust benchmark/core abstractions)
+    hush-bench  (Foundry Local transcription benchmark CLI)
 ```
 
-The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifying mic-to-text transcription without the full UI. Useful for development and troubleshooting.
+The .NET solution also includes `Hush.ConsoleDemo`, a minimal console app for verifying mic-to-text transcription without the full UI. The Rust workspace includes a Tauri shell, live microphone transcription, startup model lifecycle, clean-mode rewriting, global hotkey/text output platform layers for Windows/macOS/Linux X11, and benchmark tooling.
 
 ## Milestones
 
@@ -190,7 +220,7 @@ The solution also includes `Hush.ConsoleDemo`, a minimal console app for verifyi
 ## Known Limitations
 
 - **macOS / Linux** require microphone permission on first launch. macOS will surface the standard system prompt (declared in `Info.plist` via `NSMicrophoneUsageDescription`); Linux uses ALSA via PortAudio and inherits whatever permission model your distro applies to `/dev/snd/*`.
-- **Linux hotkeys require X11.** Wayland-only sessions are guarded with a startup error instead of silently failing.
+- **Linux hotkeys require X11.** Wayland-only sessions are guarded with a startup error instead of silently failing. The Rust/Tauri app has the same X11 requirement for global hotkeys/text output.
 - **macOS hotkeys require Accessibility permission.** Hush now reports that requirement immediately when hotkey registration fails.
 - **Elevated windows** on Windows: `SendInput` is blocked by UIPI when the target app runs as administrator. Run Hush as admin to type into admin windows.
 - **Code signing:** release automation supports Windows/macOS/Linux artifacts and documents the required signing secrets. Until the project publishes signed artifacts, Windows SmartScreen or macOS Gatekeeper may show warnings.
