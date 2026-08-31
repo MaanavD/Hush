@@ -12,8 +12,8 @@ using Hush.App.ViewModels;
 namespace Hush.App.Views;
 
 /// <summary>
-/// Floating overlay — renders a smooth connected-line waveform on a Canvas,
-/// driven by live audio level. Clean pill shape, white frosted glass.
+/// Floating overlay — renders the compact Hush bubble and connected-line
+/// waveform used by the Rust/Tauri shell.
 /// </summary>
 public sealed partial class OverlayWindow : Window
 {
@@ -28,9 +28,9 @@ public sealed partial class OverlayWindow : Window
     private static extern nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
 
     // ── Waveform state ───────────────────────────────────────────────────────
-    private const int PointCount = 32;
+    private const int PointCount = 48;
     private const double WavePadX = 12;
-    private const double WavePadY = 4;
+    private const double WavePadY = 3;
     private const double IdleAmplitude = 0.8;
 
     // Three distinct waveform lines — each reacts to audio differently.
@@ -44,22 +44,19 @@ public sealed partial class OverlayWindow : Window
     // Purple wave configs for raw mode.
     private static readonly WaveConfig[] WaveConfigs =
     [
-        // Line 1: Purple — primary, clean sinusoidal, one full cycle (peak + trough)
-        new(Color.FromRgb(147, 51, 234), 1.8, 1.0,
+        new(Color.FromRgb(155, 127, 235), 2.6, 1.0,
             Freq1: 5.0, Speed1: 3.2, Weight1: 0.90,
             Freq2: 10.0, Speed2: -1.5, Weight2: 0.07,
             Freq3: 15.0, Speed3: 2.0, Weight3: 0.03,
             ResponseAttack: 0.65, ResponseDecay: 0.15, PhaseOffset: 0.0),
 
-        // Line 2: Soft coral — secondary, higher frequency, energetic
-        new(Color.FromRgb(251, 113, 133), 1.2, 0.45,
+        new(Color.FromRgb(251, 113, 133), 1.7, 0.62,
             Freq1: 7.5, Speed1: 5.2, Weight1: 0.40,
             Freq2: 14.0, Speed2: -3.8, Weight2: 0.35,
             Freq3: 20.0, Speed3: 7.5, Weight3: 0.25,
             ResponseAttack: 0.60, ResponseDecay: 0.12, PhaseOffset: 1.0),
 
-        // Line 3: Light indigo — tertiary, low frequency, trailing echo
-        new(Color.FromRgb(129, 140, 248), 1.0, 0.35,
+        new(Color.FromRgb(129, 140, 248), 1.35, 0.48,
             Freq1: 4.0, Speed1: 2.8, Weight1: 0.55,
             Freq2: 7.0, Speed2: -2.0, Weight2: 0.28,
             Freq3: 12.0, Speed3: 4.5, Weight3: 0.17,
@@ -69,22 +66,19 @@ public sealed partial class OverlayWindow : Window
     // Amber/orange wave configs for clean mode.
     private static readonly WaveConfig[] CleanWaveConfigs =
     [
-        // Line 1: Amber — primary
-        new(Color.FromRgb(245, 158, 11), 1.8, 1.0,
+        new(Color.FromRgb(245, 158, 11), 2.6, 1.0,
             Freq1: 5.0, Speed1: 3.2, Weight1: 0.90,
             Freq2: 10.0, Speed2: -1.5, Weight2: 0.07,
             Freq3: 15.0, Speed3: 2.0, Weight3: 0.03,
             ResponseAttack: 0.65, ResponseDecay: 0.15, PhaseOffset: 0.0),
 
-        // Line 2: Orange — secondary
-        new(Color.FromRgb(251, 146, 60), 1.2, 0.45,
+        new(Color.FromRgb(251, 146, 60), 1.7, 0.62,
             Freq1: 7.5, Speed1: 5.2, Weight1: 0.40,
             Freq2: 14.0, Speed2: -3.8, Weight2: 0.35,
             Freq3: 20.0, Speed3: 7.5, Weight3: 0.25,
             ResponseAttack: 0.60, ResponseDecay: 0.12, PhaseOffset: 1.0),
 
-        // Line 3: Yellow — tertiary, trailing echo
-        new(Color.FromRgb(250, 204, 21), 1.0, 0.35,
+        new(Color.FromRgb(250, 204, 21), 1.35, 0.48,
             Freq1: 4.0, Speed1: 2.8, Weight1: 0.55,
             Freq2: 7.0, Speed2: -2.0, Weight2: 0.28,
             Freq3: 12.0, Speed3: 4.5, Weight3: 0.17,
@@ -93,10 +87,13 @@ public sealed partial class OverlayWindow : Window
 
     private Canvas? _canvas;
     private Canvas? _canvasClean;
+    private Canvas? _canvasFinalizing;
     private Polyline[]? _waveLines;
     private Polyline[]? _waveLinesClean;
+    private Polyline[]? _waveLinesFinalizing;
     private readonly double[] _displayLevels = new double[3];
     private readonly double[] _displayLevelsClean = new double[3];
+    private readonly double[] _displayLevelsFinalizing = new double[3];
     private DispatcherTimer? _animTimer;
     private float _targetLevel;
     private double _animTime;
@@ -121,6 +118,12 @@ public sealed partial class OverlayWindow : Window
         if (_canvasClean is not null)
         {
             _waveLinesClean = InitWaveLines(_canvasClean, CleanWaveConfigs);
+        }
+
+        _canvasFinalizing = this.FindControl<Canvas>("WaveCanvasFinalizing");
+        if (_canvasFinalizing is not null)
+        {
+            _waveLinesFinalizing = InitWaveLines(_canvasFinalizing, CleanWaveConfigs);
         }
 
         if (DataContext is OverlayViewModel vm)
@@ -163,9 +166,11 @@ public sealed partial class OverlayWindow : Window
 
         bool isListening = _viewModel?.IsListening ?? false;
         bool isClean = _viewModel?.IsCleanMode ?? false;
+        bool isFinalizing = _viewModel?.IsFinalizing ?? false;
 
         AnimateCanvas(_canvas, _waveLines, WaveConfigs, _displayLevels, isListening && !isClean, dt);
         AnimateCanvas(_canvasClean, _waveLinesClean, CleanWaveConfigs, _displayLevelsClean, isListening && isClean, dt);
+        AnimateCanvas(_canvasFinalizing, _waveLinesFinalizing, CleanWaveConfigs, _displayLevelsFinalizing, isFinalizing, dt, forcedTarget: 0.7);
     }
 
     private static Polyline[] InitWaveLines(Canvas canvas, WaveConfig[] configs)
@@ -187,11 +192,11 @@ public sealed partial class OverlayWindow : Window
     }
 
     private void AnimateCanvas(Canvas? canvas, Polyline[]? waveLines, WaveConfig[] configs,
-        double[] displayLevels, bool active, double dt)
+        double[] displayLevels, bool active, double dt, double? forcedTarget = null)
     {
         if (waveLines is null || canvas is null) return;
 
-        double target = active ? _targetLevel : 0.0;
+        double target = active ? forcedTarget ?? Math.Max(_targetLevel, 0.32) : 0.0;
 
         double w = canvas.Bounds.Width;
         double h = canvas.Bounds.Height;
@@ -199,7 +204,7 @@ public sealed partial class OverlayWindow : Window
 
         double midY = h / 2.0;
         double drawWidth = w - WavePadX * 2;
-        double maxAmp = (h / 2.0) - WavePadY;
+        double maxAmp = Math.Max(1, (h / 2.0) - WavePadY);
 
         for (int li = 0; li < configs.Length; li++)
         {
@@ -234,7 +239,7 @@ public sealed partial class OverlayWindow : Window
             waveLines[li].Points = points;
 
             double opacity = active
-                ? cfg.Opacity * Math.Max(0.5, level)
+                ? cfg.Opacity * Math.Max(0.42, level)
                 : Math.Max(0, waveLines[li].Opacity - 0.04);
             waveLines[li].Opacity = opacity;
         }
@@ -278,4 +283,3 @@ public sealed partial class OverlayWindow : Window
         }
     }
 }
-
