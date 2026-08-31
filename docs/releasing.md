@@ -9,8 +9,8 @@ Releases are built by `.github/workflows/release.yml` from semantic-version tags
 3. Create and push a tag:
 
    ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
+   git tag v1.0
+   git push origin v1.0
    ```
 
 4. Wait for the Release workflow to produce draft release artifacts.
@@ -20,21 +20,26 @@ Releases are built by `.github/workflows/release.yml` from semantic-version tags
 
 | Platform | Artifact |
 | --- | --- |
-| Windows x64 | `Hush-<version>-win-x64.zip` |
-| macOS Apple Silicon | `Hush-<version>-osx-arm64.tar.gz` |
-| Linux x64 | `Hush-<version>-linux-x64.tar.gz` |
+| Windows x64 (.NET/Avalonia) | `Hush-<version>-win-x64.zip` |
+| Windows x64 (Rust/Tauri) | `Hush-Rust-<version>-win-x64.zip` |
+| macOS Apple Silicon (.NET/Avalonia) | `Hush-<version>-osx-arm64.tar.gz` |
+| macOS Apple Silicon (Rust/Tauri) | `Hush-Rust-<version>-osx-arm64.tar.gz` |
+| Linux x64 (.NET/Avalonia) | `Hush-<version>-linux-x64.tar.gz` |
+| Linux x64 (Rust/Tauri) | `Hush-Rust-<version>-linux-x64.tar.gz` |
 
 Each artifact is published with a `.sha256` checksum.
+
+The .NET Windows artifact is expected to contain only `Hush.App.exe`; the publish profile is self-contained and single-file, so users do not need a .NET runtime installed. Rust/Tauri artifacts contain `hush-app`/`hush-app.exe` with embedded HTML/CSS/JS. Windows uses Microsoft Edge WebView2 Runtime, macOS requires Accessibility permission for hotkeys/text output, and Linux requires WebKitGTK/X11/XTest runtime packages and an X11 session.
 
 ## Signing and notarization
 
 Tagged public releases should be signed before publishing:
 
-- Windows: code-sign `Hush.App.exe` with an Authenticode certificate before packaging.
+- Windows: code-sign `Hush.App.exe` and `hush-app.exe` with an Authenticode certificate before packaging.
 - macOS: sign `Hush.app` with a Developer ID Application certificate and notarize it with Apple.
 - Linux: checksums are required; package-manager signing can be added when distro packages exist.
 
-The release workflow requires signing secrets for tagged Windows and macOS releases.
+The release workflow signs tagged Windows and macOS releases when signing secrets are configured. If signing secrets are missing, Windows artifacts are packaged unsigned and macOS artifacts are ad-hoc signed without notarization.
 
 Windows:
 

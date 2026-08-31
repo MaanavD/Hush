@@ -89,8 +89,26 @@ jobs:
             throw "Publish directory '$publishDir' is empty."
           }
 
+          if ("${{ matrix.rid }}" -eq "win-x64" -and ($runtimeFiles.Count -ne 1 -or $runtimeFiles[0].Name -ne "Hush.App.exe")) {
+            throw "Windows publish output must contain only Hush.App.exe, got: $($runtimeFiles.Name -join ', ')"
+          }
+
       - name: Setup Rust
         run: rustup default stable
+
+      - name: Install Linux Rust/Tauri dependencies
+        if: matrix.rid == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libx11-dev \
+            libxtst-dev \
+            libasound2-dev \
+            libssl-dev
 
       - name: Run Rust tests
         run: cargo test --manifest-path rust/Cargo.toml --workspace

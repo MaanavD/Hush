@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // Copyright (c) 2026 Maanav Dalal. Licensed under the MIT License.
 
 use hush_core::live_audio::{
@@ -801,12 +803,15 @@ fn main() {
 }
 
 fn create_windows(app: &mut App) -> tauri::Result<()> {
-    let overlay = WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
-        .title("Hush")
-        .inner_size(OVERLAY_WIDTH as f64, OVERLAY_HEIGHT as f64)
-        .decorations(false)
-        .shadow(false)
-        .transparent(true)
+    let overlay_builder =
+        WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
+            .title("Hush")
+            .inner_size(OVERLAY_WIDTH as f64, OVERLAY_HEIGHT as f64)
+            .decorations(false)
+            .shadow(false);
+    #[cfg(not(target_os = "macos"))]
+    let overlay_builder = overlay_builder.transparent(true);
+    let overlay = overlay_builder
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)

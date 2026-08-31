@@ -1,23 +1,26 @@
 # Installation
 
-Hush is distributed as self-contained release artifacts from GitHub Releases. You do not need to install the .NET runtime for packaged builds.
+Hush is distributed as self-contained release artifacts from GitHub Releases. You do not need to install the .NET runtime for packaged .NET builds.
 
 ## Windows
 
-1. Download `Hush-<version>-win-x64.zip` and its `.sha256` file from the release.
+1. Download one of the Windows artifacts and its `.sha256` file from the release:
+   - `Hush-<version>-win-x64.zip` — .NET/Avalonia app, true self-contained single exe.
+   - `Hush-Rust-<version>-win-x64.zip` — Rust/Tauri app, single exe with embedded UI; requires Microsoft Edge WebView2 Runtime, which is normally already present on Windows 10/11.
 2. Verify the checksum:
-
    ```powershell
    Get-FileHash .\Hush-<version>-win-x64.zip -Algorithm SHA256
    Get-Content .\Hush-<version>-win-x64.zip.sha256
    ```
 
-3. Extract the zip and run `Hush.App.exe`.
+3. Extract the zip and run `Hush.App.exe` or `hush-app.exe`.
 4. If Windows SmartScreen appears for an unsigned build, confirm that the hash matches the release checksum before running.
 
 ## macOS Apple Silicon
 
-1. Download `Hush-<version>-osx-arm64.tar.gz` and its `.sha256` file.
+1. Download one of the macOS artifacts and its `.sha256` file:
+   - `Hush-<version>-osx-arm64.tar.gz` — .NET/Avalonia app bundle.
+   - `Hush-Rust-<version>-osx-arm64.tar.gz` — Rust/Tauri executable.
 2. Verify the checksum:
 
    ```bash
@@ -25,14 +28,16 @@ Hush is distributed as self-contained release artifacts from GitHub Releases. Yo
    cat Hush-<version>-osx-arm64.tar.gz.sha256
    ```
 
-3. Extract the archive and move `Hush.app` to `/Applications`.
+3. Extract the archive and move `Hush.app` to `/Applications`, or run the Rust `hush-app` executable.
 4. Grant Microphone and Accessibility permissions when prompted. Accessibility is required for global hotkeys and text output.
 
 Unsigned or ad-hoc signed builds may require Control-click > Open on first launch. Fully signed and notarized releases are the target for public distribution.
 
 ## Linux X11
 
-1. Download `Hush-<version>-linux-x64.tar.gz` and its `.sha256` file.
+1. Download one of the Linux artifacts and its `.sha256` file:
+   - `Hush-<version>-linux-x64.tar.gz` — .NET/Avalonia app.
+   - `Hush-Rust-<version>-linux-x64.tar.gz` — Rust/Tauri app.
 2. Verify the checksum:
 
    ```bash
@@ -40,7 +45,10 @@ Unsigned or ad-hoc signed builds may require Control-click > Open on first launc
    cat Hush-<version>-linux-x64.tar.gz.sha256
    ```
 
-3. Extract the archive and run `./Hush.App`.
+3. Install runtime packages required by your chosen shell:
+   - .NET/Avalonia: X11 desktop/audio stack.
+   - Rust/Tauri: WebKitGTK 4.1, Ayatana AppIndicator, librsvg, X11, XTest, ALSA, and OpenSSL runtime packages.
+4. Extract the archive and run `./Hush.App` or `./hush-app`.
 
 Hush currently supports Linux desktop sessions running X11. Wayland-only sessions are not supported for global hotkeys/text output yet.
 
